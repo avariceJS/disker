@@ -1,0 +1,31 @@
+# Architecture
+
+## Modules
+
+- `DiskerCore` contains `CapacityObservation`, selected-folder scanning, and bounded local JSON history.
+- `DiskerApp` is a native SwiftUI macOS application with an `NSOpenPanel` for user-selected scan scope and Finder reveal.
+- `DiskerCoreChecks` is a small executable check suite using temporary synthetic trees; run it with `scripts/check-core.sh`.
+
+## Measurement contract
+
+Volume total and available capacity are separate system-provided values. Disker prefers macOS's important-usage availability estimate when it is positive; if it is zero/unavailable, it falls back to the standard volume available-capacity value and labels that basis. Disker derives `notAvailableBytes = total - available`; it does not call this physical file usage because reservations and APFS/macOS accounting are not attributable to a path scan.
+
+Folder scans use `lstat` and count each `(device, inode)` once per selected root. Symlinks are not traversed. Logical bytes are `st_size`; allocated bytes are `st_blocks * 512`. These estimates can diverge from reclaimable space because clones and shared blocks are not attributed. A failed metadata lookup or enumerator error marks that root incomplete.
+
+Each folder scan records the selected path, observation time, logical and allocated estimates, file count, inaccessible count, and completion state. History comparisons use the same path and a prior complete observation. An incomplete latest scan has no growth delta.
+
+## Persistence and privacy
+
+The app writes at most 180 scan observations to `~/Library/Application Support/Disker/observations.json`. It stores paths and sizes, not file contents. No network or telemetry code is present. The current app asks the user to choose scope each time; it does not retain security-scoped bookmarks or silently monitor folders.
+
+## RAM sampling
+
+`RAMObservation` samples physical RAM size, free/active/inactive/wired/compressor page counts via Mach host statistics and converts each count using the kernel page size. It separately samples process resident sizes using `proc_listallpids`, `proc_pidinfo(PROC_PIDTASKINFO)`, and `proc_name`. Sampling is manual and point-in-time. Process exit or access restrictions are counted as unavailable. Inactive pages can be reclaimable cache; page groups are not a single additive pressure metric. Process resident size is not physical footprint. System memory pressure trends, swap, leak diagnosis, and RAM history are not implemented.
+
+## Not implemented
+
+Application/project ownership attribution, activity monitoring, duplicate hashing, cleanup plans, automatic scans, RAM pressure/swap trends, leak diagnosis, sandbox entitlements, signing/notarization, and an installer. These require separate measured implementations; the UI does not claim them.
+
+## Historical commit presentation
+
+The requested historical commit timeline begins `2023-01-01` in UTC, only after remote chronology and an owner-associated Git email are verified. These timestamps are intentionally simulated for contribution-calendar presentation; they do not represent actual implementation dates. Actual build/release timestamps and handoffs remain truthful. GitHub controls contribution attribution and display.
