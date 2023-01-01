@@ -10,9 +10,9 @@
 
 Volume total and available capacity are separate system-provided values. Disker prefers macOS's important-usage availability estimate when it is positive; if it is zero/unavailable, it falls back to the standard volume available-capacity value and labels that basis. Disker derives `notAvailableBytes = total - available`; it does not call this physical file usage because reservations and APFS/macOS accounting are not attributable to a path scan.
 
-Folder scans use `lstat` and count each `(device, inode)` once per selected root. Symlinks are not traversed. Logical bytes are `st_size`; allocated bytes are `st_blocks * 512`. These estimates can diverge from reclaimable space because clones and shared blocks are not attributed. A failed metadata lookup or enumerator error marks that root incomplete.
+Folder scans open selected directories and descend with descriptor-relative `openat` and `fstatat`, always using `O_NOFOLLOW`/`AT_SYMLINK_NOFOLLOW` for descendants. This avoids following a child directory replaced by a symlink during a scan. Symlinks are not traversed; a selected symlink root is reported as incomplete. Each `(device, inode)` is counted once per selected root. Logical bytes are `st_size`; allocated bytes are `st_blocks * 512`. These estimates can diverge from reclaimable space because clones and shared blocks are not attributed. A failed metadata lookup or directory access marks that root incomplete.
 
-Each folder scan records the selected path, observation time, logical and allocated estimates, file count, inaccessible count, and completion state. History comparisons use the same path and a prior complete observation. An incomplete latest scan has no growth delta.
+Each folder scan records the selected path, observation time, logical and allocated estimates, file count, inaccessible count, and completion state. History comparisons use the same path and a prior complete observation before the current observation. Incomplete current scans are not compared, and incomplete previous scans are skipped. An arithmetic overflow also suppresses the delta.
 
 ## Persistence and privacy
 

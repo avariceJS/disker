@@ -84,9 +84,7 @@ final class DashboardModel {
     }
 
     func previousCompleteObservation(for folder: FolderObservation) -> FolderObservation? {
-        history.observations.dropLast().reversed().lazy
-            .compactMap { $0.folders.first(where: { $0.path == folder.path && $0.complete }) }
-            .first
+        ObservationComparison.previousCompleteFolder(for: folder, in: history)
     }
 }
 
@@ -441,10 +439,14 @@ struct DashboardView: View {
                             Text("Logical \(format(folder.logicalBytes))")
                             Text("Allocated estimate \(format(folder.allocatedBytes))")
                             if !folder.complete { Text("Partial · \(folder.inaccessibleCount) inaccessible").foregroundStyle(.orange) }
-                            if let previous = model.previousCompleteObservation(for: folder), folder.complete {
-                                let delta = folder.allocatedBytes - previous.allocatedBytes
-                                Text("Since previous \(delta >= 0 ? "+" : "−")\(format(abs(delta)))")
-                                    .foregroundStyle(delta >= 0 ? .orange : .green)
+                            if let previous = model.previousCompleteObservation(for: folder) {
+                                if let delta = ObservationComparison.allocatedByteDelta(current: folder, previous: previous) {
+                                    Text("Since previous \(delta >= 0 ? "+" : "−")\(format(delta.magnitude > UInt64(Int64.max) ? Int64.max : Int64(delta.magnitude)))")
+                                        .foregroundStyle(delta >= 0 ? .orange : .green)
+                                } else {
+                                    Text("Comparison unavailable")
+                                        .foregroundStyle(.secondary)
+                                }
                             } else if folder.complete {
                                 Text("First complete observation")
                                     .foregroundStyle(.secondary)

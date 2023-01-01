@@ -27,6 +27,7 @@ private struct DiskerCoreChecks {
             ("immediate cancellation", testImmediateCancellation),
             ("history persistence and bounded retention", testHistoryPersistenceAndRetention),
             ("corrupt history is left untouched", testCorruptHistoryIsLeftUntouched),
+            ("same-path complete history comparison", testSamePathCompleteHistoryComparison),
         ]
 
         for (name, check) in checks {
@@ -178,6 +179,34 @@ private struct DiskerCoreChecks {
                 try expect(persistedData == corruptData, "corrupt history must remain unchanged")
             }
         }
+    }
+
+    private static func testSamePathCompleteHistoryComparison() throws {
+        let earlierComplete = syntheticFolder(path: "/selected", bytes: 100, complete: true)
+        let laterIncomplete = syntheticFolder(path: "/selected", bytes: 900, complete: false)
+        let current = syntheticFolder(path: "/selected", bytes: 135, complete: true)
+        let future = syntheticFolder(path: "/selected", bytes: 1_000, complete: true)
+        let history = LocalHistory(observations: [
+            ScanObservation(startedAt: .now, folders: [earlierComplete], cancelled: false),
+            ScanObservation(startedAt: .now, folders: [laterIncomplete], cancelled: true),
+            ScanObservation(startedAt: .now, folders: [current], cancelled: false),
+            ScanObservation(startedAt: .now, folders: [future], cancelled: false),
+        ])
+
+        let previous = ObservationComparison.previousCompleteFolder(for: current, in: history)
+        try expect(previous?.id == earlierComplete.id, "comparison should skip incomplete scans and never use future observations")
+        try expect(ObservationComparison.allocatedByteDelta(current: current, previous: earlierComplete) == 35, "allocated-size delta should use the matching complete path")
+        let otherPath = syntheticFolder(path: "/other", bytes: 135, complete: true)
+        try expect(ObservationComparison.allocatedByteDelta(current: current, previous: otherPath) == nil, "different paths must not be compared")
+        try expect(ObservationComparison.previousCompleteFolder(for: laterIncomplete, in: history) == nil, "incomplete current observations must not produce a growth comparison")
+    }
+
+    private static func syntheticFolder(path: String, bytes: Int64, complete: Bool) -> FolderObservation {
+        FolderObservation(
+            path: path, displayName: URL(fileURLWithPath: path).lastPathComponent,
+            logicalBytes: bytes, allocatedBytes: bytes, fileCount: 1,
+            inaccessibleCount: complete ? 0 : 1, complete: complete
+        )
     }
 
     private static func withTemporaryDirectory(_ body: (URL) throws -> Void) throws {
