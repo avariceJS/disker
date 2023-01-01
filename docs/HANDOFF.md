@@ -7,7 +7,7 @@ Updated: 2026-10-19 (actual session date).
 - Native SwiftUI macOS app with volume capacity, selected-folder metadata scans, local bounded history, same-path comparisons, Finder reveal, and on-demand RAM/process sampling.
 - Folder traversal uses descriptor-relative `openat`/`fstatat` with `O_NOFOLLOW`, skips symlinks, deduplicates hard links within a selected root, and marks unreadable or selected symlink roots incomplete.
 - RAM process sampling uses `proc_listallpids`' process-count return value, sizes its byte buffer accordingly, and retries when the process table grows.
-- `scripts/check-core.sh`: 13 checks pass, including restart persistence, the 180-observation retention bound, corrupt-history fail-closed behavior, and same-path comparisons that skip incomplete/future scans. `scripts/package-app.sh`: release app bundle builds. The bundle is unsigned and not installed. Visual UI review was blocked by the computer-use approval layer.
+- `scripts/check-core.sh`: 15 checks pass, including restart persistence, bounded retention, fail-closed corrupt history, safe same-path comparisons, progress callbacks, and cancellation with partial coverage. `scripts/package-app.sh`: release app bundle builds. The bundle is unsigned and not installed. Visual UI review was blocked by the computer-use approval layer.
 - `.gitignore` excludes Swift/build outputs, app bundles, local metadata, logs, databases, credentials/certificates, and the owner-specific `MISSION.md`. Credential-pattern scan found no matches among project files.
 
 ## Repository and environment
@@ -19,4 +19,4 @@ Updated: 2026-10-19 (actual session date).
 
 ## Remaining mission work
 
-Add approved visual QA, comparison-specific checks, cancellation/progress UX, application/project attribution, RAM trends and pressure signals, scoped duplicate verification, and carefully designed read-only cleanup planning. Do not delete user data during this mission. App sandboxing, signing, notarization, and installation remain unimplemented.
+Add approved visual QA, application/project attribution, RAM trends and pressure signals, scoped duplicate verification, and carefully designed read-only cleanup planning. Do not delete user data during this mission. App sandboxing, signing, notarization, and installation remain unimplemented.

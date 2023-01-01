@@ -28,6 +28,8 @@ private struct DiskerCoreChecks {
             ("history persistence and bounded retention", testHistoryPersistenceAndRetention),
             ("corrupt history is left untouched", testCorruptHistoryIsLeftUntouched),
             ("same-path complete history comparison", testSamePathCompleteHistoryComparison),
+            ("scan progress callback", testScanProgressCallback),
+            ("cancellation preserves partial coverage", testCancellationPreservesPartialCoverage),
         ]
 
         for (name, check) in checks {
@@ -207,6 +209,36 @@ private struct DiskerCoreChecks {
             logicalBytes: bytes, allocatedBytes: bytes, fileCount: 1,
             inaccessibleCount: complete ? 0 : 1, complete: complete
         )
+    }
+
+    private static func testScanProgressCallback() throws {
+        try withTemporaryDirectory { root in
+            for index in 0..<256 {
+                try Data([UInt8(index % 255)]).write(to: root.appendingPathComponent("file-\(index).bin"))
+            }
+            var reported: ScanProgress?
+            let result = FolderScanner.scan(roots: [root], progress: { reported = $0 })
+            try expect(result.folders[0].fileCount == 256, "progress fixture should measure every file")
+            try expect(reported?.visitedFiles == 256, "scanner should report its 256-file progress interval")
+            try expect(reported?.currentPath.hasPrefix(root.path) == true, "progress should identify a path within the selected root")
+        }
+    }
+
+    private static func testCancellationPreservesPartialCoverage() throws {
+        try withTemporaryDirectory { root in
+            for index in 0..<32 {
+                try Data([UInt8(index)]).write(to: root.appendingPathComponent("file-\(index).bin"))
+            }
+            var cancellationChecks = 0
+            let result = FolderScanner.scan(roots: [root], shouldCancel: {
+                cancellationChecks += 1
+                return cancellationChecks > 8
+            })
+            try expect(result.cancelled, "mid-scan cancellation should be recorded")
+            try expect(result.folders.count == 1, "a started folder should retain its partial observation")
+            try expect(!result.folders[0].complete, "cancelled folder must be incomplete")
+            try expect(result.folders[0].fileCount < 32, "cancelled scan should stop before visiting all fixture files")
+        }
     }
 
     private static func withTemporaryDirectory(_ body: (URL) throws -> Void) throws {

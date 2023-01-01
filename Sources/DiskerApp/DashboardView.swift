@@ -62,8 +62,13 @@ final class DashboardModel {
         guard !urls.isEmpty, !isScanning else { return }
         isScanning = true
         errorMessage = nil
+        currentPath = ""
         let scanTask = Task.detached(priority: .utility) {
-            FolderScanner.scan(roots: urls)
+            FolderScanner.scan(roots: urls, progress: { [weak self] progress in
+                Task { @MainActor [weak self] in
+                    self?.currentPath = progress.currentPath
+                }
+            })
         }
         self.scanTask = scanTask
         Task {
@@ -74,6 +79,7 @@ final class DashboardModel {
                 errorMessage = "Scan finished, but local history could not be saved: \(error.localizedDescription)"
             }
             isScanning = false
+            currentPath = ""
             self.scanTask = nil
             refreshCapacity()
         }
@@ -226,6 +232,20 @@ struct DashboardView: View {
             Button(model.isScanning ? "Cancel Scan" : "Choose Folders…") {
                 if model.isScanning { model.cancelScan() }
                 else { model.chooseFolders() }
+            }
+            if model.isScanning {
+                VStack(alignment: .trailing, spacing: 5) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(model.currentPath.isEmpty ? "Starting scan…" : model.currentPath)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: 180, alignment: .trailing)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(model.currentPath.isEmpty ? "Scanning folders" : "Scanning \(model.currentPath)")
             }
         }
         .padding(18)
