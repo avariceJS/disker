@@ -25,6 +25,8 @@ private struct DiskerCoreChecks {
             ("hard-link deduplication", testHardLinkDeduplication),
             ("missing root coverage", testMissingRootCoverage),
             ("immediate cancellation", testImmediateCancellation),
+            ("history persistence and bounded retention", testHistoryPersistenceAndRetention),
+            ("corrupt history is left untouched", testCorruptHistoryIsLeftUntouched),
         ]
 
         for (name, check) in checks {
@@ -129,6 +131,53 @@ private struct DiskerCoreChecks {
         let result = FolderScanner.scan(roots: [path], shouldCancel: { true })
         try expect(result.cancelled, "cancellation must be recorded")
         try expect(result.folders.isEmpty, "cancelled scan must not report an unvisited root as measured")
+    }
+
+    private static func testHistoryPersistenceAndRetention() throws {
+        try withTemporaryDirectory { root in
+            let fileURL = root.appendingPathComponent("nested/history.json")
+            let firstID = UUID()
+            var latestID = UUID()
+            for index in 0...180 {
+                let id = index == 0 ? firstID : UUID()
+                latestID = id
+                let folder = FolderObservation(
+                    path: "/synthetic", displayName: "synthetic",
+                    logicalBytes: Int64(index), allocatedBytes: Int64(index),
+                    fileCount: 1, inaccessibleCount: 0, complete: index != 180
+                )
+                let observation = ScanObservation(
+                    id: id, startedAt: Date(timeIntervalSince1970: TimeInterval(index)),
+                    folders: [folder], cancelled: index == 180
+                )
+                try ObservationStore.append(observation, to: fileURL)
+            }
+
+            let reloaded = try ObservationStore.load(from: fileURL)
+            try expect(reloaded.observations.count == 180, "history should retain at most 180 observations")
+            try expect(!reloaded.observations.contains(where: { $0.id == firstID }), "oldest observation should be evicted at the retention bound")
+            try expect(reloaded.observations.last?.id == latestID, "newest observation should survive a restart")
+            try expect(reloaded.observations.last?.cancelled == true, "cancelled scan status should persist")
+            try expect(reloaded.observations.last?.folders.first?.complete == false, "incomplete folder coverage should persist")
+        }
+    }
+
+    private static func testCorruptHistoryIsLeftUntouched() throws {
+        try withTemporaryDirectory { root in
+            let fileURL = root.appendingPathComponent("history.json")
+            let corruptData = Data("{not valid json".utf8)
+            try corruptData.write(to: fileURL)
+            do {
+                _ = try ObservationStore.append(
+                    ScanObservation(startedAt: .now, folders: [], cancelled: false),
+                    to: fileURL
+                )
+                throw CheckFailure.assertion("append should fail closed for corrupt history")
+            } catch is HistoryDecodeError {
+                let persistedData = try Data(contentsOf: fileURL)
+                try expect(persistedData == corruptData, "corrupt history must remain unchanged")
+            }
+        }
     }
 
     private static func withTemporaryDirectory(_ body: (URL) throws -> Void) throws {

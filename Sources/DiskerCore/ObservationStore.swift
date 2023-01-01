@@ -11,8 +11,8 @@ public struct LocalHistory: Codable, Sendable {
 public enum ObservationStore {
     private static let fileName = "observations.json"
 
-    public static func load() throws -> LocalHistory {
-        guard let url = historyURL() else { throw StorageReadError.historyLocationUnavailable }
+    public static func load(from fileURL: URL? = nil) throws -> LocalHistory {
+        guard let url = fileURL ?? historyURL() else { throw StorageReadError.historyLocationUnavailable }
         guard FileManager.default.fileExists(atPath: url.path) else { return LocalHistory() }
         let data = try Data(contentsOf: url)
         do {
@@ -23,11 +23,11 @@ public enum ObservationStore {
     }
 
     @discardableResult
-    public static func append(_ observation: ScanObservation) throws -> LocalHistory {
-        var history = try load()
+    public static func append(_ observation: ScanObservation, to fileURL: URL? = nil) throws -> LocalHistory {
+        var history = try load(from: fileURL)
         history.observations.append(observation)
         history.observations = Array(history.observations.suffix(180))
-        guard let url = historyURL() else { throw StorageReadError.historyLocationUnavailable }
+        guard let url = fileURL ?? historyURL() else { throw StorageReadError.historyLocationUnavailable }
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
