@@ -56,6 +56,9 @@ private struct DiskerCoreChecks {
         let resolved = CapacityObservation.resolvedAvailableCapacity(importantUsage: 0, standard: 42)
         try expect(resolved?.bytes == 42, "zero important-usage result should fall back to standard availability")
         try expect(resolved?.basis == .standardVolume, "fallback must identify the standard volume API")
+        let negative = CapacityObservation.resolvedAvailableCapacity(importantUsage: -1, standard: 24)
+        try expect(negative?.bytes == 24, "negative important-usage result should fall back to a valid standard value")
+        try expect(CapacityObservation.resolvedAvailableCapacity(importantUsage: -1, standard: nil) == nil, "negative capacity values must not be presented as measurements")
     }
 
     private static func testLiveCapacitySource() throws {

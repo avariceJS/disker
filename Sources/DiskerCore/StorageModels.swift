@@ -52,11 +52,11 @@ public struct CapacityObservation: Codable, Equatable, Sendable {
         if let importantUsage, importantUsage > 0 {
             return (importantUsage, .importantUsage)
         }
-        if let standard {
+        if let standard, standard >= 0 {
             return (Int64(standard), .standardVolume)
         }
-        if let importantUsage {
-            return (importantUsage, .importantUsage)
+        if importantUsage == 0 {
+            return (0, .importantUsage)
         }
         return nil
     }
