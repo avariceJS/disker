@@ -1,4 +1,5 @@
 import DiskerCore
+import Darwin
 import Foundation
 
 private enum CheckFailure: Error, CustomStringConvertible {
@@ -23,6 +24,7 @@ private struct DiskerCoreChecks {
             ("metadata scan and symlink exclusion", testMetadataScanAndSymlinkExclusion),
             ("selected symlink root is incomplete", testSelectedSymlinkRootIsIncomplete),
             ("hard-link deduplication", testHardLinkDeduplication),
+            ("sparse file size accounting", testSparseFileAccounting),
             ("missing root coverage", testMissingRootCoverage),
             ("immediate cancellation", testImmediateCancellation),
             ("history persistence and bounded retention", testHistoryPersistenceAndRetention),
@@ -108,6 +110,24 @@ private struct DiskerCoreChecks {
             let result = FolderScanner.scan(roots: [root])
             try expect(result.folders[0].logicalBytes == 2048, "hard links must not double-count logical bytes")
             try expect(result.folders[0].fileCount == 1, "hard links must identify one file object")
+        }
+    }
+
+    private static func testSparseFileAccounting() throws {
+        try withTemporaryDirectory { root in
+            let sparseURL = root.appendingPathComponent("sparse.bin")
+            let descriptor = sparseURL.path.withCString {
+                open($0, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR)
+            }
+            try expect(descriptor >= 0, "synthetic sparse file should be created")
+            let logicalSize: off_t = 64 * 1024 * 1024
+            let truncateResult = ftruncate(descriptor, logicalSize)
+            close(descriptor)
+            try expect(truncateResult == 0, "synthetic sparse file should be extended without writing contents")
+
+            let result = FolderScanner.scan(roots: [root])
+            try expect(result.folders[0].logicalBytes == Int64(logicalSize), "logical accounting should include sparse file length")
+            try expect(result.folders[0].allocatedBytes < result.folders[0].logicalBytes, "allocated estimate should distinguish unallocated sparse regions")
         }
     }
 

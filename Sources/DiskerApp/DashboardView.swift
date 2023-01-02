@@ -318,9 +318,24 @@ struct DashboardView: View {
                             }
                             ForEach(observation.folders) { folder in
                                 HStack {
-                                    Text(folder.displayName)
-                                    Spacer()
-                                    Text(ByteCountFormatter.string(fromByteCount: folder.allocatedBytes, countStyle: .file))
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(folder.displayName)
+                                        Text(folder.path).font(.caption2).foregroundStyle(.secondary)
+                                            .lineLimit(1).truncationMode(.middle)
+                                    }
+                                    Spacer(minLength: 12)
+                                    VStack(alignment: .trailing, spacing: 3) {
+                                        Text(ByteCountFormatter.string(fromByteCount: folder.allocatedBytes, countStyle: .file))
+                                        if let previous = ObservationComparison.previousCompleteFolder(for: folder, in: model.history),
+                                           let delta = ObservationComparison.allocatedByteDelta(current: folder, previous: previous) {
+                                            Text("Δ \(formattedDelta(delta))")
+                                                .font(.caption2)
+                                                .foregroundStyle(delta >= 0 ? .orange : .green)
+                                        } else if folder.complete {
+                                            Text("No earlier complete match")
+                                                .font(.caption2).foregroundStyle(.secondary)
+                                        }
+                                    }
                                     if !folder.complete {
                                         Text("Partial").font(.caption).foregroundStyle(.orange)
                                     }
@@ -461,7 +476,7 @@ struct DashboardView: View {
                             if !folder.complete { Text("Partial · \(folder.inaccessibleCount) inaccessible").foregroundStyle(.orange) }
                             if let previous = model.previousCompleteObservation(for: folder) {
                                 if let delta = ObservationComparison.allocatedByteDelta(current: folder, previous: previous) {
-                                    Text("Since previous \(delta >= 0 ? "+" : "−")\(format(delta.magnitude > UInt64(Int64.max) ? Int64.max : Int64(delta.magnitude)))")
+                                    Text("Since previous \(formattedDelta(delta))")
                                         .foregroundStyle(delta >= 0 ? .orange : .green)
                                 } else {
                                     Text("Comparison unavailable")
@@ -526,6 +541,11 @@ struct DashboardView: View {
 
     private func format(_ bytes: UInt64) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(min(bytes, UInt64(Int64.max))), countStyle: .memory)
+    }
+
+    private func formattedDelta(_ bytes: Int64) -> String {
+        let magnitude = bytes == Int64.min ? Int64.max : abs(bytes)
+        return "\(bytes >= 0 ? "+" : "−")\(format(magnitude))"
     }
 
     private func icon(for section: String) -> String {
