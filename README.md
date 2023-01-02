@@ -7,12 +7,12 @@ Disker is a native macOS storage observability app. It separates macOS-reported 
 Requires a Swift 5.9+ toolchain and a macOS 14 or newer SDK. Xcode is useful for normal IDE workflows; the Swift package also builds with Command Line Tools.
 
 ```sh
-swift build
 scripts/check-core.sh
-swift run Disker
+scripts/package-app.sh
+open .build/Disker.app
 ```
 
-Create a native Finder-launchable bundle with `scripts/package-app.sh`; it is an unsigned development app under `.build/Disker.app`. This is not a signed or notarized release and is not installed into `/Applications`. The scripts use SwiftPM's `--disable-sandbox` for build subprocesses because this development environment disallows SwiftPM's nested sandbox. This package has no dependencies or build plugins.
+The bundle is an unsigned development app under `.build/Disker.app`. This is not a signed or notarized release and is not installed into `/Applications`. The scripts use SwiftPM's `--disable-sandbox` for build subprocesses because this development environment disallows SwiftPM's nested sandbox. This package has no dependencies or build plugins.
 
 ## Current behavior
 
@@ -22,7 +22,7 @@ Create a native Finder-launchable bundle with `scripts/package-app.sh`; it is an
 - Does not follow symbolic links; deduplicates hard links within each selected folder.
 - Shows logical file size separately from allocated blocks summed from `st_blocks`.
 - Saves the latest 180 scan observations under `~/Library/Application Support/Disker/observations.json`.
-- Compares a complete folder scan to the previous complete scan for the same path.
+- Compares complete folder scans to earlier complete scans for the same path; incomplete scans never produce growth deltas.
 - Provides Finder reveal for selected folder roots.
 - Provides a separate, manual RAM sample using Mach VM page counts and process resident sizes.
 - Does not include cleanup, duplicate hashing, background monitoring, or application ownership attribution yet.
@@ -33,6 +33,6 @@ RAM is sampled on demand. Inactive pages may be reclaimable cache; process resid
 
 ## Privacy
 
-No account, network service, or telemetry is used. Folder selection is explicit per scan. The app stores metadata observations locally; history can be removed by deleting the app's `Application Support/Disker` folder after quitting the app. The owner-provided `MISSION.md` is kept in the local workspace and excluded from Git because it contains machine- and project-specific context.
+No account, network service, or telemetry is used. Folder selection is explicit per scan. The app stores metadata observations locally; history can be removed by deleting the app's `Application Support/Disker` folder after quitting the app.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/HANDOFF.md](docs/HANDOFF.md), and [MISSION.md](MISSION.md).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/HANDOFF.md](docs/HANDOFF.md).
