@@ -79,15 +79,22 @@ private struct DiskerCoreChecks {
                 .appendingPathComponent("Disker-outside-\(UUID().uuidString)")
             try Data(repeating: 0x11, count: 4096).write(to: outside)
             defer { try? FileManager.default.removeItem(at: outside) }
+            let nested = root.appendingPathComponent("nested", isDirectory: true)
+            try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+            try Data(repeating: 0x2B, count: 1024).write(to: nested.appendingPathComponent("nested.bin"))
             try FileManager.default.createSymbolicLink(
                 at: root.appendingPathComponent("external-link"),
                 withDestinationURL: outside
             )
+            try FileManager.default.createSymbolicLink(
+                at: nested.appendingPathComponent("loop"),
+                withDestinationURL: root
+            )
 
             let result = FolderScanner.scan(roots: [root])
             try expect(result.folders.count == 1, "one selected root should yield one result")
-            try expect(result.folders[0].logicalBytes == Int64(data.count), "symlink target must not be counted")
-            try expect(result.folders[0].fileCount == 1, "only the regular file should be counted")
+            try expect(result.folders[0].logicalBytes == Int64(data.count + 1024), "nested files should count while symlink targets remain excluded")
+            try expect(result.folders[0].fileCount == 2, "both regular files should be counted once")
             try expect(result.folders[0].complete, "readable synthetic folder should be complete")
         }
     }

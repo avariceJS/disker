@@ -7,7 +7,7 @@ Updated: 2026-10-19 (actual session date).
 - Native SwiftUI macOS app with volume capacity, selected-folder metadata scans, local bounded history, same-path comparisons, Finder reveal, and on-demand RAM/process sampling.
 - Folder traversal uses descriptor-relative `openat`/`fstatat` with `O_NOFOLLOW`, skips symlinks, deduplicates hard links within a selected root, and marks unreadable or selected symlink roots incomplete.
 - RAM process sampling uses `proc_listallpids`' process-count return value, sizes its byte buffer accordingly, and retries when the process table grows.
-- `scripts/check-core.sh`: 15 checks pass, including restart persistence, bounded retention, fail-closed corrupt history, safe same-path comparisons, progress callbacks, and cancellation with partial coverage. `scripts/package-app.sh`: release app bundle builds. The bundle is unsigned and not installed. Visual UI review was blocked by the computer-use approval layer.
+- `scripts/check-core.sh`: 15 checks pass, including restart persistence, bounded retention, fail-closed corrupt history, safe same-path comparisons, progress callbacks, and cancellation with partial coverage. The UI shows the current path during long scans and offers cancellation. `scripts/package-app.sh`: release app bundle builds; plist lint passes and the binary is arm64. The bundle is unsigned and not installed. Visual UI review was blocked by the computer-use approval layer.
 - `.gitignore` excludes Swift/build outputs, app bundles, local metadata, logs, databases, credentials/certificates, and the owner-specific `MISSION.md`. Credential-pattern scan found no matches among project files.
 
 ## Repository and environment

@@ -13,7 +13,7 @@ public enum FolderScanner {
     }
 
     private struct PendingDirectory {
-        let descriptor: Int32
+        let components: [String]
         let path: String
     }
 
@@ -88,17 +88,24 @@ public enum FolderScanner {
                 continue
             }
 
-            var pending = [PendingDirectory(descriptor: rootFD, path: root.path)]
-            defer { for directory in pending { close(directory.descriptor) } }
+            var pending = [PendingDirectory(components: [], path: root.path)]
+            defer { close(rootFD) }
 
             while let directory = pending.popLast() {
-                defer { close(directory.descriptor) }
                 if shouldCancel() {
                     cancelled = true
                     complete = false
                     break
                 }
-                let streamFD = dup(directory.descriptor)
+                let directoryFD = openDirectory(rootFD: rootFD, components: directory.components)
+                guard directoryFD >= 0 else {
+                    inaccessibleCount += 1
+                    complete = false
+                    continue
+                }
+                defer { close(directoryFD) }
+
+                let streamFD = dup(directoryFD)
                 guard streamFD >= 0, let stream = fdopendir(streamFD) else {
                     if streamFD >= 0 { close(streamFD) }
                     inaccessibleCount += 1
@@ -130,7 +137,7 @@ public enum FolderScanner {
 
                     var metadata = stat()
                     let statResult = name.withCString {
-                        fstatat(directory.descriptor, $0, &metadata, AT_SYMLINK_NOFOLLOW)
+                        fstatat(directoryFD, $0, &metadata, AT_SYMLINK_NOFOLLOW)
                     }
                     guard statResult == 0 else {
                         inaccessibleCount += 1
@@ -141,15 +148,9 @@ public enum FolderScanner {
                     let fullPath = (directory.path as NSString).appendingPathComponent(name)
                     if type == S_IFLNK { continue }
                     if type == S_IFDIR {
-                        let childFD = name.withCString {
-                            openat(directory.descriptor, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-                        }
-                        if childFD < 0 {
-                            inaccessibleCount += 1
-                            complete = false
-                        } else {
-                            pending.append(PendingDirectory(descriptor: childFD, path: fullPath))
-                        }
+                        pending.append(PendingDirectory(
+                            components: directory.components + [name], path: fullPath
+                        ))
                         continue
                     }
                     record(metadata)
@@ -181,5 +182,19 @@ public enum FolderScanner {
         }
 
         return ScanObservation(startedAt: startedAt, folders: results, cancelled: cancelled)
+    }
+
+    private static func openDirectory(rootFD: Int32, components: [String]) -> Int32 {
+        var descriptor = dup(rootFD)
+        guard descriptor >= 0 else { return -1 }
+        for component in components {
+            let child = component.withCString {
+                openat(descriptor, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            }
+            close(descriptor)
+            guard child >= 0 else { return -1 }
+            descriptor = child
+        }
+        return descriptor
     }
 }
