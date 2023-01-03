@@ -28,6 +28,7 @@ private struct DiskerCoreChecks {
             ("missing root coverage", testMissingRootCoverage),
             ("immediate cancellation", testImmediateCancellation),
             ("history persistence and bounded retention", testHistoryPersistenceAndRetention),
+            ("history reset is limited to its own file", testHistoryClearIsScoped),
             ("corrupt history is left untouched", testCorruptHistoryIsLeftUntouched),
             ("same-path complete history comparison", testSamePathCompleteHistoryComparison),
             ("scan progress callback", testScanProgressCallback),
@@ -210,6 +211,28 @@ private struct DiskerCoreChecks {
                 let persistedData = try Data(contentsOf: fileURL)
                 try expect(persistedData == corruptData, "corrupt history must remain unchanged")
             }
+        }
+    }
+
+    private static func testHistoryClearIsScoped() throws {
+        try withTemporaryDirectory { root in
+            let fileURL = root.appendingPathComponent("nested/history.json")
+            let neighboringFile = root.appendingPathComponent("user-file.txt")
+            let sentinel = Data("synthetic user file stays intact".utf8)
+            try sentinel.write(to: neighboringFile)
+            let observation = ScanObservation(
+                startedAt: .now,
+                folders: [syntheticFolder(path: "/synthetic", bytes: 100, complete: true)],
+                cancelled: false
+            )
+            try ObservationStore.append(observation, to: fileURL)
+
+            try ObservationStore.clear(at: fileURL)
+            try ObservationStore.clear(at: fileURL)
+            let reloaded = try ObservationStore.load(from: fileURL)
+            try expect(reloaded.observations.isEmpty, "clearing history should leave an empty store")
+            let preservedNeighbor = try Data(contentsOf: neighboringFile)
+            try expect(preservedNeighbor == sentinel, "history reset must not remove neighboring files")
         }
     }
 

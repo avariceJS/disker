@@ -89,6 +89,16 @@ final class DashboardModel {
         scanTask?.cancel()
     }
 
+    func clearHistory() {
+        do {
+            try ObservationStore.clear()
+            history = LocalHistory()
+            errorMessage = nil
+        } catch {
+            errorMessage = "Local history could not be cleared: \(error.localizedDescription)"
+        }
+    }
+
     func previousCompleteObservation(for folder: FolderObservation) -> FolderObservation? {
         ObservationComparison.previousCompleteFolder(for: folder, in: history)
     }
@@ -97,6 +107,7 @@ final class DashboardModel {
 struct DashboardView: View {
     @State private var model = DashboardModel()
     @State private var selectedSection: String? = "Overview"
+    @State private var isConfirmingHistoryClear = false
 
     private let sections = ["Overview", "Folders", "History", "RAM", "About"]
 
@@ -144,6 +155,16 @@ struct DashboardView: View {
             Button("OK", role: .cancel) { model.errorMessage = nil }
         } message: {
             Text(model.errorMessage ?? "")
+        }
+        .confirmationDialog(
+            "Clear saved folder observations?",
+            isPresented: $isConfirmingHistoryClear,
+            titleVisibility: .visible
+        ) {
+            Button("Clear History", role: .destructive) { model.clearHistory() }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This removes Disker's local scan history only. Your files and folders will not be changed.")
         }
     }
 
@@ -375,6 +396,19 @@ struct DashboardView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 } label: {
                     Text("Measurement limits")
+                }
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Remove saved folder paths, sizes, and scan dates from this Mac. Scanned files are not changed.")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Clear Local History…", role: .destructive) {
+                            isConfirmingHistoryClear = true
+                        }
+                        .disabled(model.history.observations.isEmpty)
+                    }
+                } label: {
+                    Text("Local history")
                 }
             }
             .padding(30)
