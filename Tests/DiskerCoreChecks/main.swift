@@ -276,11 +276,20 @@ private struct DiskerCoreChecks {
                 )
             }
             var reported: ScanProgress?
+            var usageBefore = rusage()
+            _ = getrusage(RUSAGE_SELF, &usageBefore)
+            let scanStartedAt = Date.now
             let result = FolderScanner.scan(roots: [root], progress: { reported = $0 })
+            let wallSeconds = Date.now.timeIntervalSince(scanStartedAt)
+            var usageAfter = rusage()
+            _ = getrusage(RUSAGE_SELF, &usageAfter)
             try expect(result.folders[0].fileCount == 256, "progress fixture should measure every file")
             try expect(result.folders[0].complete, "wide directory trees should not exhaust open directory descriptors")
             try expect(reported?.visitedFiles == 256, "scanner should report its 256-file progress interval")
             try expect(reported?.currentPath.hasPrefix(root.path) == true, "progress should identify a path within the selected root")
+            let cpuSeconds = usageSeconds(usageAfter.ru_utime) + usageSeconds(usageAfter.ru_stime)
+                - usageSeconds(usageBefore.ru_utime) - usageSeconds(usageBefore.ru_stime)
+            print(String(format: "  synthetic scan (256 files, 300 directories): %.3f s wall, %.3f s process CPU", wallSeconds, cpuSeconds))
         }
     }
 
@@ -311,5 +320,9 @@ private struct DiskerCoreChecks {
 
     private static func expect(_ condition: @autoclosure () -> Bool, _ message: String) throws {
         guard condition() else { throw CheckFailure.assertion(message) }
+    }
+
+    private static func usageSeconds(_ time: timeval) -> Double {
+        Double(time.tv_sec) + Double(time.tv_usec) / 1_000_000
     }
 }

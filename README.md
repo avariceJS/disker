@@ -33,6 +33,6 @@ RAM is sampled on demand. Inactive pages may be reclaimable cache; process resid
 
 ## Privacy
 
-No account, network service, or telemetry is used. Folder selection is explicit per scan. The app stores metadata observations locally; history can be removed by deleting the app's `Application Support/Disker` folder after quitting the app.
+No account, network service, or telemetry is used. Folder selection is explicit per scan. The app stores metadata observations locally; the About page's confirmed “Clear Local History…” action removes only Disker's saved observations.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/HANDOFF.md](docs/HANDOFF.md).
