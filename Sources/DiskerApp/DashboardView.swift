@@ -27,7 +27,6 @@ final class DashboardModel {
     func refreshCapacity() {
         do {
             capacity = try CapacityObservation.current()
-            errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -61,7 +60,6 @@ final class DashboardModel {
     func scan(_ urls: [URL]) {
         guard !urls.isEmpty, !isScanning else { return }
         isScanning = true
-        errorMessage = nil
         currentPath = ""
         let scanTask = Task.detached(priority: .utility) {
             FolderScanner.scan(roots: urls, progress: { [weak self] progress in
@@ -405,7 +403,6 @@ struct DashboardView: View {
                         Button("Clear Local History…", role: .destructive) {
                             isConfirmingHistoryClear = true
                         }
-                        .disabled(model.history.observations.isEmpty)
                     }
                 } label: {
                     Text("Local history")

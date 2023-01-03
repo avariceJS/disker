@@ -29,7 +29,7 @@ private struct DiskerCoreChecks {
             ("immediate cancellation", testImmediateCancellation),
             ("history persistence and bounded retention", testHistoryPersistenceAndRetention),
             ("history reset is limited to its own file", testHistoryClearIsScoped),
-            ("corrupt history is left untouched", testCorruptHistoryIsLeftUntouched),
+            ("corrupt history fails closed and can be reset", testCorruptHistoryIsLeftUntouched),
             ("same-path complete history comparison", testSamePathCompleteHistoryComparison),
             ("scan progress callback", testScanProgressCallback),
             ("cancellation preserves partial coverage", testCancellationPreservesPartialCoverage),
@@ -210,6 +210,9 @@ private struct DiskerCoreChecks {
             } catch is HistoryDecodeError {
                 let persistedData = try Data(contentsOf: fileURL)
                 try expect(persistedData == corruptData, "corrupt history must remain unchanged")
+                try ObservationStore.clear(at: fileURL)
+                let reset = try ObservationStore.load(from: fileURL)
+                try expect(reset.observations.isEmpty, "explicit history reset should recover from a corrupt store")
             }
         }
     }
