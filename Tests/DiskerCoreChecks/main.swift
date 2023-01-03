@@ -269,9 +269,16 @@ private struct DiskerCoreChecks {
             for index in 0..<256 {
                 try Data([UInt8(index % 255)]).write(to: root.appendingPathComponent("file-\(index).bin"))
             }
+            for index in 0..<300 {
+                try FileManager.default.createDirectory(
+                    at: root.appendingPathComponent("directory-\(index)", isDirectory: true),
+                    withIntermediateDirectories: false
+                )
+            }
             var reported: ScanProgress?
             let result = FolderScanner.scan(roots: [root], progress: { reported = $0 })
             try expect(result.folders[0].fileCount == 256, "progress fixture should measure every file")
+            try expect(result.folders[0].complete, "wide directory trees should not exhaust open directory descriptors")
             try expect(reported?.visitedFiles == 256, "scanner should report its 256-file progress interval")
             try expect(reported?.currentPath.hasPrefix(root.path) == true, "progress should identify a path within the selected root")
         }
