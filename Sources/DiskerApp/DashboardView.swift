@@ -289,7 +289,7 @@ struct DashboardView: View {
 
     private var methodologyNote: some View {
         Label {
-            Text("The capacity figure comes from macOS. Folder totals are a separate file-tree estimate: snapshots, clones and system-managed storage can make them differ. Inaccessible items are reported as incomplete, never as zero.")
+            Text("The capacity figure comes from macOS. Folder totals are a separate file-tree estimate: snapshots, clones and system-managed storage can make them differ. Unmeasured items are reported as incomplete, never as zero.")
         } icon: {
             Image(systemName: "info.circle")
         }
@@ -356,7 +356,8 @@ struct DashboardView: View {
                                         }
                                     }
                                     if !folder.complete {
-                                        Text("Partial").font(.caption).foregroundStyle(.orange)
+                                        Text("Partial · \(folder.inaccessibleCount) unmeasured")
+                                            .font(.caption).foregroundStyle(.orange)
                                     }
                                 }
                                 .font(.subheadline)
@@ -504,7 +505,7 @@ struct DashboardView: View {
                         HStack(spacing: 8) {
                             Text("Logical \(format(folder.logicalBytes))")
                             Text("Allocated estimate \(format(folder.allocatedBytes))")
-                            if !folder.complete { Text("Partial · \(folder.inaccessibleCount) inaccessible").foregroundStyle(.orange) }
+                            if !folder.complete { Text("Partial · \(folder.inaccessibleCount) unmeasured").foregroundStyle(.orange) }
                             if let previous = model.previousCompleteObservation(for: folder) {
                                 if let delta = ObservationComparison.allocatedByteDelta(current: folder, previous: previous) {
                                     Text("Since previous \(formattedDelta(delta))")

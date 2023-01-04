@@ -1,6 +1,6 @@
 .DS_Store
 /.gitmeta/
-MISSION.md
+/.codex/
 .build/
 .swiftpm/
 DerivedData/
