@@ -388,7 +388,12 @@ struct DashboardView: View {
                                         }
                                     }
                                     if !folder.complete {
-                                        Text("Partial · \(folder.inaccessibleCount) unmeasured")
+                                        Text(coverageSummary(
+                                            inaccessible: folder.inaccessibleCount,
+                                            excludedSymlinks: folder.excludedSymlinkCount,
+                                            changed: folder.changedDuringScanCount,
+                                            wasCancelled: observation.cancelled
+                                        ))
                                             .font(.caption).foregroundStyle(.orange)
                                     }
                                 }
@@ -543,6 +548,7 @@ struct DashboardView: View {
                                 Text(coverageSummary(
                                     inaccessible: folder.inaccessibleCount,
                                     excludedSymlinks: folder.excludedSymlinkCount,
+                                    changed: folder.changedDuringScanCount,
                                     wasCancelled: scanCancelled
                                 ))
                                 .foregroundStyle(.orange)
@@ -607,6 +613,7 @@ struct DashboardView: View {
                                             Text(coverageSummary(
                                                 inaccessible: directory.incompleteCount,
                                                 excludedSymlinks: directory.excludedSymlinkCount,
+                                                changed: directory.changedDuringScanCount,
                                                 wasCancelled: scanCancelled
                                             ))
                                             .foregroundStyle(.orange)
@@ -704,11 +711,12 @@ struct DashboardView: View {
     }
 
     private func coverageSummary(
-        inaccessible: Int, excludedSymlinks: Int, wasCancelled: Bool
+        inaccessible: Int, excludedSymlinks: Int, changed: Int, wasCancelled: Bool
     ) -> String {
         var details: [String] = []
         if inaccessible > 0 { details.append("\(inaccessible) unmeasured") }
         if excludedSymlinks > 0 { details.append("\(excludedSymlinks) symlinks not followed") }
+        if changed > 0 { details.append("\(changed) changed during scan") }
         if wasCancelled && details.isEmpty { details.append("scan cancelled") }
         return details.isEmpty ? "Coverage incomplete" : "Partial · " + details.joined(separator: " · ")
     }

@@ -71,6 +71,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     public let fileCount: Int
     public let inaccessibleCount: Int
     public let excludedSymlinkCount: Int
+    public let changedDuringScanCount: Int
     public let finishedAt: Date
     public let complete: Bool
     public let subdirectorySummaries: [DirectoryUsage]
@@ -81,6 +82,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         logicalBytes: Int64, allocatedBytes: Int64, fileCount: Int,
         inaccessibleCount: Int, finishedAt: Date = .now, complete: Bool,
         excludedSymlinkCount: Int = 0,
+        changedDuringScanCount: Int = 0,
         subdirectorySummaries: [DirectoryUsage] = [],
         subdirectorySummariesTruncated: Bool = false
     ) {
@@ -92,6 +94,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         self.fileCount = fileCount
         self.inaccessibleCount = inaccessibleCount
         self.excludedSymlinkCount = excludedSymlinkCount
+        self.changedDuringScanCount = changedDuringScanCount
         self.finishedAt = finishedAt
         self.complete = complete
         self.subdirectorySummaries = subdirectorySummaries
@@ -100,7 +103,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, path, displayName, logicalBytes, allocatedBytes, fileCount
-        case inaccessibleCount, excludedSymlinkCount, finishedAt, complete
+        case inaccessibleCount, excludedSymlinkCount, changedDuringScanCount, finishedAt, complete
         case subdirectorySummaries, subdirectorySummariesTruncated
     }
 
@@ -114,6 +117,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         fileCount = try values.decode(Int.self, forKey: .fileCount)
         inaccessibleCount = try values.decode(Int.self, forKey: .inaccessibleCount)
         excludedSymlinkCount = try values.decodeIfPresent(Int.self, forKey: .excludedSymlinkCount) ?? 0
+        changedDuringScanCount = try values.decodeIfPresent(Int.self, forKey: .changedDuringScanCount) ?? 0
         finishedAt = try values.decode(Date.self, forKey: .finishedAt)
         complete = try values.decode(Bool.self, forKey: .complete)
         subdirectorySummaries = try values.decodeIfPresent([DirectoryUsage].self, forKey: .subdirectorySummaries) ?? []
@@ -130,6 +134,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         try values.encode(fileCount, forKey: .fileCount)
         try values.encode(inaccessibleCount, forKey: .inaccessibleCount)
         try values.encode(excludedSymlinkCount, forKey: .excludedSymlinkCount)
+        try values.encode(changedDuringScanCount, forKey: .changedDuringScanCount)
         try values.encode(finishedAt, forKey: .finishedAt)
         try values.encode(complete, forKey: .complete)
         try values.encode(subdirectorySummaries, forKey: .subdirectorySummaries)
@@ -147,11 +152,13 @@ public struct DirectoryUsage: Codable, Equatable, Sendable {
     public let fileCount: Int
     public let incompleteCount: Int
     public let excludedSymlinkCount: Int
+    public let changedDuringScanCount: Int
     public let complete: Bool
 
     public init(
         rootRelativePath: String, logicalBytes: Int64, allocatedBytes: Int64,
         fileCount: Int, incompleteCount: Int, excludedSymlinkCount: Int,
+        changedDuringScanCount: Int = 0,
         complete: Bool
     ) {
         self.rootRelativePath = rootRelativePath
@@ -160,7 +167,25 @@ public struct DirectoryUsage: Codable, Equatable, Sendable {
         self.fileCount = fileCount
         self.incompleteCount = incompleteCount
         self.excludedSymlinkCount = excludedSymlinkCount
+        self.changedDuringScanCount = changedDuringScanCount
         self.complete = complete
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case rootRelativePath, logicalBytes, allocatedBytes, fileCount
+        case incompleteCount, excludedSymlinkCount, changedDuringScanCount, complete
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        rootRelativePath = try values.decode(String.self, forKey: .rootRelativePath)
+        logicalBytes = try values.decode(Int64.self, forKey: .logicalBytes)
+        allocatedBytes = try values.decode(Int64.self, forKey: .allocatedBytes)
+        fileCount = try values.decode(Int.self, forKey: .fileCount)
+        incompleteCount = try values.decode(Int.self, forKey: .incompleteCount)
+        excludedSymlinkCount = try values.decode(Int.self, forKey: .excludedSymlinkCount)
+        changedDuringScanCount = try values.decodeIfPresent(Int.self, forKey: .changedDuringScanCount) ?? 0
+        complete = try values.decode(Bool.self, forKey: .complete)
     }
 }
 

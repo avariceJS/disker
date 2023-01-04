@@ -5,13 +5,14 @@ Updated: 2026-10-19 (actual session date).
 ## Verified checkpoint
 
 - Native SwiftUI macOS app with system-reported volume capacity, selected-folder metadata scans, bounded local history, same-path complete comparisons, directory summaries, Finder reveal, and on-demand RAM/process sampling.
-- Folder traversal uses descriptor-relative `openat`/`fstatat` with `O_NOFOLLOW`, skips symlinks, counts excluded symlinks as incomplete coverage, deduplicates hard links within one selected root, and marks unreadable roots incomplete. Directory summaries show up to the 100 largest descendants; their nested totals overlap and are not additive. Hard-linked bytes are assigned to one stable relative path. A tree changing during traversal is not reconciled and remains a measurement limitation.
+- Folder traversal uses descriptor-relative `openat`/`fstatat` with `O_NOFOLLOW`, skips symlinks, counts excluded symlinks as incomplete coverage, deduplicates hard links within one selected root, and marks unreadable roots incomplete. It verifies discovered directory identities on open and compares directory metadata before and after listing; detected changes are a distinct partial-coverage reason. Individual file writes after their metadata sample can still race the scan, which is not an atomic snapshot. Directory summaries show up to the 100 largest descendants; nested totals overlap and are not additive. Hard-linked bytes are assigned to one stable relative path.
 - RAM process sampling uses `proc_listallpids`' process-count return value, sizes its byte buffer accordingly, and retries when the process table grows. Capacity fallback accepts only nonnegative OS values.
-- Xcode-selected `scripts/check-core.sh` passed all 20 checks, including nested directory aggregation, symlink exclusion, hard links, history compatibility, cancellation, and bounded retention. The 256-file/300-directory synthetic scan completed in 0.009 s wall and process CPU; this tiny fixture is not a representative large-workload benchmark.
+- Xcode-selected `scripts/check-core.sh` passed all 22 checks twice, including a synthetic directory mutation during scan that must produce partial coverage, nested directory aggregation, symlink exclusion, hard links, backward-compatible history decoding, cancellation, and bounded retention. The 256-file/300-directory synthetic scan completed in 0.009–0.010 s wall and process CPU; this tiny fixture is not a representative large-workload benchmark.
 - Xcode-selected `scripts/package-app.sh` built the arm64 release bundle. `xcodebuild -version` reports Xcode 27.1 (27A9275); Swift is 6.4.0.34.1 and `xcode-select -p` points to `/Applications/Xcode.app/Contents/Developer`.
 - GUI validation was performed on the running native app. The overview was visually inspected, including the two separated capacity labels. Through the system folder panel, only this repository's `Tests` folder was measured (25 KB logical, 29 KB allocated estimate, one file), and the “Scan this folder…” action correctly opened the selected `Tests/DiskerCoreChecks` subfolder. The subfolder was then measured as a new root. No personal folders were scanned.
 - A repeat of the same `Tests` root displayed the measured allocated-byte change for both the root and matching `DiskerCoreChecks` subtree, based on the prior complete observation. The current app shows “No allocated-size change” for zero deltas. Synthetic tests confirm that changed roots, changed relative directory paths, incomplete observations, and future observations cannot be compared.
-- The app bundle is still unsigned and has not been installed as a distribution build. Large-workload/idle resource benchmarks, mutation-race accounting, app/project ownership attribution, RAM trends, and read-only cleanup-plan support remain open. No file deletion is implemented or authorized.
+- The latest unsigned development bundle is installed at `~/Applications/Disker.app` and was launched directly through LaunchServices; the running process path confirmed the installed copy. Finder/LaunchServices access works locally; this build is not signed or notarized for redistribution.
+- Large-workload/idle resource benchmarks, file-content race detection, app/project ownership attribution, RAM trends, and read-only cleanup-plan support remain open. No file deletion is implemented or authorized.
 - `.gitignore` excludes `.gitmeta`, local `.codex` configuration, Swift/build outputs, app bundles, logs, databases, credentials, and certificates. `MISSION.md` is included in the repository.
 
 ## Repository and environment
@@ -23,7 +24,6 @@ Updated: 2026-10-19 (actual session date).
 
 ## Next priorities
 
-1. Investigate scan-time tree mutation and stable directory accounting without weakening the no-follow boundary.
-2. Develop defensible app/project attribution and RAM trends from measured inputs; avoid guessing ownership from folder names.
-3. Add bounded, user-approved duplicate verification and read-only cleanup plans only if these can be explained safely. Never delete real user data.
-4. Measure representative scan and idle resource costs; install the normal app build for Finder launch and add uninstall guidance, Xcode/App Store sandbox analysis, and a compact dependency inventory.
+1. Develop defensible app/project attribution and RAM trends from measured inputs; avoid guessing ownership from folder names.
+2. Add bounded, user-approved duplicate verification and read-only cleanup plans only if these can be explained safely. Never delete real user data.
+3. Measure representative scan and idle resource costs; add install/update/uninstall verification, Xcode/App Store sandbox analysis, and a compact dependency inventory.

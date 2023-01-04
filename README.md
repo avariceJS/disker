@@ -9,10 +9,12 @@ Requires a Swift 5.9+ toolchain and a macOS 14 or newer SDK. Xcode is useful for
 ```sh
 scripts/check-core.sh
 scripts/package-app.sh
-open .build/Disker.app
+mkdir -p "$HOME/Applications"
+ditto .build/Disker.app "$HOME/Applications/Disker.app"
+open "$HOME/Applications/Disker.app"
 ```
 
-The bundle is an unsigned development app under `.build/Disker.app`. This is not a signed or notarized release and is not installed into `/Applications`. The scripts use SwiftPM's `--disable-sandbox` for build subprocesses because this development environment disallows SwiftPM's nested sandbox. This package has no dependencies or build plugins.
+The bundle is an unsigned development app under `.build/Disker.app`. The user-level `~/Applications/Disker.app` copy is convenient for Finder and LaunchServices, but this is not a signed or notarized release and is not installed system-wide in `/Applications`. To remove the app, move it to Trash in Finder; clear Disker's locally stored observations first from **About → Clear Local History…** if desired. The scripts use SwiftPM's `--disable-sandbox` for build subprocesses because this development environment disallows SwiftPM's nested sandbox. This package has no dependencies or build plugins.
 
 ## Current behavior
 
@@ -20,9 +22,11 @@ The bundle is an unsigned development app under `.build/Disker.app`. This is not
 - Scans only folders selected in the native open panel.
 - Reads filesystem metadata only; does not open file contents.
 - Does not follow symbolic links; deduplicates hard links within each selected folder.
+- Detects changed/replaced directories where possible and marks their coverage partial; a scan is still not an atomic snapshot.
 - Shows logical file size separately from allocated blocks summed from `st_blocks`.
 - Saves the latest 180 scan observations under `~/Library/Application Support/Disker/observations.json`.
 - Compares complete folder scans to earlier complete scans for the same path; incomplete scans never produce growth deltas.
+- Reports complete-only allocated-estimate deltas for matching descendant paths under the same selected root.
 - Provides Finder reveal for selected folder roots.
 - Provides a separate, manual RAM sample using Mach VM page counts and process resident sizes.
 - Does not include cleanup, duplicate hashing, background monitoring, or application ownership attribution yet.

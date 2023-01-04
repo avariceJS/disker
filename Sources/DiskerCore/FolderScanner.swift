@@ -26,6 +26,13 @@ public enum FolderScanner {
         let components: [String]
         let relativePath: String
         let path: String
+        let expectedIdentity: FileIdentity
+    }
+
+    private enum DirectoryOpenResult {
+        case opened(Int32)
+        case changed
+        case unavailable
     }
 
     private struct DirectoryMetrics {
@@ -34,6 +41,7 @@ public enum FolderScanner {
         var fileCount = 0
         var incompleteCount = 0
         var excludedSymlinkCount = 0
+        var changedDuringScanCount = 0
     }
 
     public static func scan(
@@ -104,7 +112,20 @@ public enum FolderScanner {
                 }
                 defer { close(rootFD) }
 
-                var pending = [PendingDirectory(components: [], relativePath: "", path: root.path)]
+                var openedRootMetadata = stat()
+                guard fstat(rootFD, &openedRootMetadata) == 0 else {
+                    results.append(emptyObservation(root: root, inaccessibleCount: 1))
+                    continue
+                }
+                guard sameIdentity(rootMetadata, openedRootMetadata) else {
+                    results.append(emptyObservation(root: root, changedDuringScanCount: 1))
+                    continue
+                }
+
+                var pending = [PendingDirectory(
+                    components: [], relativePath: "", path: root.path,
+                    expectedIdentity: identity(of: rootMetadata)
+                )]
                 while !pending.isEmpty {
                     if shouldCancel() {
                         cancelled = true
@@ -115,8 +136,24 @@ public enum FolderScanner {
                         break
                     }
                     let directory = pending.removeLast()
-                    let directoryFD = openDirectory(rootFD: rootFD, components: directory.components)
-                    guard directoryFD >= 0 else {
+                    let directoryFD: Int32
+                    switch openDirectory(rootFD: rootFD, directory: directory) {
+                    case .opened(let descriptor):
+                        directoryFD = descriptor
+                    case .changed:
+                        scanComplete = false
+                        addCoverageEvent(directory.relativePath, symlink: false, changed: true, to: &metrics)
+                        continue
+                    case .unavailable:
+                        inaccessibleCount += 1
+                        scanComplete = false
+                        addCoverageEvent(directory.relativePath, symlink: false, to: &metrics)
+                        continue
+                    }
+
+                    var beforeDirectoryRead = stat()
+                    guard fstat(directoryFD, &beforeDirectoryRead) == 0 else {
+                        close(directoryFD)
                         inaccessibleCount += 1
                         scanComplete = false
                         addCoverageEvent(directory.relativePath, symlink: false, to: &metrics)
@@ -182,7 +219,8 @@ public enum FolderScanner {
                             discoveredDirectories.append(PendingDirectory(
                                 components: directory.components + [name],
                                 relativePath: relativePath,
-                                path: fullPath
+                                path: fullPath,
+                                expectedIdentity: identity(of: metadata)
                             ))
                         } else {
                             let file = fileRecord(
@@ -214,6 +252,12 @@ public enum FolderScanner {
                                 }
                             }
                         }
+                    }
+                    var afterDirectoryRead = stat()
+                    if fstat(directoryFD, &afterDirectoryRead) == 0,
+                       directoryMetadataChanged(beforeDirectoryRead, afterDirectoryRead) {
+                        scanComplete = false
+                        addCoverageEvent(directory.relativePath, symlink: false, changed: true, to: &metrics)
                     }
                     closedir(stream)
                     close(directoryFD)
@@ -255,6 +299,7 @@ public enum FolderScanner {
                 parentMetrics.fileCount += child.fileCount
                 parentMetrics.incompleteCount += child.incompleteCount
                 parentMetrics.excludedSymlinkCount += child.excludedSymlinkCount
+                parentMetrics.changedDuringScanCount += child.changedDuringScanCount
                 metrics[parent] = parentMetrics
             }
 
@@ -267,7 +312,9 @@ public enum FolderScanner {
                     fileCount: value.fileCount,
                     incompleteCount: value.incompleteCount,
                     excludedSymlinkCount: value.excludedSymlinkCount,
+                    changedDuringScanCount: value.changedDuringScanCount,
                     complete: value.incompleteCount == 0 && value.excludedSymlinkCount == 0
+                        && value.changedDuringScanCount == 0
                 )
             }.sorted {
                 if $0.allocatedBytes != $1.allocatedBytes { return $0.allocatedBytes > $1.allocatedBytes }
@@ -282,8 +329,10 @@ public enum FolderScanner {
                 allocatedBytes: rootAllocatedBytes,
                 fileCount: rootFileCount,
                 inaccessibleCount: inaccessibleCount,
-                complete: scanComplete && inaccessibleCount == 0 && excludedSymlinkCount == 0,
+                complete: scanComplete && inaccessibleCount == 0 && excludedSymlinkCount == 0
+                    && metrics[""]?.changedDuringScanCount == 0,
                 excludedSymlinkCount: excludedSymlinkCount,
+                changedDuringScanCount: metrics[""]?.changedDuringScanCount ?? 0,
                 subdirectorySummaries: Array(summaries.prefix(maximumDirectorySummaries)),
                 subdirectorySummariesTruncated: wasTruncated
             ))
@@ -295,7 +344,8 @@ public enum FolderScanner {
     }
 
     private static func emptyObservation(
-        root: URL, inaccessibleCount: Int = 0, excludedSymlinkCount: Int = 0
+        root: URL, inaccessibleCount: Int = 0, excludedSymlinkCount: Int = 0,
+        changedDuringScanCount: Int = 0
     ) -> FolderObservation {
         FolderObservation(
             path: root.path,
@@ -305,7 +355,8 @@ public enum FolderScanner {
             fileCount: 0,
             inaccessibleCount: inaccessibleCount,
             complete: false,
-            excludedSymlinkCount: excludedSymlinkCount
+            excludedSymlinkCount: excludedSymlinkCount,
+            changedDuringScanCount: changedDuringScanCount
         )
     }
 
@@ -330,10 +381,12 @@ public enum FolderScanner {
     }
 
     private static func addCoverageEvent(
-        _ path: String, symlink: Bool, to metrics: inout [String: DirectoryMetrics]
+        _ path: String, symlink: Bool, changed: Bool = false,
+        to metrics: inout [String: DirectoryMetrics]
     ) {
         var value = metrics[path, default: DirectoryMetrics()]
         if symlink { value.excludedSymlinkCount += 1 }
+        else if changed { value.changedDuringScanCount += 1 }
         else { value.incompleteCount += 1 }
         metrics[path] = value
     }
@@ -347,17 +400,46 @@ public enum FolderScanner {
         lhs.utf8.lexicographicallyPrecedes(rhs.utf8)
     }
 
-    private static func openDirectory(rootFD: Int32, components: [String]) -> Int32 {
+    private static func openDirectory(rootFD: Int32, directory: PendingDirectory) -> DirectoryOpenResult {
         var descriptor = dup(rootFD)
-        guard descriptor >= 0 else { return -1 }
-        for component in components {
+        guard descriptor >= 0 else { return .unavailable }
+        for component in directory.components {
             let child = component.withCString {
                 openat(descriptor, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
             }
+            let openError = errno
             close(descriptor)
-            guard child >= 0 else { return -1 }
+            guard child >= 0 else {
+                return openError == ENOENT || openError == ENOTDIR || openError == ELOOP
+                    ? .changed : .unavailable
+            }
             descriptor = child
         }
-        return descriptor
+        var metadata = stat()
+        guard fstat(descriptor, &metadata) == 0 else {
+            close(descriptor)
+            return .unavailable
+        }
+        guard identity(of: metadata) == directory.expectedIdentity else {
+            close(descriptor)
+            return .changed
+        }
+        return .opened(descriptor)
+    }
+
+    private static func identity(of metadata: stat) -> FileIdentity {
+        FileIdentity(device: UInt64(metadata.st_dev), inode: UInt64(metadata.st_ino))
+    }
+
+    private static func sameIdentity(_ lhs: stat, _ rhs: stat) -> Bool {
+        identity(of: lhs) == identity(of: rhs)
+    }
+
+    private static func directoryMetadataChanged(_ before: stat, _ after: stat) -> Bool {
+        before.st_nlink != after.st_nlink
+            || before.st_mtimespec.tv_sec != after.st_mtimespec.tv_sec
+            || before.st_mtimespec.tv_nsec != after.st_mtimespec.tv_nsec
+            || before.st_ctimespec.tv_sec != after.st_ctimespec.tv_sec
+            || before.st_ctimespec.tv_nsec != after.st_ctimespec.tv_nsec
     }
 }

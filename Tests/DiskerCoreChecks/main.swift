@@ -36,6 +36,7 @@ private struct DiskerCoreChecks {
             ("same-path complete history comparison", testSamePathCompleteHistoryComparison),
             ("same-root complete directory growth comparison", testDirectoryGrowthComparison),
             ("scan progress callback", testScanProgressCallback),
+            ("directory mutations make coverage partial", testDirectoryMutationCoverage),
             ("cancellation preserves partial coverage", testCancellationPreservesPartialCoverage),
         ]
 
@@ -175,13 +176,15 @@ private struct DiskerCoreChecks {
     }
 
     private static func testOldHistoryDecoding() throws {
-        let json = #"{"observations":[{"id":"00000000-0000-0000-0000-000000000001","startedAt":1,"finishedAt":2,"cancelled":false,"folders":[{"id":"00000000-0000-0000-0000-000000000002","path":"/synthetic","displayName":"synthetic","logicalBytes":50,"allocatedBytes":40,"fileCount":1,"inaccessibleCount":0,"finishedAt":2,"complete":true}]}]}"#
+        let json = #"{"observations":[{"id":"00000000-0000-0000-0000-000000000001","startedAt":1,"finishedAt":2,"cancelled":false,"folders":[{"id":"00000000-0000-0000-0000-000000000002","path":"/synthetic","displayName":"synthetic","logicalBytes":50,"allocatedBytes":40,"fileCount":1,"inaccessibleCount":0,"finishedAt":2,"complete":true,"subdirectorySummaries":[{"rootRelativePath":"child","logicalBytes":1,"allocatedBytes":1,"fileCount":1,"incompleteCount":0,"excludedSymlinkCount":0,"complete":true}]}]}]}"#
         let history = try JSONDecoder().decode(LocalHistory.self, from: Data(json.utf8))
         guard let folder = history.observations.first?.folders.first else {
             throw CheckFailure.assertion("old history JSON should decode one folder")
         }
         try expect(folder.excludedSymlinkCount == 0, "old folder history should default symlink count to zero")
-        try expect(folder.subdirectorySummaries.isEmpty, "old folder history should default summaries to empty")
+        try expect(folder.changedDuringScanCount == 0, "old folder history should default mutation count to zero")
+        try expect(folder.subdirectorySummaries.count == 1, "old folder history should preserve existing directory summaries")
+        try expect(folder.subdirectorySummaries[0].changedDuringScanCount == 0, "old directory summaries should default mutation count to zero")
         try expect(!folder.subdirectorySummariesTruncated, "old folder history should default truncation to false")
     }
 
@@ -442,6 +445,26 @@ private struct DiskerCoreChecks {
             let cpuSeconds = usageSeconds(usageAfter.ru_utime) + usageSeconds(usageAfter.ru_stime)
                 - usageSeconds(usageBefore.ru_utime) - usageSeconds(usageBefore.ru_stime)
             print(String(format: "  synthetic scan (256 files, 300 directories): %.3f s wall, %.3f s process CPU", wallSeconds, cpuSeconds))
+        }
+    }
+
+    private static func testDirectoryMutationCoverage() throws {
+        try withTemporaryDirectory { root in
+            for index in 0..<256 {
+                try Data([UInt8(index % 255)]).write(to: root.appendingPathComponent(String(format: "file-%03d.bin", index)))
+            }
+            var changedDirectory = false
+            let result = FolderScanner.scan(roots: [root], progress: { _ in
+                guard !changedDirectory else { return }
+                changedDirectory = true
+                try? Data([0x7F]).write(to: root.appendingPathComponent("added-during-scan.bin"))
+            })
+            guard let folder = result.folders.first else {
+                throw CheckFailure.assertion("mutation fixture should produce a folder observation")
+            }
+            try expect(changedDirectory, "fixture should mutate the directory during the scan")
+            try expect(!folder.complete, "a directory that changes while being enumerated must not look like a complete snapshot")
+            try expect(folder.changedDuringScanCount > 0, "the changed directory should have an explicit coverage count")
         }
     }
 
