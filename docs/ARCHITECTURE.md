@@ -16,7 +16,7 @@ Each folder scan records the selected path, observation time, logical and alloca
 
 The scan is not an atomic filesystem snapshot. Files and directories can change after metadata is read or before traversal reaches them; Disker does not currently reconcile this race. A complete observation means no encountered metadata/access failures or excluded symlinks, not that the tree was frozen for the duration of the scan.
 
-Folder-history comparisons use the same selected path and a prior complete observation before the current observation. Incomplete current scans are not compared, and incomplete previous scans are skipped. Directory summaries do not yet have historical comparisons. An arithmetic overflow also suppresses a folder delta.
+Folder-history comparisons use the same selected path and a prior complete observation before the current observation. Directory-history comparisons additionally require the same root-relative directory path and complete root and subtree coverage in both observations. Incomplete scans are skipped and future observations are never used. An arithmetic overflow suppresses the delta. Deltas describe allocated-byte estimates, not reclaimable space.
 
 ## Persistence and privacy
 

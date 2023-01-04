@@ -105,6 +105,14 @@ final class DashboardModel {
     func previousCompleteObservation(for folder: FolderObservation) -> FolderObservation? {
         ObservationComparison.previousCompleteFolder(for: folder, in: history)
     }
+
+    func previousCompleteDirectory(
+        for directory: DirectoryUsage, in folder: FolderObservation
+    ) -> DirectoryUsage? {
+        ObservationComparison.previousCompleteDirectory(
+            for: directory, in: folder, history: history
+        )
+    }
 }
 
 struct DashboardView: View {
@@ -371,7 +379,7 @@ struct DashboardView: View {
                                         Text(ByteCountFormatter.string(fromByteCount: folder.allocatedBytes, countStyle: .file))
                                         if let previous = ObservationComparison.previousCompleteFolder(for: folder, in: model.history),
                                            let delta = ObservationComparison.allocatedByteDelta(current: folder, previous: previous) {
-                                            Text("Δ \(formattedDelta(delta))")
+                                            Text(changeDescription(delta))
                                                 .font(.caption2)
                                                 .foregroundStyle(delta >= 0 ? .orange : .green)
                                         } else if folder.complete {
@@ -541,7 +549,7 @@ struct DashboardView: View {
                             }
                             if let previous = model.previousCompleteObservation(for: folder) {
                                 if let delta = ObservationComparison.allocatedByteDelta(current: folder, previous: previous) {
-                                    Text("Since previous \(formattedDelta(delta))")
+                                    Text(changeDescription(delta))
                                         .foregroundStyle(delta >= 0 ? .orange : .green)
                                 } else {
                                     Text("Comparison unavailable")
@@ -602,6 +610,15 @@ struct DashboardView: View {
                                                 wasCancelled: scanCancelled
                                             ))
                                             .foregroundStyle(.orange)
+                                        } else if let previous = model.previousCompleteDirectory(
+                                            for: directory, in: folder
+                                        ), let delta = ObservationComparison.allocatedByteDelta(
+                                            current: directory, previous: previous
+                                        ) {
+                                            Text(changeDescription(delta))
+                                                .foregroundStyle(delta >= 0 ? .orange : .green)
+                                        } else if directory.complete {
+                                            Text("First complete observation")
                                         }
                                     }
                                     .font(.caption2)
@@ -680,6 +697,10 @@ struct DashboardView: View {
     private func formattedDelta(_ bytes: Int64) -> String {
         let magnitude = bytes == Int64.min ? Int64.max : abs(bytes)
         return "\(bytes >= 0 ? "+" : "−")\(format(magnitude))"
+    }
+
+    private func changeDescription(_ bytes: Int64) -> String {
+        bytes == 0 ? "No allocated-size change" : "Since previous \(formattedDelta(bytes))"
     }
 
     private func coverageSummary(

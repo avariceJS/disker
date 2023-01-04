@@ -34,6 +34,7 @@ private struct DiskerCoreChecks {
             ("history reset is limited to its own file", testHistoryClearIsScoped),
             ("corrupt history fails closed and can be reset", testCorruptHistoryIsLeftUntouched),
             ("same-path complete history comparison", testSamePathCompleteHistoryComparison),
+            ("same-root complete directory growth comparison", testDirectoryGrowthComparison),
             ("scan progress callback", testScanProgressCallback),
             ("cancellation preserves partial coverage", testCancellationPreservesPartialCoverage),
         ]
@@ -325,6 +326,79 @@ private struct DiskerCoreChecks {
         let otherPath = syntheticFolder(path: "/other", bytes: 135, complete: true)
         try expect(ObservationComparison.allocatedByteDelta(current: current, previous: otherPath) == nil, "different paths must not be compared")
         try expect(ObservationComparison.previousCompleteFolder(for: laterIncomplete, in: history) == nil, "incomplete current observations must not produce a growth comparison")
+    }
+
+    private static func testDirectoryGrowthComparison() throws {
+        let earlier = folderWithDirectory(
+            id: UUID(), path: "/selected", bytes: 300, complete: true,
+            directory: directory("Projects/Example", bytes: 100, complete: true)
+        )
+        let otherRoot = folderWithDirectory(
+            id: UUID(), path: "/different", bytes: 500, complete: true,
+            directory: directory("Projects/Example", bytes: 900, complete: true)
+        )
+        let incompletePrior = folderWithDirectory(
+            id: UUID(), path: "/selected", bytes: 900, complete: false,
+            directory: directory("Projects/Example", bytes: 800, complete: false)
+        )
+        let current = folderWithDirectory(
+            id: UUID(), path: "/selected", bytes: 350, complete: true,
+            directory: directory("Projects/Example", bytes: 125, complete: true)
+        )
+        let future = folderWithDirectory(
+            id: UUID(), path: "/selected", bytes: 700, complete: true,
+            directory: directory("Projects/Example", bytes: 1_000, complete: true)
+        )
+        let history = LocalHistory(observations: [
+            ScanObservation(startedAt: .now, folders: [earlier], cancelled: false),
+            ScanObservation(startedAt: .now, folders: [otherRoot], cancelled: false),
+            ScanObservation(startedAt: .now, folders: [incompletePrior], cancelled: true),
+            ScanObservation(startedAt: .now, folders: [current], cancelled: false),
+            ScanObservation(startedAt: .now, folders: [future], cancelled: false),
+        ])
+
+        let currentDirectory = try requireSummary("Projects/Example", in: current)
+        let previous = ObservationComparison.previousCompleteDirectory(
+            for: currentDirectory, in: current, history: history
+        )
+        try expect(previous?.allocatedBytes == 100, "directory comparison should use the prior complete same-root summary, skipping partial and different-root scans")
+        if let previous {
+            try expect(ObservationComparison.allocatedByteDelta(current: currentDirectory, previous: previous) == 25, "directory growth should compare allocated estimates")
+        }
+        let changedPath = directory("Projects/Other", bytes: 100, complete: true)
+        try expect(ObservationComparison.allocatedByteDelta(current: currentDirectory, previous: changedPath) == nil, "different relative subfolder paths must not be compared")
+
+        let partialCurrent = directory("Projects/Example", bytes: 999, complete: false)
+        try expect(ObservationComparison.previousCompleteDirectory(for: partialCurrent, in: current, history: history) == nil, "partial current directory coverage must not yield a growth signal")
+        let partialFolder = folderWithDirectory(
+            id: UUID(), path: "/selected", bytes: 400, complete: false,
+            directory: directory("Projects/Example", bytes: 125, complete: true)
+        )
+        let partialHistory = LocalHistory(observations: history.observations + [
+            ScanObservation(startedAt: .now, folders: [partialFolder], cancelled: true)
+        ])
+        try expect(ObservationComparison.previousCompleteDirectory(
+            for: partialFolder.subdirectorySummaries[0], in: partialFolder, history: partialHistory
+        ) == nil, "partial root observations must not be compared even if a subtree summary appears complete")
+    }
+
+    private static func folderWithDirectory(
+        id: UUID, path: String, bytes: Int64, complete: Bool, directory: DirectoryUsage
+    ) -> FolderObservation {
+        FolderObservation(
+            id: id, path: path, displayName: URL(fileURLWithPath: path).lastPathComponent,
+            logicalBytes: bytes, allocatedBytes: bytes, fileCount: 1,
+            inaccessibleCount: complete ? 0 : 1, complete: complete,
+            subdirectorySummaries: [directory]
+        )
+    }
+
+    private static func directory(_ path: String, bytes: Int64, complete: Bool) -> DirectoryUsage {
+        DirectoryUsage(
+            rootRelativePath: path, logicalBytes: bytes, allocatedBytes: bytes,
+            fileCount: 1, incompleteCount: complete ? 0 : 1,
+            excludedSymlinkCount: 0, complete: complete
+        )
     }
 
     private static func syntheticFolder(path: String, bytes: Int64, complete: Bool) -> FolderObservation {
