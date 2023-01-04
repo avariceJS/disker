@@ -12,6 +12,7 @@ final class DashboardModel {
     var isScanning = false
     var errorMessage: String?
     var currentPath = ""
+    var visitedFiles = 0
     private var scanTask: Task<ScanObservation, Never>?
 
     init() {
@@ -44,11 +45,12 @@ final class DashboardModel {
         }
     }
 
-    func chooseFolders() {
+    func chooseFolders(startingAt directory: URL? = nil) {
         let panel = NSOpenPanel()
         panel.title = "Choose folders to measure"
         panel.prompt = "Scan Folders"
         panel.message = "Disker reads file metadata in the folders you select. File contents are not opened."
+        panel.directoryURL = directory
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
@@ -61,10 +63,12 @@ final class DashboardModel {
         guard !urls.isEmpty, !isScanning else { return }
         isScanning = true
         currentPath = ""
+        visitedFiles = 0
         let scanTask = Task.detached(priority: .utility) {
             FolderScanner.scan(roots: urls, progress: { [weak self] progress in
                 Task { @MainActor [weak self] in
                     self?.currentPath = progress.currentPath
+                    self?.visitedFiles = progress.visitedFiles
                 }
             })
         }
@@ -78,6 +82,7 @@ final class DashboardModel {
             }
             isScanning = false
             currentPath = ""
+            visitedFiles = 0
             self.scanTask = nil
             refreshCapacity()
         }
@@ -173,7 +178,7 @@ struct DashboardView: View {
                 capacityCard
                 scanCard
                 if let latest = model.latestScan, !latest.folders.isEmpty {
-                    folderList(latest.folders, title: "Largest selected folders")
+                    folderList(latest.folders, title: "Largest selected folders", scanCancelled: latest.cancelled)
                 } else {
                     emptyHistoryCard
                 }
@@ -213,14 +218,29 @@ struct DashboardView: View {
                 }
                 ProgressView(value: Double(capacity.availableBytes), total: Double(max(1, capacity.totalBytes)))
                     .tint(.blue)
-                HStack {
-                    metric("Not available", value: capacity.notAvailableBytes)
-                    Spacer()
-                    metric("Volume capacity", value: capacity.totalBytes)
+                    .accessibilityLabel("Available capacity")
+                    .accessibilityValue("\(format(capacity.availableBytes)) of \(format(capacity.totalBytes))")
+                VStack(spacing: 3) {
+                    HStack(alignment: .top, spacing: 24) {
+                        Text("Capacity minus available")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text("Volume capacity")
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    HStack(alignment: .firstTextBaseline, spacing: 24) {
+                        Text(format(capacity.notAvailableBytes))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text(format(capacity.totalBytes))
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                    .font(.system(.title3, design: .rounded).weight(.medium))
                 }
                     Text(capacity.availabilityBasis == .importantUsage
-                     ? "Available space uses macOS’s estimate for important usage. “Not available” is capacity minus available; it is not a file-tree total."
-                     : "macOS’s standard available-capacity value is shown because its important-usage estimate was zero or unavailable. “Not available” is not a file-tree total.")
+                     ? "Available space uses macOS’s estimate for important usage. Capacity minus available is a difference between system-reported values, not a measurement of physical file usage."
+                     : "macOS’s standard available-capacity value is shown because its important-usage estimate was zero or unavailable. Capacity minus available is not a measurement of physical file usage.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } else {
@@ -256,7 +276,9 @@ struct DashboardView: View {
                 VStack(alignment: .trailing, spacing: 5) {
                     ProgressView()
                         .controlSize(.small)
-                    Text(model.currentPath.isEmpty ? "Starting scan…" : model.currentPath)
+                    Text(model.currentPath.isEmpty
+                         ? "Starting scan…"
+                         : "\(model.visitedFiles.formatted()) files visited · \(model.currentPath)")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -264,7 +286,9 @@ struct DashboardView: View {
                         .frame(maxWidth: 180, alignment: .trailing)
                 }
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel(model.currentPath.isEmpty ? "Scanning folders" : "Scanning \(model.currentPath)")
+                .accessibilityLabel(model.currentPath.isEmpty
+                                    ? "Scanning folders"
+                                    : "Scanning folders, \(model.visitedFiles) files visited, current path \(model.currentPath)")
             }
         }
         .padding(18)
@@ -303,7 +327,7 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: 24) {
                 header("Selected folders", subtitle: "File sizes are measured only inside the locations you choose.")
                 if let folders = model.latestScan?.folders, !folders.isEmpty {
-                    folderList(folders, title: "Latest scan")
+                    folderList(folders, title: "Latest scan", scanCancelled: model.latestScan?.cancelled ?? false)
                 } else {
                     emptyHistoryCard
                 }
@@ -493,7 +517,9 @@ struct DashboardView: View {
         }
     }
 
-    private func folderList(_ folders: [FolderObservation], title: String) -> some View {
+    private func folderList(
+        _ folders: [FolderObservation], title: String, scanCancelled: Bool
+    ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title).font(.title3.weight(.semibold))
             ForEach(folders.sorted { $0.allocatedBytes > $1.allocatedBytes }) { folder in
@@ -505,7 +531,14 @@ struct DashboardView: View {
                         HStack(spacing: 8) {
                             Text("Logical \(format(folder.logicalBytes))")
                             Text("Allocated estimate \(format(folder.allocatedBytes))")
-                            if !folder.complete { Text("Partial · \(folder.inaccessibleCount) unmeasured").foregroundStyle(.orange) }
+                            if !folder.complete {
+                                Text(coverageSummary(
+                                    inaccessible: folder.inaccessibleCount,
+                                    excludedSymlinks: folder.excludedSymlinkCount,
+                                    wasCancelled: scanCancelled
+                                ))
+                                .foregroundStyle(.orange)
+                            }
                             if let previous = model.previousCompleteObservation(for: folder) {
                                 if let delta = ObservationComparison.allocatedByteDelta(current: folder, previous: previous) {
                                     Text("Since previous \(formattedDelta(delta))")
@@ -537,6 +570,73 @@ struct DashboardView: View {
                 .padding(16)
                 .background(.background, in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
+
+                if !folder.subdirectorySummaries.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Largest subfolders")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Ranked by allocated-byte estimate. Nested folders overlap, so these rows are not additive. Hard-linked files are counted once and assigned to one path.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        ForEach(folder.subdirectorySummaries, id: \.rootRelativePath) { directory in
+                            let directoryURL = URL(fileURLWithPath: folder.path)
+                                .appendingPathComponent(directory.rootRelativePath, isDirectory: true)
+                            HStack(spacing: 10) {
+                                Image(systemName: "folder")
+                                    .foregroundStyle(.secondary)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(directory.rootRelativePath)
+                                        .font(.subheadline.weight(.medium))
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    HStack(spacing: 8) {
+                                        Text("Logical \(format(directory.logicalBytes))")
+                                        Text("Allocated estimate \(format(directory.allocatedBytes))")
+                                        Text("\(directory.fileCount) files")
+                                        if !directory.complete {
+                                            Text(coverageSummary(
+                                                inaccessible: directory.incompleteCount,
+                                                excludedSymlinks: directory.excludedSymlinkCount,
+                                                wasCancelled: scanCancelled
+                                            ))
+                                            .foregroundStyle(.orange)
+                                        }
+                                    }
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 4)
+                                Text(format(directory.allocatedBytes))
+                                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                                Button("Scan this folder…") {
+                                    model.chooseFolders(startingAt: directoryURL)
+                                }
+                                .controlSize(.small)
+                                .help("Choose this subfolder as a new scan root")
+                                .accessibilityLabel("Choose \(directory.rootRelativePath) for a new scan")
+                                Button {
+                                    NSWorkspace.shared.activateFileViewerSelecting([directoryURL])
+                                } label: {
+                                    Image(systemName: "arrow.up.right.square")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Reveal subfolder in Finder")
+                                .accessibilityLabel("Reveal \(directory.rootRelativePath) in Finder")
+                            }
+                            .padding(.vertical, 7)
+                            Divider()
+                        }
+                        if folder.subdirectorySummariesTruncated {
+                            Text("Showing the 100 largest subfolders. The root total includes the full scan.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 8)
+                }
             }
             if let latest = model.latestScan {
                 Text("Scan finished \(latest.finishedAt.formatted(date: .abbreviated, time: .shortened)) · \(latest.folders.count) selected locations")
@@ -553,8 +653,10 @@ struct DashboardView: View {
         }
     }
 
-    private func metric(_ title: String, value: Int64) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+    private func metric(
+        _ title: String, value: Int64, alignment: HorizontalAlignment
+    ) -> some View {
+        VStack(alignment: alignment, spacing: 3) {
             Text(title).font(.caption).foregroundStyle(.secondary)
             Text(format(value)).font(.system(.title3, design: .rounded).weight(.medium))
         }
@@ -578,6 +680,16 @@ struct DashboardView: View {
     private func formattedDelta(_ bytes: Int64) -> String {
         let magnitude = bytes == Int64.min ? Int64.max : abs(bytes)
         return "\(bytes >= 0 ? "+" : "−")\(format(magnitude))"
+    }
+
+    private func coverageSummary(
+        inaccessible: Int, excludedSymlinks: Int, wasCancelled: Bool
+    ) -> String {
+        var details: [String] = []
+        if inaccessible > 0 { details.append("\(inaccessible) unmeasured") }
+        if excludedSymlinks > 0 { details.append("\(excludedSymlinks) symlinks not followed") }
+        if wasCancelled && details.isEmpty { details.append("scan cancelled") }
+        return details.isEmpty ? "Coverage incomplete" : "Partial · " + details.joined(separator: " · ")
     }
 
     private func icon(for section: String) -> String {

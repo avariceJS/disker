@@ -22,8 +22,11 @@ private struct DiskerCoreChecks {
             ("live root volume capacity", testLiveCapacitySource),
             ("live RAM and process sample", testLiveRAMSample),
             ("metadata scan and symlink exclusion", testMetadataScanAndSymlinkExclusion),
+            ("nested directory usage summaries", testNestedDirectorySummaries),
             ("selected symlink root is incomplete", testSelectedSymlinkRootIsIncomplete),
             ("hard-link deduplication", testHardLinkDeduplication),
+            ("directory summary cap and stable order", testDirectorySummaryCap),
+            ("old history JSON defaults new fields", testOldHistoryDecoding),
             ("sparse file size accounting", testSparseFileAccounting),
             ("missing root coverage", testMissingRootCoverage),
             ("immediate cancellation", testImmediateCancellation),
@@ -101,20 +104,84 @@ private struct DiskerCoreChecks {
             try expect(result.folders.count == 1, "one selected root should yield one result")
             try expect(result.folders[0].logicalBytes == Int64(data.count + 1024), "nested files should count while symlink targets remain excluded")
             try expect(result.folders[0].fileCount == 2, "both regular files should be counted once")
-            try expect(result.folders[0].complete, "readable synthetic folder should be complete")
+            try expect(result.folders[0].excludedSymlinkCount == 2, "root coverage should count nested symlinks separately")
+            try expect(result.folders[0].inaccessibleCount == 0, "excluded symlinks should not inflate access errors")
+            try expect(!result.folders[0].complete, "excluded symlink targets should make coverage explicitly partial")
+            let nestedSummary = try requireSummary("nested", in: result.folders[0])
+            try expect(nestedSummary.logicalBytes == 1024, "nested summary should include its measured descendant files")
+            try expect(nestedSummary.excludedSymlinkCount == 1, "nested summary should report its own excluded symlink")
+            try expect(!nestedSummary.complete, "a subtree with an excluded symlink should not look fully measured")
+        }
+    }
+
+    private static func testNestedDirectorySummaries() throws {
+        try withTemporaryDirectory { root in
+            let first = root.appendingPathComponent("alpha", isDirectory: true)
+            let second = first.appendingPathComponent("deep", isDirectory: true)
+            let sibling = root.appendingPathComponent("beta", isDirectory: true)
+            try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: sibling, withIntermediateDirectories: true)
+            try Data(repeating: 0x31, count: 1200).write(to: first.appendingPathComponent("one.bin"))
+            try Data(repeating: 0x32, count: 800).write(to: second.appendingPathComponent("two.bin"))
+            try Data(repeating: 0x33, count: 500).write(to: sibling.appendingPathComponent("three.bin"))
+
+            let folder = FolderScanner.scan(roots: [root]).folders[0]
+            let alpha = try requireSummary("alpha", in: folder)
+            let deep = try requireSummary("alpha/deep", in: folder)
+            let beta = try requireSummary("beta", in: folder)
+            try expect(folder.logicalBytes == 2500 && folder.fileCount == 3, "root totals must include each distinct file object")
+            try expect(alpha.logicalBytes == 2000 && alpha.fileCount == 2, "parent subtree must include nested descendants")
+            try expect(deep.logicalBytes == 800 && deep.fileCount == 1, "deep subtree should include only its own descendant")
+            try expect(beta.logicalBytes == 500 && beta.fileCount == 1, "sibling subtree should remain independent")
+            try expect(alpha.complete && deep.complete && beta.complete, "fully enumerated subtrees should be complete")
         }
     }
 
     private static func testHardLinkDeduplication() throws {
         try withTemporaryDirectory { root in
-            let file = root.appendingPathComponent("original.bin")
+            let linkedDirectory = root.appendingPathComponent("linked", isDirectory: true)
+            let originalDirectory = root.appendingPathComponent("original", isDirectory: true)
+            try FileManager.default.createDirectory(at: linkedDirectory, withIntermediateDirectories: false)
+            try FileManager.default.createDirectory(at: originalDirectory, withIntermediateDirectories: false)
+            let file = originalDirectory.appendingPathComponent("payload.bin")
             try Data(repeating: 0x7F, count: 2048).write(to: file)
-            try FileManager.default.linkItem(at: file, to: root.appendingPathComponent("linked.bin"))
+            try FileManager.default.linkItem(at: file, to: linkedDirectory.appendingPathComponent("payload.bin"))
 
             let result = FolderScanner.scan(roots: [root])
             try expect(result.folders[0].logicalBytes == 2048, "hard links must not double-count logical bytes")
             try expect(result.folders[0].fileCount == 1, "hard links must identify one file object")
+            let directory = try requireSummary("linked", in: result.folders[0])
+            try expect(directory.logicalBytes == 2048 && directory.fileCount == 1, "lexicographically first hard-link path should deterministically own subtree bytes")
+            let original = try requireSummary("original", in: result.folders[0])
+            try expect(original.logicalBytes == 0 && original.fileCount == 0, "later hard-link path must not duplicate subtree bytes")
         }
+    }
+
+    private static func testDirectorySummaryCap() throws {
+        try withTemporaryDirectory { root in
+            for index in 0..<105 {
+                let directory = root.appendingPathComponent(String(format: "dir-%03d", index), isDirectory: true)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+                try Data([UInt8(index % 255)]).write(to: directory.appendingPathComponent("payload.bin"))
+            }
+            let folder = FolderScanner.scan(roots: [root]).folders[0]
+            try expect(folder.subdirectorySummaries.count == 100, "only the 100 largest subdirectories should be persisted")
+            try expect(folder.subdirectorySummariesTruncated, "folder must expose summary truncation")
+            let paths = folder.subdirectorySummaries.map(\.rootRelativePath)
+            try expect(paths == paths.sorted(by: { $0.utf8.lexicographicallyPrecedes($1.utf8) }), "equal-size summaries should have stable UTF-8 path ordering")
+            try expect(paths.first == "dir-000" && paths.last == "dir-099", "stable tie-break should retain the first 100 equal-size paths")
+        }
+    }
+
+    private static func testOldHistoryDecoding() throws {
+        let json = #"{"observations":[{"id":"00000000-0000-0000-0000-000000000001","startedAt":1,"finishedAt":2,"cancelled":false,"folders":[{"id":"00000000-0000-0000-0000-000000000002","path":"/synthetic","displayName":"synthetic","logicalBytes":50,"allocatedBytes":40,"fileCount":1,"inaccessibleCount":0,"finishedAt":2,"complete":true}]}]}"#
+        let history = try JSONDecoder().decode(LocalHistory.self, from: Data(json.utf8))
+        guard let folder = history.observations.first?.folders.first else {
+            throw CheckFailure.assertion("old history JSON should decode one folder")
+        }
+        try expect(folder.excludedSymlinkCount == 0, "old folder history should default symlink count to zero")
+        try expect(folder.subdirectorySummaries.isEmpty, "old folder history should default summaries to empty")
+        try expect(!folder.subdirectorySummariesTruncated, "old folder history should default truncation to false")
     }
 
     private static func testSparseFileAccounting() throws {
@@ -146,7 +213,8 @@ private struct DiskerCoreChecks {
             let result = FolderScanner.scan(roots: [selectedLink])
             try expect(result.folders[0].logicalBytes == 0, "selected symlink target must not be measured")
             try expect(!result.folders[0].complete, "selected symlink must not appear as a complete zero-byte scan")
-            try expect(result.folders[0].inaccessibleCount == 1, "excluded symlink root should be visible as an excluded item")
+            try expect(result.folders[0].inaccessibleCount == 0, "excluded symlink root should not look like a metadata access failure")
+            try expect(result.folders[0].excludedSymlinkCount == 1, "selected symlink root should be separately counted")
         }
     }
 
@@ -265,6 +333,13 @@ private struct DiskerCoreChecks {
             logicalBytes: bytes, allocatedBytes: bytes, fileCount: 1,
             inaccessibleCount: complete ? 0 : 1, complete: complete
         )
+    }
+
+    private static func requireSummary(_ path: String, in folder: FolderObservation) throws -> DirectoryUsage {
+        guard let summary = folder.subdirectorySummaries.first(where: { $0.rootRelativePath == path }) else {
+            throw CheckFailure.assertion("missing subdirectory summary for \(path)")
+        }
+        return summary
     }
 
     private static func testScanProgressCallback() throws {

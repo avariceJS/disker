@@ -4,11 +4,13 @@ Updated: 2026-10-19 (actual session date).
 
 ## Verified checkpoint
 
-- Native SwiftUI macOS app with real volume capacity, selected-folder metadata scans, local bounded history, same-path comparisons, Finder reveal, and on-demand RAM/process sampling.
-- Folder traversal uses descriptor-relative `openat`/`fstatat` with `O_NOFOLLOW`, skips symlinks, deduplicates hard links within one selected root, and marks unreadable or selected symlink roots incomplete. Nested symlinks are currently skipped without an explicit coverage count; file-tree mutation during a scan is not reconciled. These are known accounting gaps.
+- Native SwiftUI macOS app with system-reported volume capacity, selected-folder metadata scans, bounded local history, same-path complete comparisons, directory summaries, Finder reveal, and on-demand RAM/process sampling.
+- Folder traversal uses descriptor-relative `openat`/`fstatat` with `O_NOFOLLOW`, skips symlinks, counts excluded symlinks as incomplete coverage, deduplicates hard links within one selected root, and marks unreadable roots incomplete. Directory summaries show up to the 100 largest descendants; their nested totals overlap and are not additive. Hard-linked bytes are assigned to one stable relative path. A tree changing during traversal is not reconciled and remains a measurement limitation.
 - RAM process sampling uses `proc_listallpids`' process-count return value, sizes its byte buffer accordingly, and retries when the process table grows. Capacity fallback accepts only nonnegative OS values.
-- `scripts/check-core.sh`: 17 synthetic and live-system checks pass, covering capacity math, metadata scan, symlink exclusion, hard links, sparse-file accounting, missing roots, cancellation, persistence, retention, explicit history reset, corrupt history recovery, safe same-path comparisons, progress, and a 300-directory fixture. `scripts/package-app.sh` builds an arm64 release app bundle and its plist passes lint. The app is unsigned and not installed. Actual GUI review and a representative large-workload/idle resource benchmark remain unverified.
-- Most recent synthetic scan: 256 one-byte files and 300 empty directories, 0.004 s wall and process CPU. This tiny fixture is not a representative performance benchmark.
+- Xcode-selected `scripts/check-core.sh` passed all 20 checks, including nested directory aggregation, symlink exclusion, hard links, history compatibility, cancellation, and bounded retention. The 256-file/300-directory synthetic scan completed in 0.009 s wall and process CPU; this tiny fixture is not a representative large-workload benchmark.
+- Xcode-selected `scripts/package-app.sh` built the arm64 release bundle. `xcodebuild -version` reports Xcode 27.1 (27A9275); Swift is 6.4.0.34.1 and `xcode-select -p` points to `/Applications/Xcode.app/Contents/Developer`.
+- GUI validation was performed on the running native app. The overview was visually inspected, including the two separated capacity labels. Through the system folder panel, only this repository's `Tests` folder was measured (25 KB logical, 29 KB allocated estimate, one file), and the “Scan this folder…” action correctly opened the selected `Tests/DiskerCoreChecks` subfolder. The subfolder was then measured as a new root. No personal folders were scanned.
+- The app bundle is still unsigned and has not been installed as a distribution build. Large-workload/idle resource benchmarks, mutation-race accounting, app/project ownership attribution, directory-level historical deltas, RAM trends, and cleanup-plan support remain open. No file deletion is implemented or authorized.
 - `.gitignore` excludes `.gitmeta`, local `.codex` configuration, Swift/build outputs, app bundles, logs, databases, credentials, and certificates. `MISSION.md` is included in the repository.
 
 ## Repository and environment
@@ -16,12 +18,12 @@ Updated: 2026-10-19 (actual session date).
 - Canonical repository: `https://github.com/avariceJS/disker.git`; only development branch: `main`. The ordinary `.git` repo is authoritative. The previous `.gitmeta` history contained 12 meaningful commits, four each on 2023-01-01 through 2023-01-03 UTC. Those historical dates are intentionally simulated for contribution-calendar presentation and do not claim actual implementation dates (see `docs/ARCHITECTURE.md`).
 - On 2026-10-19, GitHub CLI authentication succeeded as `avariceJS`; the remote had no branch or tag refs. The GitHub repository metadata reports `main` as its default branch. The full preserved history has been integrated into standard `.git` without changing any commit. Publish additively with `git push -u origin main` and verify `git rev-parse main` equals `git ls-remote origin refs/heads/main`.
 - New commits use the account's GitHub no-reply author address. Existing author metadata and commit dates are preserved verbatim when importing `.gitmeta` history. Never rewrite or force-push published history.
-- macOS 26 arm64 and Swift 6.3.3 are verified. `/Applications/Xcode.app` is installed (Xcode 27.1, build 27A9275), but its license has not been accepted; the active developer directory remains `/Library/Developer/CommandLineTools`. `xcodebuild -version` under `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` reports that the license must be accepted with `sudo xcodebuild -license`. Until the owner accepts it, use the working SwiftPM scripts and do not claim an Xcode build.
+- macOS 26 arm64 and the initialized Xcode toolchain are verified. Xcode 27.1 (27A9275), Swift 6.4.0.34.1, and the active `/Applications/Xcode.app/Contents/Developer` directory were confirmed in this session.
 
 ## Next priorities
 
-1. Extend scanner results with truthful nested symlink/coverage reporting and mutation-race handling; preserve the no-follow boundary.
-2. Add directory-level drill-down with logical and allocated estimates, incomplete coverage, and Finder reveal.
-3. Add app/project attribution and RAM trends, then bounded user-approved-scope duplicate verification and read-only cleanup plans. Never delete real user data.
-4. Launch the real app and verify responsive, accessible UI flows using authorized GUI automation. Measure representative scan and idle costs.
-5. Add installation/uninstallation guidance, Xcode/App Store sandbox analysis, and a compact dependency inventory.
+1. Add complete-only historical deltas for same-root directory summaries, with coverage tests; do not compare changed roots or partial observations.
+2. Investigate scan-time tree mutation and stable directory accounting without weakening the no-follow boundary.
+3. Develop defensible app/project attribution and RAM trends from measured inputs; avoid guessing ownership from folder names.
+4. Add bounded, user-approved duplicate verification and read-only cleanup plans only if these can be explained safely. Never delete real user data.
+5. Measure representative scan and idle resource costs; add installation/uninstallation guidance, Xcode/App Store sandbox analysis, and a compact dependency inventory.

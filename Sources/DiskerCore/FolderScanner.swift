@@ -7,14 +7,33 @@ public struct ScanProgress: Sendable {
 }
 
 public enum FolderScanner {
+    private static let maximumDirectorySummaries = 100
+
     private struct FileIdentity: Hashable {
         let device: UInt64
         let inode: UInt64
     }
 
+    private struct FileRecord {
+        let relativePath: String
+        let parentPath: String
+        let identity: FileIdentity
+        let logicalBytes: Int64
+        let allocatedBytes: Int64
+    }
+
     private struct PendingDirectory {
         let components: [String]
+        let relativePath: String
         let path: String
+    }
+
+    private struct DirectoryMetrics {
+        var logicalBytes: Int64 = 0
+        var allocatedBytes: Int64 = 0
+        var fileCount = 0
+        var incompleteCount = 0
+        var excludedSymlinkCount = 0
     }
 
     public static func scan(
@@ -37,151 +56,295 @@ public enum FolderScanner {
                 if accessGranted { root.stopAccessingSecurityScopedResource() }
             }
 
-            var logicalBytes: Int64 = 0
-            var allocatedBytes: Int64 = 0
-            var fileCount = 0
-            var inaccessibleCount = 0
-            var complete = true
-            var seenFiles = Set<FileIdentity>()
-
             var rootMetadata = stat()
             guard root.path.withCString({ lstat($0, &rootMetadata) }) == 0 else {
-                results.append(FolderObservation(
-                    path: root.path, displayName: root.lastPathComponent,
-                    logicalBytes: 0, allocatedBytes: 0, fileCount: 0,
-                    inaccessibleCount: 1, complete: false
-                ))
+                results.append(emptyObservation(root: root, inaccessibleCount: 1))
                 continue
             }
 
             let rootType = rootMetadata.st_mode & S_IFMT
             if rootType == S_IFLNK {
-                // A symlink selected as the root is excluded, so report that it was
-                // not measured instead of presenting a complete zero-byte result.
-                results.append(FolderObservation(
-                    path: root.path, displayName: root.lastPathComponent,
-                    logicalBytes: 0, allocatedBytes: 0, fileCount: 0,
-                    inaccessibleCount: 1, complete: false
-                ))
+                // The selected link is explicitly excluded, not reported as an
+                // inaccessible metadata lookup. Its target is never opened.
+                results.append(emptyObservation(root: root, excludedSymlinkCount: 1))
                 continue
             }
+
+            var linkedFilesByIdentity: [FileIdentity: FileRecord] = [:]
+            // Keep the scanner's prior identity-only dedup set. Path-bearing
+            // records are retained only for objects known to have multiple links.
+            var seenFileIdentities = Set<FileIdentity>()
+            var metrics: [String: DirectoryMetrics] = ["": DirectoryMetrics()]
+            var inaccessibleCount = 0
+            var excludedSymlinkCount = 0
+            var fileCountForProgress = 0
+            var scanComplete = true
+            var rootLogicalBytes: Int64 = 0
+            var rootAllocatedBytes: Int64 = 0
+            var rootFileCount = 0
+
             if rootType != S_IFDIR {
-                record(rootMetadata)
-                results.append(FolderObservation(
-                    path: root.path, displayName: root.lastPathComponent,
-                    logicalBytes: logicalBytes, allocatedBytes: allocatedBytes,
-                    fileCount: fileCount, inaccessibleCount: inaccessibleCount,
-                    complete: complete
-                ))
-                continue
-            }
-
-            let rootFD = root.path.withCString {
-                open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-            }
-            guard rootFD >= 0 else {
-                results.append(FolderObservation(
-                    path: root.path, displayName: root.lastPathComponent,
-                    logicalBytes: 0, allocatedBytes: 0, fileCount: 0,
-                    inaccessibleCount: 1, complete: false
-                ))
-                continue
-            }
-
-            var pending = [PendingDirectory(components: [], path: root.path)]
-            defer { close(rootFD) }
-
-            while let directory = pending.popLast() {
-                if shouldCancel() {
-                    cancelled = true
-                    complete = false
-                    break
+                let file = fileRecord(metadata: rootMetadata, relativePath: root.lastPathComponent, parentPath: "")
+                if rootMetadata.st_nlink > 1 {
+                    seenFileIdentities.insert(file.identity)
+                    linkedFilesByIdentity[file.identity] = file
+                } else if seenFileIdentities.insert(file.identity).inserted {
+                    addFile(file, to: "", metrics: &metrics)
+                    rootLogicalBytes += file.logicalBytes
+                    rootAllocatedBytes += file.allocatedBytes
+                    rootFileCount += 1
                 }
-                let directoryFD = openDirectory(rootFD: rootFD, components: directory.components)
-                guard directoryFD >= 0 else {
-                    inaccessibleCount += 1
-                    complete = false
+            } else {
+                let rootFD = root.path.withCString {
+                    open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+                }
+                guard rootFD >= 0 else {
+                    results.append(emptyObservation(root: root, inaccessibleCount: 1))
                     continue
                 }
-                defer { close(directoryFD) }
+                defer { close(rootFD) }
 
-                let streamFD = dup(directoryFD)
-                guard streamFD >= 0, let stream = fdopendir(streamFD) else {
-                    if streamFD >= 0 { close(streamFD) }
-                    inaccessibleCount += 1
-                    complete = false
-                    continue
-                }
-                defer { closedir(stream) }
-
-                while true {
-                    errno = 0
-                    guard let entry = readdir(stream) else {
-                        if errno != 0 {
-                            inaccessibleCount += 1
-                            complete = false
-                        }
-                        break
-                    }
-                    let name = withUnsafePointer(to: &entry.pointee.d_name) { pointer in
-                        pointer.withMemoryRebound(to: CChar.self, capacity: MemoryLayout.size(ofValue: entry.pointee.d_name)) {
-                            String(cString: $0)
-                        }
-                    }
-                    if name == "." || name == ".." { continue }
+                var pending = [PendingDirectory(components: [], relativePath: "", path: root.path)]
+                while !pending.isEmpty {
                     if shouldCancel() {
                         cancelled = true
-                        complete = false
+                        scanComplete = false
+                        for directory in pending {
+                            addCoverageEvent(directory.relativePath, symlink: false, to: &metrics)
+                        }
                         break
                     }
-
-                    var metadata = stat()
-                    let statResult = name.withCString {
-                        fstatat(directoryFD, $0, &metadata, AT_SYMLINK_NOFOLLOW)
-                    }
-                    guard statResult == 0 else {
+                    let directory = pending.removeLast()
+                    let directoryFD = openDirectory(rootFD: rootFD, components: directory.components)
+                    guard directoryFD >= 0 else {
                         inaccessibleCount += 1
-                        complete = false
+                        scanComplete = false
+                        addCoverageEvent(directory.relativePath, symlink: false, to: &metrics)
                         continue
                     }
-                    let type = metadata.st_mode & S_IFMT
-                    let fullPath = (directory.path as NSString).appendingPathComponent(name)
-                    if type == S_IFLNK { continue }
-                    if type == S_IFDIR {
-                        pending.append(PendingDirectory(
-                            components: directory.components + [name], path: fullPath
-                        ))
+
+                    let streamFD = dup(directoryFD)
+                    guard streamFD >= 0, let stream = fdopendir(streamFD) else {
+                        if streamFD >= 0 { close(streamFD) }
+                        close(directoryFD)
+                        inaccessibleCount += 1
+                        scanComplete = false
+                        addCoverageEvent(directory.relativePath, symlink: false, to: &metrics)
                         continue
                     }
-                    record(metadata)
-                    if fileCount.isMultiple(of: 256) {
-                        progress(ScanProgress(currentPath: fullPath, visitedFiles: fileCount))
+
+                    var discoveredDirectories: [PendingDirectory] = []
+                    var interrupted = false
+                    while true {
+                        errno = 0
+                        guard let entry = readdir(stream) else {
+                            if errno != 0 {
+                                inaccessibleCount += 1
+                                scanComplete = false
+                                addCoverageEvent(directory.relativePath, symlink: false, to: &metrics)
+                            }
+                            break
+                        }
+                        let name = withUnsafePointer(to: &entry.pointee.d_name) { pointer in
+                            pointer.withMemoryRebound(to: CChar.self, capacity: MemoryLayout.size(ofValue: entry.pointee.d_name)) {
+                                String(cString: $0)
+                            }
+                        }
+                        if name == "." || name == ".." { continue }
+                        if shouldCancel() {
+                            cancelled = true
+                            scanComplete = false
+                            addCoverageEvent(directory.relativePath, symlink: false, to: &metrics)
+                            interrupted = true
+                            break
+                        }
+
+                        var metadata = stat()
+                        let statResult = name.withCString {
+                            fstatat(directoryFD, $0, &metadata, AT_SYMLINK_NOFOLLOW)
+                        }
+                        guard statResult == 0 else {
+                            inaccessibleCount += 1
+                            scanComplete = false
+                            addCoverageEvent(directory.relativePath, symlink: false, to: &metrics)
+                            continue
+                        }
+                        let relativePath = directory.relativePath.isEmpty
+                            ? name
+                            : directory.relativePath + "/" + name
+                        let fullPath = (directory.path as NSString).appendingPathComponent(name)
+                        let type = metadata.st_mode & S_IFMT
+                        if type == S_IFLNK {
+                            excludedSymlinkCount += 1
+                            addCoverageEvent(directory.relativePath, symlink: true, to: &metrics)
+                        } else if type == S_IFDIR {
+                            metrics[relativePath] = DirectoryMetrics()
+                            discoveredDirectories.append(PendingDirectory(
+                                components: directory.components + [name],
+                                relativePath: relativePath,
+                                path: fullPath
+                            ))
+                        } else {
+                            let file = fileRecord(
+                                metadata: metadata,
+                                relativePath: relativePath,
+                                parentPath: directory.relativePath
+                            )
+                            var isNewFileObject = false
+                            if metadata.st_nlink > 1 {
+                                if let existing = linkedFilesByIdentity[file.identity] {
+                                    if utf8LessThan(file.relativePath, existing.relativePath) {
+                                        linkedFilesByIdentity[file.identity] = file
+                                    }
+                                } else if seenFileIdentities.insert(file.identity).inserted {
+                                    linkedFilesByIdentity[file.identity] = file
+                                    isNewFileObject = true
+                                }
+                            } else if seenFileIdentities.insert(file.identity).inserted {
+                                addFile(file, to: directory.relativePath, metrics: &metrics)
+                                rootLogicalBytes += file.logicalBytes
+                                rootAllocatedBytes += file.allocatedBytes
+                                rootFileCount += 1
+                                isNewFileObject = true
+                            }
+                            if isNewFileObject {
+                                fileCountForProgress += 1
+                                if fileCountForProgress.isMultiple(of: 256) {
+                                    progress(ScanProgress(currentPath: fullPath, visitedFiles: fileCountForProgress))
+                                }
+                            }
+                        }
+                    }
+                    closedir(stream)
+                    close(directoryFD)
+                    pending.append(contentsOf: discoveredDirectories)
+                    if interrupted {
+                        for unvisited in pending {
+                            addCoverageEvent(unvisited.relativePath, symlink: false, to: &metrics)
+                        }
+                        break
                     }
                 }
-                if cancelled { break }
             }
+
+            // Among multiply-linked paths, the smallest UTF-8 relative path owns
+            // the object's bytes. Unique files never need to retain their paths.
+            let linkedFiles = linkedFilesByIdentity.values.sorted {
+                utf8LessThan($0.relativePath, $1.relativePath)
+            }
+            for file in linkedFiles {
+                addFile(file, to: file.parentPath, metrics: &metrics)
+                rootLogicalBytes += file.logicalBytes
+                rootAllocatedBytes += file.allocatedBytes
+                rootFileCount += 1
+            }
+
+            // Aggregate each directory into its parent once, deepest first.
+            let directoryPaths = metrics.keys.filter { !$0.isEmpty }.sorted { lhs, rhs in
+                let leftDepth = lhs.split(separator: "/").count
+                let rightDepth = rhs.split(separator: "/").count
+                if leftDepth != rightDepth { return leftDepth > rightDepth }
+                return utf8LessThan(lhs, rhs)
+            }
+            for path in directoryPaths {
+                guard let child = metrics[path] else { continue }
+                let parent = parentPath(of: path)
+                var parentMetrics = metrics[parent, default: DirectoryMetrics()]
+                parentMetrics.logicalBytes += child.logicalBytes
+                parentMetrics.allocatedBytes += child.allocatedBytes
+                parentMetrics.fileCount += child.fileCount
+                parentMetrics.incompleteCount += child.incompleteCount
+                parentMetrics.excludedSymlinkCount += child.excludedSymlinkCount
+                metrics[parent] = parentMetrics
+            }
+
+            let summaries = directoryPaths.compactMap { path -> DirectoryUsage? in
+                guard let value = metrics[path] else { return nil }
+                return DirectoryUsage(
+                    rootRelativePath: path,
+                    logicalBytes: value.logicalBytes,
+                    allocatedBytes: value.allocatedBytes,
+                    fileCount: value.fileCount,
+                    incompleteCount: value.incompleteCount,
+                    excludedSymlinkCount: value.excludedSymlinkCount,
+                    complete: value.incompleteCount == 0 && value.excludedSymlinkCount == 0
+                )
+            }.sorted {
+                if $0.allocatedBytes != $1.allocatedBytes { return $0.allocatedBytes > $1.allocatedBytes }
+                return utf8LessThan($0.rootRelativePath, $1.rootRelativePath)
+            }
+            let wasTruncated = summaries.count > maximumDirectorySummaries
 
             results.append(FolderObservation(
-                path: root.path, displayName: root.lastPathComponent,
-                logicalBytes: logicalBytes, allocatedBytes: allocatedBytes,
-                fileCount: fileCount, inaccessibleCount: inaccessibleCount,
-                complete: complete
+                path: root.path,
+                displayName: root.lastPathComponent,
+                logicalBytes: rootLogicalBytes,
+                allocatedBytes: rootAllocatedBytes,
+                fileCount: rootFileCount,
+                inaccessibleCount: inaccessibleCount,
+                complete: scanComplete && inaccessibleCount == 0 && excludedSymlinkCount == 0,
+                excludedSymlinkCount: excludedSymlinkCount,
+                subdirectorySummaries: Array(summaries.prefix(maximumDirectorySummaries)),
+                subdirectorySummariesTruncated: wasTruncated
             ))
-
-            func record(_ metadata: stat) {
-                let identity = FileIdentity(
-                    device: UInt64(metadata.st_dev), inode: UInt64(metadata.st_ino)
-                )
-                guard seenFiles.insert(identity).inserted else { return }
-                logicalBytes += Int64(max(0, metadata.st_size))
-                allocatedBytes += Int64(max(0, metadata.st_blocks)) * 512
-                fileCount += 1
-            }
 
             if cancelled { break }
         }
 
         return ScanObservation(startedAt: startedAt, folders: results, cancelled: cancelled)
+    }
+
+    private static func emptyObservation(
+        root: URL, inaccessibleCount: Int = 0, excludedSymlinkCount: Int = 0
+    ) -> FolderObservation {
+        FolderObservation(
+            path: root.path,
+            displayName: root.lastPathComponent,
+            logicalBytes: 0,
+            allocatedBytes: 0,
+            fileCount: 0,
+            inaccessibleCount: inaccessibleCount,
+            complete: false,
+            excludedSymlinkCount: excludedSymlinkCount
+        )
+    }
+
+    private static func fileRecord(metadata: stat, relativePath: String, parentPath: String) -> FileRecord {
+        FileRecord(
+            relativePath: relativePath,
+            parentPath: parentPath,
+            identity: FileIdentity(device: UInt64(metadata.st_dev), inode: UInt64(metadata.st_ino)),
+            logicalBytes: Int64(max(0, metadata.st_size)),
+            allocatedBytes: Int64(max(0, metadata.st_blocks)) * 512
+        )
+    }
+
+    private static func addFile(
+        _ file: FileRecord, to parentPath: String, metrics: inout [String: DirectoryMetrics]
+    ) {
+        var value = metrics[parentPath, default: DirectoryMetrics()]
+        value.logicalBytes += file.logicalBytes
+        value.allocatedBytes += file.allocatedBytes
+        value.fileCount += 1
+        metrics[parentPath] = value
+    }
+
+    private static func addCoverageEvent(
+        _ path: String, symlink: Bool, to metrics: inout [String: DirectoryMetrics]
+    ) {
+        var value = metrics[path, default: DirectoryMetrics()]
+        if symlink { value.excludedSymlinkCount += 1 }
+        else { value.incompleteCount += 1 }
+        metrics[path] = value
+    }
+
+    private static func parentPath(of path: String) -> String {
+        guard let separator = path.lastIndex(of: "/") else { return "" }
+        return String(path[..<separator])
+    }
+
+    private static func utf8LessThan(_ lhs: String, _ rhs: String) -> Bool {
+        lhs.utf8.lexicographicallyPrecedes(rhs.utf8)
     }
 
     private static func openDirectory(rootFD: Int32, components: [String]) -> Int32 {
