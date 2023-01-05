@@ -73,6 +73,10 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     public let excludedSymlinkCount: Int
     public let changedDuringScanCount: Int
     public let gitMetadataEntryDetected: Bool
+    /// Metrics for a direct, real `.git` directory, retained even when it is
+    /// outside the capped largest-subdirectory ranking. A `.git` file is only
+    /// a marker and intentionally has no separately attributed footprint.
+    public let gitMetadataUsage: DirectoryUsage?
     public let finishedAt: Date
     public let complete: Bool
     public let subdirectorySummaries: [DirectoryUsage]
@@ -85,6 +89,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         excludedSymlinkCount: Int = 0,
         changedDuringScanCount: Int = 0,
         gitMetadataEntryDetected: Bool = false,
+        gitMetadataUsage: DirectoryUsage? = nil,
         subdirectorySummaries: [DirectoryUsage] = [],
         subdirectorySummariesTruncated: Bool = false
     ) {
@@ -98,6 +103,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         self.excludedSymlinkCount = excludedSymlinkCount
         self.changedDuringScanCount = changedDuringScanCount
         self.gitMetadataEntryDetected = gitMetadataEntryDetected
+        self.gitMetadataUsage = gitMetadataUsage
         self.finishedAt = finishedAt
         self.complete = complete
         self.subdirectorySummaries = subdirectorySummaries
@@ -108,7 +114,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         case id, path, displayName, logicalBytes, allocatedBytes, fileCount
         case inaccessibleCount, excludedSymlinkCount, changedDuringScanCount, gitMetadataEntryDetected
         case finishedAt, complete
-        case subdirectorySummaries, subdirectorySummariesTruncated
+        case subdirectorySummaries, subdirectorySummariesTruncated, gitMetadataUsage
     }
 
     public init(from decoder: Decoder) throws {
@@ -123,6 +129,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         excludedSymlinkCount = try values.decodeIfPresent(Int.self, forKey: .excludedSymlinkCount) ?? 0
         changedDuringScanCount = try values.decodeIfPresent(Int.self, forKey: .changedDuringScanCount) ?? 0
         gitMetadataEntryDetected = try values.decodeIfPresent(Bool.self, forKey: .gitMetadataEntryDetected) ?? false
+        gitMetadataUsage = try values.decodeIfPresent(DirectoryUsage.self, forKey: .gitMetadataUsage)
         finishedAt = try values.decode(Date.self, forKey: .finishedAt)
         complete = try values.decode(Bool.self, forKey: .complete)
         subdirectorySummaries = try values.decodeIfPresent([DirectoryUsage].self, forKey: .subdirectorySummaries) ?? []
@@ -141,6 +148,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         try values.encode(excludedSymlinkCount, forKey: .excludedSymlinkCount)
         try values.encode(changedDuringScanCount, forKey: .changedDuringScanCount)
         try values.encode(gitMetadataEntryDetected, forKey: .gitMetadataEntryDetected)
+        try values.encodeIfPresent(gitMetadataUsage, forKey: .gitMetadataUsage)
         try values.encode(finishedAt, forKey: .finishedAt)
         try values.encode(complete, forKey: .complete)
         try values.encode(subdirectorySummaries, forKey: .subdirectorySummaries)

@@ -47,7 +47,9 @@ public enum ObservationComparison {
                 }) else { return nil }
                 return previousFolder.subdirectorySummaries.first(where: {
                     $0.rootRelativePath == current.rootRelativePath && $0.complete
-                })
+                }) ?? previousFolder.gitMetadataUsage.flatMap {
+                    $0.rootRelativePath == current.rootRelativePath && $0.complete ? $0 : nil
+                }
             }
             .first
     }

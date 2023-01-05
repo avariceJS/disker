@@ -311,23 +311,18 @@ public enum FolderScanner {
 
             let summaries = directoryPaths.compactMap { path -> DirectoryUsage? in
                 guard let value = metrics[path] else { return nil }
-                return DirectoryUsage(
-                    rootRelativePath: path,
-                    logicalBytes: value.logicalBytes,
-                    allocatedBytes: value.allocatedBytes,
-                    fileCount: value.fileCount,
-                    incompleteCount: value.incompleteCount,
-                    excludedSymlinkCount: value.excludedSymlinkCount,
-                    changedDuringScanCount: value.changedDuringScanCount,
-                    gitMetadataEntryDetected: value.gitMetadataEntryDetected,
-                    complete: value.incompleteCount == 0 && value.excludedSymlinkCount == 0
-                        && value.changedDuringScanCount == 0
-                )
+                return directoryUsage(path: path, metrics: value)
             }.sorted {
                 if $0.allocatedBytes != $1.allocatedBytes { return $0.allocatedBytes > $1.allocatedBytes }
                 return utf8LessThan($0.rootRelativePath, $1.rootRelativePath)
             }
             let wasTruncated = summaries.count > maximumDirectorySummaries
+            // Keep the direct repository metadata component independently of
+            // the leaderboard cap; `.git` itself remains an explicitly
+            // selected-root-relative measurement, not proof of project ownership.
+            let gitMetadataUsage = metrics[".git"].map {
+                directoryUsage(path: ".git", metrics: $0)
+            }
 
             results.append(FolderObservation(
                 path: root.path,
@@ -341,6 +336,7 @@ public enum FolderScanner {
                 excludedSymlinkCount: excludedSymlinkCount,
                 changedDuringScanCount: metrics[""]?.changedDuringScanCount ?? 0,
                 gitMetadataEntryDetected: metrics[""]?.gitMetadataEntryDetected ?? false,
+                gitMetadataUsage: gitMetadataUsage,
                 subdirectorySummaries: Array(summaries.prefix(maximumDirectorySummaries)),
                 subdirectorySummariesTruncated: wasTruncated
             ))
@@ -349,6 +345,21 @@ public enum FolderScanner {
         }
 
         return ScanObservation(startedAt: startedAt, folders: results, cancelled: cancelled)
+    }
+
+    private static func directoryUsage(path: String, metrics value: DirectoryMetrics) -> DirectoryUsage {
+        DirectoryUsage(
+            rootRelativePath: path,
+            logicalBytes: value.logicalBytes,
+            allocatedBytes: value.allocatedBytes,
+            fileCount: value.fileCount,
+            incompleteCount: value.incompleteCount,
+            excludedSymlinkCount: value.excludedSymlinkCount,
+            changedDuringScanCount: value.changedDuringScanCount,
+            gitMetadataEntryDetected: value.gitMetadataEntryDetected,
+            complete: value.incompleteCount == 0 && value.excludedSymlinkCount == 0
+                && value.changedDuringScanCount == 0
+        )
     }
 
     private static func emptyObservation(

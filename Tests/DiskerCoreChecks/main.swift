@@ -24,6 +24,7 @@ private struct DiskerCoreChecks {
             ("metadata scan and symlink exclusion", testMetadataScanAndSymlinkExclusion),
             ("nested directory usage summaries", testNestedDirectorySummaries),
             ("Git metadata marker detection", testGitMetadataMarkerDetection),
+            ("Git metadata footprint survives summary cap", testGitMetadataUsageSurvivesSummaryCap),
             ("selected symlink root is incomplete", testSelectedSymlinkRootIsIncomplete),
             ("hard-link deduplication", testHardLinkDeduplication),
             ("directory summary cap and stable order", testDirectorySummaryCap),
@@ -153,11 +154,43 @@ private struct DiskerCoreChecks {
 
             let folder = FolderScanner.scan(roots: [root]).folders[0]
             try expect(folder.gitMetadataEntryDetected, "a direct .git marker should label the selected root as a likely project scope")
+            let gitUsage = folder.gitMetadataUsage
+            try expect(gitUsage?.rootRelativePath == ".git", "a direct .git directory should have its own selected-root-relative measurement")
+            try expect(gitUsage?.logicalBytes == 21 && gitUsage?.fileCount == 1, "Git metadata metrics should come from directory entries without parsing their contents")
             let vendor = try requireSummary("vendor", in: folder)
             let nested = try requireSummary("vendor/project", in: folder)
             try expect(!vendor.gitMetadataEntryDetected, "a nested project's marker must not be attributed to its ancestor")
             try expect(nested.gitMetadataEntryDetected, "a .git file marker should identify its immediate containing directory")
             try expect(folder.logicalBytes > 0, "metadata scan should count marker file size without parsing its contents")
+            let selectedGitFile = FolderScanner.scan(roots: [nestedProject]).folders[0]
+            try expect(selectedGitFile.gitMetadataEntryDetected && selectedGitFile.gitMetadataUsage == nil, "a direct .git file is a marker only, with no payload or external path resolution")
+
+            let symlinkRoot = root.appendingPathComponent("symlink-project", isDirectory: true)
+            try FileManager.default.createDirectory(at: symlinkRoot, withIntermediateDirectories: false)
+            try FileManager.default.createSymbolicLink(
+                at: symlinkRoot.appendingPathComponent(".git"),
+                withDestinationURL: gitDirectory
+            )
+            let selectedSymlinkMarker = FolderScanner.scan(roots: [symlinkRoot]).folders[0]
+            try expect(!selectedSymlinkMarker.gitMetadataEntryDetected && selectedSymlinkMarker.gitMetadataUsage == nil, "a .git symlink must not be followed or attributed")
+            try expect(selectedSymlinkMarker.excludedSymlinkCount == 1 && !selectedSymlinkMarker.complete, "a .git symlink should remain visible as partial coverage")
+        }
+    }
+
+    private static func testGitMetadataUsageSurvivesSummaryCap() throws {
+        try withTemporaryDirectory { root in
+            let gitDirectory = root.appendingPathComponent(".git", isDirectory: true)
+            try FileManager.default.createDirectory(at: gitDirectory, withIntermediateDirectories: false)
+            try Data().write(to: gitDirectory.appendingPathComponent("HEAD"))
+            for index in 0..<101 {
+                let directory = root.appendingPathComponent(String(format: "large-%03d", index), isDirectory: true)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+                try Data(repeating: 0x47, count: 8192).write(to: directory.appendingPathComponent("payload.bin"))
+            }
+            let folder = FolderScanner.scan(roots: [root]).folders[0]
+            try expect(folder.subdirectorySummaries.count == 100 && folder.subdirectorySummariesTruncated, "the ordinary leaderboard should remain capped at 100 entries")
+            try expect(!folder.subdirectorySummaries.contains(where: { $0.rootRelativePath == ".git" }), "small Git metadata may fall below the largest-folder cutoff")
+            try expect(folder.gitMetadataUsage?.logicalBytes == 0, "the direct Git metadata measurement should survive outside the capped leaderboard")
         }
     }
 
@@ -206,6 +239,7 @@ private struct DiskerCoreChecks {
         try expect(folder.excludedSymlinkCount == 0, "old folder history should default symlink count to zero")
         try expect(folder.changedDuringScanCount == 0, "old folder history should default mutation count to zero")
         try expect(!folder.gitMetadataEntryDetected, "old folder history should default Git marker state to false")
+        try expect(folder.gitMetadataUsage == nil, "old folder history should default retained Git metrics to absent")
         try expect(folder.subdirectorySummaries.count == 1, "old folder history should preserve existing directory summaries")
         try expect(folder.subdirectorySummaries[0].changedDuringScanCount == 0, "old directory summaries should default mutation count to zero")
         try expect(!folder.subdirectorySummaries[0].gitMetadataEntryDetected, "old directory summaries should default Git marker state to false")
@@ -397,6 +431,27 @@ private struct DiskerCoreChecks {
 
         let partialCurrent = directory("Projects/Example", bytes: 999, complete: false)
         try expect(ObservationComparison.previousCompleteDirectory(for: partialCurrent, in: current, history: history) == nil, "partial current directory coverage must not yield a growth signal")
+        let earlierGitFolder = folderWithGitMetadata(id: UUID(), path: "/selected", bytes: 50, complete: true)
+        let currentGitFolder = folderWithGitMetadata(id: UUID(), path: "/selected", bytes: 75, complete: true)
+        let laterGitFolder = folderWithGitMetadata(id: UUID(), path: "/selected", bytes: 999, complete: true)
+        let gitHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: .now, folders: [earlierGitFolder], cancelled: false),
+            ScanObservation(startedAt: .now, folders: [currentGitFolder], cancelled: false),
+            ScanObservation(startedAt: .now, folders: [laterGitFolder], cancelled: false),
+        ])
+        let currentGitUsage = currentGitFolder.gitMetadataUsage!
+        let previousGitUsage = ObservationComparison.previousCompleteDirectory(
+            for: currentGitUsage, in: currentGitFolder, history: gitHistory
+        )
+        try expect(previousGitUsage?.allocatedBytes == 50, "retained Git metrics should compare same-root, prior complete component measurements")
+        try expect(ObservationComparison.allocatedByteDelta(current: currentGitUsage, previous: previousGitUsage!) == 25, "retained Git metrics should expose their allocated-estimate delta")
+        let partialGitFolder = folderWithGitMetadata(id: UUID(), path: "/selected", bytes: 100, complete: false)
+        try expect(ObservationComparison.previousCompleteDirectory(
+            for: partialGitFolder.gitMetadataUsage!, in: partialGitFolder,
+            history: LocalHistory(observations: gitHistory.observations + [
+                ScanObservation(startedAt: .now, folders: [partialGitFolder], cancelled: true)
+            ])
+        ) == nil, "partial root coverage must suppress Git component growth comparisons")
         let partialFolder = folderWithDirectory(
             id: UUID(), path: "/selected", bytes: 400, complete: false,
             directory: directory("Projects/Example", bytes: 125, complete: true)
@@ -425,6 +480,18 @@ private struct DiskerCoreChecks {
             rootRelativePath: path, logicalBytes: bytes, allocatedBytes: bytes,
             fileCount: 1, incompleteCount: complete ? 0 : 1,
             excludedSymlinkCount: 0, complete: complete
+        )
+    }
+
+    private static func folderWithGitMetadata(
+        id: UUID, path: String, bytes: Int64, complete: Bool
+    ) -> FolderObservation {
+        FolderObservation(
+            id: id, path: path, displayName: URL(fileURLWithPath: path).lastPathComponent,
+            logicalBytes: bytes, allocatedBytes: bytes, fileCount: 1,
+            inaccessibleCount: complete ? 0 : 1, complete: complete,
+            gitMetadataEntryDetected: true,
+            gitMetadataUsage: directory(".git", bytes: bytes, complete: complete)
         )
     }
 

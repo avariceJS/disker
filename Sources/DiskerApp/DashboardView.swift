@@ -595,6 +595,43 @@ struct DashboardView: View {
                 .background(.background, in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
 
+                if let gitUsage = folder.gitMetadataUsage {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Label("Git metadata in this selected folder", systemImage: "chevron.left.forwardslash.chevron.right")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Measured at \(gitUsage.rootRelativePath). The marker identifies Git metadata here; Disker does not read repository configuration or infer ownership of other files.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(spacing: 9) {
+                            Text("Logical \(format(gitUsage.logicalBytes))")
+                            Text("Allocated ~\(format(gitUsage.allocatedBytes))")
+                                .help("Allocated-byte estimate from filesystem metadata")
+                            Text("\(gitUsage.fileCount) files")
+                            if !gitUsage.complete {
+                                Text(coverageSummary(
+                                    inaccessible: gitUsage.incompleteCount,
+                                    excludedSymlinks: gitUsage.excludedSymlinkCount,
+                                    changed: gitUsage.changedDuringScanCount,
+                                    wasCancelled: scanCancelled
+                                ))
+                                .foregroundStyle(.orange)
+                            } else if let previous = model.previousCompleteDirectory(for: gitUsage, in: folder),
+                                      let delta = ObservationComparison.allocatedByteDelta(current: gitUsage, previous: previous) {
+                                Text(changeDescription(delta))
+                                    .foregroundStyle(delta >= 0 ? .orange : .green)
+                            } else if gitUsage.complete {
+                                Text("First complete observation")
+                            }
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                }
+
                 if !folder.subdirectorySummaries.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Largest subfolders")
