@@ -240,6 +240,7 @@ private struct DiskerCoreChecks {
         try expect(folder.changedDuringScanCount == 0, "old folder history should default mutation count to zero")
         try expect(!folder.gitMetadataEntryDetected, "old folder history should default Git marker state to false")
         try expect(folder.gitMetadataUsage == nil, "old folder history should default retained Git metrics to absent")
+        try expect(history.ramObservations.isEmpty, "old folder history should default manual RAM history to empty")
         try expect(folder.subdirectorySummaries.count == 1, "old folder history should preserve existing directory summaries")
         try expect(folder.subdirectorySummaries[0].changedDuringScanCount == 0, "old directory summaries should default mutation count to zero")
         try expect(!folder.subdirectorySummaries[0].gitMetadataEntryDetected, "old directory summaries should default Git marker state to false")
@@ -323,6 +324,18 @@ private struct DiskerCoreChecks {
             try expect(reloaded.observations.last?.id == latestID, "newest observation should survive a restart")
             try expect(reloaded.observations.last?.cancelled == true, "cancelled scan status should persist")
             try expect(reloaded.observations.last?.folders.first?.complete == false, "incomplete folder coverage should persist")
+            for index in 0...180 {
+                try ObservationStore.append(ramSample(at: TimeInterval(index)), to: fileURL)
+            }
+            let withRAMHistory = try ObservationStore.load(from: fileURL)
+            try expect(withRAMHistory.ramObservations.count == 180, "manual RAM history should retain at most 180 samples")
+            try expect(withRAMHistory.ramObservations.first?.observedAt == Date(timeIntervalSince1970: 1), "RAM history should evict only the oldest samples")
+            try expect(withRAMHistory.observations.count == 180, "saving RAM samples must preserve folder history")
+            try ObservationStore.append(
+                ScanObservation(startedAt: .now, folders: [], cancelled: false), to: fileURL
+            )
+            let afterFolderAppend = try ObservationStore.load(from: fileURL)
+            try expect(afterFolderAppend.ramObservations.count == 180, "saving folder scans must preserve manual RAM history")
         }
     }
 
@@ -359,11 +372,13 @@ private struct DiskerCoreChecks {
                 cancelled: false
             )
             try ObservationStore.append(observation, to: fileURL)
+            try ObservationStore.append(ramSample(at: 1), to: fileURL)
 
             try ObservationStore.clear(at: fileURL)
             try ObservationStore.clear(at: fileURL)
             let reloaded = try ObservationStore.load(from: fileURL)
             try expect(reloaded.observations.isEmpty, "clearing history should leave an empty store")
+            try expect(reloaded.ramObservations.isEmpty, "clearing local history should clear manual RAM samples too")
             let preservedNeighbor = try Data(contentsOf: neighboringFile)
             try expect(preservedNeighbor == sentinel, "history reset must not remove neighboring files")
         }
@@ -500,6 +515,16 @@ private struct DiskerCoreChecks {
             path: path, displayName: URL(fileURLWithPath: path).lastPathComponent,
             logicalBytes: bytes, allocatedBytes: bytes, fileCount: 1,
             inaccessibleCount: complete ? 0 : 1, complete: complete
+        )
+    }
+
+    private static func ramSample(at timestamp: TimeInterval) -> RAMObservation {
+        RAMObservation(
+            observedAt: Date(timeIntervalSince1970: timestamp), physicalBytes: 16_000,
+            freeBytes: 2_000, activeBytes: 4_000, inactiveBytes: 3_000,
+            wiredBytes: 2_000, compressedBytes: 1_000,
+            processListAvailable: true, sampledProcessCount: 0,
+            unavailableProcessCount: 0, largestProcesses: []
         )
     }
 

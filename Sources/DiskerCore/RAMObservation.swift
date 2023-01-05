@@ -21,6 +21,26 @@ public struct RAMObservation: Codable, Equatable, Sendable {
     public let unavailableProcessCount: Int
     public let largestProcesses: [ProcessRAMSample]
 
+    public init(
+        observedAt: Date, physicalBytes: UInt64, freeBytes: UInt64,
+        activeBytes: UInt64, inactiveBytes: UInt64, wiredBytes: UInt64,
+        compressedBytes: UInt64, processListAvailable: Bool,
+        sampledProcessCount: Int, unavailableProcessCount: Int,
+        largestProcesses: [ProcessRAMSample]
+    ) {
+        self.observedAt = observedAt
+        self.physicalBytes = physicalBytes
+        self.freeBytes = freeBytes
+        self.activeBytes = activeBytes
+        self.inactiveBytes = inactiveBytes
+        self.wiredBytes = wiredBytes
+        self.compressedBytes = compressedBytes
+        self.processListAvailable = processListAvailable
+        self.sampledProcessCount = sampledProcessCount
+        self.unavailableProcessCount = unavailableProcessCount
+        self.largestProcesses = largestProcesses
+    }
+
     public static func current(processLimit: Int = 10) throws -> RAMObservation {
         var statistics = vm_statistics64_data_t()
         var count = mach_msg_type_number_t(

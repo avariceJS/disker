@@ -1,4 +1,5 @@
 import AppKit
+import Charts
 import DiskerCore
 import Observation
 import SwiftUI
@@ -18,6 +19,7 @@ final class DashboardModel {
     init() {
         do {
             history = try ObservationStore.load()
+            ram = history.ramObservations.last
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -36,9 +38,15 @@ final class DashboardModel {
     func refreshRAM() {
         Task {
             do {
-                ram = try await Task.detached(priority: .utility) {
+                let sample = try await Task.detached(priority: .utility) {
                     try RAMObservation.current()
                 }.value
+                ram = sample
+                do {
+                    history = try ObservationStore.append(sample)
+                } catch {
+                    errorMessage = "RAM sample completed, but local history could not be saved: \(error.localizedDescription)"
+                }
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -96,6 +104,7 @@ final class DashboardModel {
         do {
             try ObservationStore.clear()
             history = LocalHistory()
+            ram = nil
             errorMessage = nil
         } catch {
             errorMessage = "Local history could not be cleared: \(error.localizedDescription)"
@@ -486,6 +495,41 @@ struct DashboardView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(20)
+                    .background(.background, in: RoundedRectangle(cornerRadius: 16))
+                    .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Manual RAM history")
+                            .font(.title3.weight(.semibold))
+                        Text("Free and compressed pages across your last 24 on-demand samples. These snapshots are not a memory-pressure or leak diagnosis.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Chart(Array(model.history.ramObservations.suffix(24)), id: \.observedAt) { sample in
+                            LineMark(
+                                x: .value("Sample time", sample.observedAt),
+                                y: .value("MiB", Double(sample.freeBytes) / 1_048_576),
+                                series: .value("Metric", "Free pages")
+                            )
+                            .foregroundStyle(by: .value("Metric", "Free pages"))
+                            LineMark(
+                                x: .value("Sample time", sample.observedAt),
+                                y: .value("MiB", Double(sample.compressedBytes) / 1_048_576),
+                                series: .value("Metric", "Compressed pages")
+                            )
+                            .foregroundStyle(by: .value("Metric", "Compressed pages"))
+                        }
+                        .chartLegend(position: .bottom, alignment: .leading)
+                        .chartYAxisLabel("MiB")
+                        .frame(height: 180)
+                        .accessibilityLabel("Manual history of free and compressed RAM pages")
+                        if model.history.ramObservations.count < 2 {
+                            Text("Take another manual sample later to begin comparing observations.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     .padding(20)
                     .background(.background, in: RoundedRectangle(cornerRadius: 16))

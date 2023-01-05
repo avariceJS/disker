@@ -2,14 +2,33 @@ import Foundation
 
 public struct LocalHistory: Codable, Sendable {
     public var observations: [ScanObservation]
+    public var ramObservations: [RAMObservation]
 
-    public init(observations: [ScanObservation] = []) {
+    public init(observations: [ScanObservation] = [], ramObservations: [RAMObservation] = []) {
         self.observations = observations
+        self.ramObservations = ramObservations
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case observations, ramObservations
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        observations = try values.decodeIfPresent([ScanObservation].self, forKey: .observations) ?? []
+        ramObservations = try values.decodeIfPresent([RAMObservation].self, forKey: .ramObservations) ?? []
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(observations, forKey: .observations)
+        try values.encode(ramObservations, forKey: .ramObservations)
     }
 }
 
 public enum ObservationStore {
     private static let fileName = "observations.json"
+    private static let maximumObservationCount = 180
 
     public static func load(from fileURL: URL? = nil) throws -> LocalHistory {
         guard let url = fileURL ?? historyURL() else { throw StorageReadError.historyLocationUnavailable }
@@ -26,7 +45,21 @@ public enum ObservationStore {
     public static func append(_ observation: ScanObservation, to fileURL: URL? = nil) throws -> LocalHistory {
         var history = try load(from: fileURL)
         history.observations.append(observation)
-        history.observations = Array(history.observations.suffix(180))
+        history.observations = Array(history.observations.suffix(maximumObservationCount))
+        try save(history, fileURL: fileURL)
+        return history
+    }
+
+    @discardableResult
+    public static func append(_ observation: RAMObservation, to fileURL: URL? = nil) throws -> LocalHistory {
+        var history = try load(from: fileURL)
+        history.ramObservations.append(observation)
+        history.ramObservations = Array(history.ramObservations.suffix(maximumObservationCount))
+        try save(history, fileURL: fileURL)
+        return history
+    }
+
+    private static func save(_ history: LocalHistory, fileURL: URL?) throws {
         guard let url = fileURL ?? historyURL() else { throw StorageReadError.historyLocationUnavailable }
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
@@ -34,7 +67,6 @@ public enum ObservationStore {
         )
         let data = try JSONEncoder().encode(history)
         try data.write(to: url, options: .atomic)
-        return history
     }
 
     public static func clear(at fileURL: URL? = nil) throws {

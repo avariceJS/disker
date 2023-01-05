@@ -22,11 +22,11 @@ Folder-history comparisons use the same selected path and a prior complete obser
 
 ## Persistence and privacy
 
-The app writes at most 180 scan observations to `~/Library/Application Support/Disker/observations.json`. It stores paths and sizes, not file contents. No network or telemetry code is present. The current app asks the user to choose scope each time; it does not retain security-scoped bookmarks or silently monitor folders.
+The app writes at most 180 scan observations and 180 on-demand RAM observations to `~/Library/Application Support/Disker/observations.json`. Storage scans store paths and sizes, not file contents. RAM samples contain aggregate page counts plus the names, PIDs, and resident-size measurements of the ten largest processes. No network or telemetry code is present. The current app asks the user to choose scope each time; it does not retain security-scoped bookmarks or silently monitor folders.
 
 ## RAM sampling
 
-`RAMObservation` samples physical RAM size, free/active/inactive/wired/compressor page counts via Mach host statistics and converts each count using the kernel page size. It separately samples process resident sizes using `proc_listallpids`, `proc_pidinfo(PROC_PIDTASKINFO)`, and `proc_name`. Sampling is manual and point-in-time. Process exit or access restrictions are counted as unavailable. Inactive pages can be reclaimable cache; page groups are not a single additive pressure metric. Process resident size is not physical footprint. System memory pressure trends, swap, leak diagnosis, and RAM history are not implemented.
+`RAMObservation` samples physical RAM size, free/active/inactive/wired/compressor page counts via Mach host statistics and converts each count using the kernel page size. It separately samples process resident sizes using `proc_listallpids`, `proc_pidinfo(PROC_PIDTASKINFO)`, and `proc_name`. Sampling is manual and point-in-time; up to 180 observations are retained locally and the UI plots the latest 24 free and compressed page-count measurements. Process exit or access restrictions are counted as unavailable. Inactive pages can be reclaimable cache; page groups are not a single additive pressure metric. Process resident size is not physical footprint. System memory-pressure trends, swap, and leak diagnosis are not implemented.
 
 ## Not implemented
 
