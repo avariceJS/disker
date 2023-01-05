@@ -23,6 +23,7 @@ private struct DiskerCoreChecks {
             ("live RAM and process sample", testLiveRAMSample),
             ("metadata scan and symlink exclusion", testMetadataScanAndSymlinkExclusion),
             ("nested directory usage summaries", testNestedDirectorySummaries),
+            ("Git metadata marker detection", testGitMetadataMarkerDetection),
             ("selected symlink root is incomplete", testSelectedSymlinkRootIsIncomplete),
             ("hard-link deduplication", testHardLinkDeduplication),
             ("directory summary cap and stable order", testDirectorySummaryCap),
@@ -139,6 +140,27 @@ private struct DiskerCoreChecks {
         }
     }
 
+    private static func testGitMetadataMarkerDetection() throws {
+        try withTemporaryDirectory { root in
+            let gitDirectory = root.appendingPathComponent(".git", isDirectory: true)
+            try FileManager.default.createDirectory(at: gitDirectory, withIntermediateDirectories: false)
+            try Data("synthetic marker data".utf8).write(to: gitDirectory.appendingPathComponent("HEAD"))
+
+            let nestedProject = root.appendingPathComponent("vendor/project", isDirectory: true)
+            try FileManager.default.createDirectory(at: nestedProject, withIntermediateDirectories: true)
+            try Data("gitdir: ../.git/worktrees/project".utf8)
+                .write(to: nestedProject.appendingPathComponent(".git"))
+
+            let folder = FolderScanner.scan(roots: [root]).folders[0]
+            try expect(folder.gitMetadataEntryDetected, "a direct .git marker should label the selected root as a likely project scope")
+            let vendor = try requireSummary("vendor", in: folder)
+            let nested = try requireSummary("vendor/project", in: folder)
+            try expect(!vendor.gitMetadataEntryDetected, "a nested project's marker must not be attributed to its ancestor")
+            try expect(nested.gitMetadataEntryDetected, "a .git file marker should identify its immediate containing directory")
+            try expect(folder.logicalBytes > 0, "metadata scan should count marker file size without parsing its contents")
+        }
+    }
+
     private static func testHardLinkDeduplication() throws {
         try withTemporaryDirectory { root in
             let linkedDirectory = root.appendingPathComponent("linked", isDirectory: true)
@@ -183,8 +205,10 @@ private struct DiskerCoreChecks {
         }
         try expect(folder.excludedSymlinkCount == 0, "old folder history should default symlink count to zero")
         try expect(folder.changedDuringScanCount == 0, "old folder history should default mutation count to zero")
+        try expect(!folder.gitMetadataEntryDetected, "old folder history should default Git marker state to false")
         try expect(folder.subdirectorySummaries.count == 1, "old folder history should preserve existing directory summaries")
         try expect(folder.subdirectorySummaries[0].changedDuringScanCount == 0, "old directory summaries should default mutation count to zero")
+        try expect(!folder.subdirectorySummaries[0].gitMetadataEntryDetected, "old directory summaries should default Git marker state to false")
         try expect(!folder.subdirectorySummariesTruncated, "old folder history should default truncation to false")
     }
 

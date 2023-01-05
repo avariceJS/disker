@@ -42,6 +42,7 @@ public enum FolderScanner {
         var incompleteCount = 0
         var excludedSymlinkCount = 0
         var changedDuringScanCount = 0
+        var gitMetadataEntryDetected = false
     }
 
     public static func scan(
@@ -211,6 +212,11 @@ public enum FolderScanner {
                             : directory.relativePath + "/" + name
                         let fullPath = (directory.path as NSString).appendingPathComponent(name)
                         let type = metadata.st_mode & S_IFMT
+                        if name == ".git", type != S_IFLNK {
+                            var parentMetrics = metrics[directory.relativePath, default: DirectoryMetrics()]
+                            parentMetrics.gitMetadataEntryDetected = true
+                            metrics[directory.relativePath] = parentMetrics
+                        }
                         if type == S_IFLNK {
                             excludedSymlinkCount += 1
                             addCoverageEvent(directory.relativePath, symlink: true, to: &metrics)
@@ -313,6 +319,7 @@ public enum FolderScanner {
                     incompleteCount: value.incompleteCount,
                     excludedSymlinkCount: value.excludedSymlinkCount,
                     changedDuringScanCount: value.changedDuringScanCount,
+                    gitMetadataEntryDetected: value.gitMetadataEntryDetected,
                     complete: value.incompleteCount == 0 && value.excludedSymlinkCount == 0
                         && value.changedDuringScanCount == 0
                 )
@@ -333,6 +340,7 @@ public enum FolderScanner {
                     && metrics[""]?.changedDuringScanCount == 0,
                 excludedSymlinkCount: excludedSymlinkCount,
                 changedDuringScanCount: metrics[""]?.changedDuringScanCount ?? 0,
+                gitMetadataEntryDetected: metrics[""]?.gitMetadataEntryDetected ?? false,
                 subdirectorySummaries: Array(summaries.prefix(maximumDirectorySummaries)),
                 subdirectorySummariesTruncated: wasTruncated
             ))

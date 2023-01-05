@@ -23,6 +23,7 @@ The bundle is an unsigned development app under `.build/Disker.app`. The user-le
 - Reads filesystem metadata only; does not open file contents.
 - Does not follow symbolic links; deduplicates hard links within each selected folder.
 - Detects changed/replaced directories where possible and marks their coverage partial; a scan is still not an atomic snapshot.
+- Flags a direct `.git` metadata entry as a project marker without reading its contents or claiming ownership.
 - Shows logical file size separately from allocated blocks summed from `st_blocks`.
 - Saves the latest 180 scan observations under `~/Library/Application Support/Disker/observations.json`.
 - Compares complete folder scans to earlier complete scans for the same path; incomplete scans never produce growth deltas.

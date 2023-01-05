@@ -373,6 +373,11 @@ struct DashboardView: View {
                                         Text(folder.displayName)
                                         Text(folder.path).font(.caption2).foregroundStyle(.secondary)
                                             .lineLimit(1).truncationMode(.middle)
+                                        if folder.gitMetadataEntryDetected {
+                                            Label("Git metadata marker detected", systemImage: "chevron.left.forwardslash.chevron.right")
+                                                .font(.caption2)
+                                                .foregroundStyle(.blue)
+                                        }
                                     }
                                     Spacer(minLength: 12)
                                     VStack(alignment: .trailing, spacing: 3) {
@@ -541,6 +546,11 @@ struct DashboardView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(folder.displayName).font(.headline)
                         Text(folder.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                        if folder.gitMetadataEntryDetected {
+                            Label("Git metadata marker detected", systemImage: "chevron.left.forwardslash.chevron.right")
+                                .font(.caption2)
+                                .foregroundStyle(.blue)
+                        }
                         HStack(spacing: 8) {
                             Text("Logical \(format(folder.logicalBytes))")
                             Text("Allocated estimate \(format(folder.allocatedBytes))")
@@ -607,8 +617,13 @@ struct DashboardView: View {
                                         .truncationMode(.middle)
                                     HStack(spacing: 8) {
                                         Text("Logical \(format(directory.logicalBytes))")
-                                        Text("Allocated estimate \(format(directory.allocatedBytes))")
+                                Text("Allocated ~\(format(directory.allocatedBytes))")
+                                    .help("Allocated-byte estimate from filesystem metadata")
                                         Text("\(directory.fileCount) files")
+                                        if directory.gitMetadataEntryDetected {
+                                            Text("Git metadata marker detected")
+                                                .foregroundStyle(.blue)
+                                        }
                                         if !directory.complete {
                                             Text(coverageSummary(
                                                 inaccessible: directory.incompleteCount,
