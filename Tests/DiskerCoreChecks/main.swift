@@ -185,6 +185,40 @@ private struct DiskerCoreChecks {
             let firstAfterVerification = try Data(contentsOf: first)
             let secondAfterVerification = try Data(contentsOf: second)
             try expect(firstAfterVerification == sharedBytes && secondAfterVerification == sharedBytes, "verification must leave all selected files unchanged")
+
+            let group = result.groups[0]
+            let plan = try CleanupPlanner.makePlan(
+                from: result, preserving: [group.sha256: first.path]
+            )
+            try expect(plan.entries.count == 1 && plan.entries[0].targetPath == second.path, "a dry-run plan should list only exact non-preserved paths")
+            try expect(plan.entries[0].preservedPath == first.path && plan.entries[0].verifiedSHA256 == group.sha256, "each proposed action should carry its chosen keeper and content evidence")
+            try expect(plan.entries[0].reclaimableBytes == nil && plan.entries[0].risk == .unknown, "duplicate equality must not invent reclaimed bytes or low risk")
+            try expect(!plan.sourceCoverageComplete && plan.selectedRootPaths == [root.path], "the plan should preserve its partial-scope provenance")
+
+            do {
+                _ = try CleanupPlanner.makePlan(from: result, preserving: [group.sha256: unique.path])
+                throw CheckFailure.assertion("cleanup planning should reject a keeper outside the verified group")
+            } catch CleanupPlanError.keeperNotInVerifiedGroup { }
+
+            let outside = root.deletingLastPathComponent().appendingPathComponent("outside.bin")
+            try sharedBytes.write(to: outside)
+            defer { try? FileManager.default.removeItem(at: outside) }
+            let unscopedGroup = DuplicateGroup(sha256: group.sha256, files: [
+                group.files[0], DuplicateFile(
+                    path: outside.path, logicalBytes: UInt64(sharedBytes.count), allocatedBytes: 4096
+                )
+            ])
+            let unscopedResult = DuplicateVerificationResult(
+                selectedRootPaths: [root.path], groups: [unscopedGroup], checkedFileCount: 2,
+                inaccessibleCount: 0, excludedSymlinkCount: 0,
+                excludedSpecialFileCount: 0, changedDuringCheckCount: 0, cancelled: false
+            )
+            do {
+                _ = try CleanupPlanner.makePlan(
+                    from: unscopedResult, preserving: [group.sha256: first.path]
+                )
+                throw CheckFailure.assertion("cleanup planning should reject paths outside the selected scope")
+            } catch CleanupPlanError.pathOutsideSelectedScope { }
         }
     }
 

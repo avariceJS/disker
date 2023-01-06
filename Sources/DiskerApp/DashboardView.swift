@@ -16,6 +16,7 @@ final class DashboardModel {
     var duplicateCurrentPath = ""
     var duplicateBytesHashed: UInt64 = 0
     var duplicateCandidateBytes: UInt64 = 0
+    var preservedDuplicatePaths: [String: String] = [:]
     var errorMessage: String?
     var currentPath = ""
     var visitedFiles = 0
@@ -109,6 +110,7 @@ final class DashboardModel {
     func verifyDuplicates(in roots: [URL]) {
         guard !roots.isEmpty, !isVerifyingDuplicates else { return }
         duplicateResult = nil
+        preservedDuplicatePaths = [:]
         duplicateCurrentPath = ""
         duplicateBytesHashed = 0
         duplicateCandidateBytes = 0
@@ -133,6 +135,21 @@ final class DashboardModel {
 
     func cancelDuplicateVerification() {
         duplicateTask?.cancel()
+    }
+
+    func preserveDuplicateCopy(hash: String, path: String) {
+        preservedDuplicatePaths[hash] = path
+    }
+
+    func clearDuplicateKeeperChoices() {
+        preservedDuplicatePaths = [:]
+    }
+
+    var cleanupPlan: CleanupPlan? {
+        guard let duplicateResult, !preservedDuplicatePaths.isEmpty else { return nil }
+        return try? CleanupPlanner.makePlan(
+            from: duplicateResult, preserving: preservedDuplicatePaths
+        )
     }
 
     func clearHistory() {
@@ -538,7 +555,7 @@ struct DashboardView: View {
                 } else if let result = model.duplicateResult {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 5) {
-                            Text(result.cancelled ? "Verification cancelled" : "Verification complete")
+                            Text(result.cancelled ? "Verification cancelled" : result.complete ? "Verification complete" : "Verification partial")
                                 .font(.title3.weight(.semibold))
                             Text("\(result.checkedFileCount) same-size candidates hashed across \(result.selectedRootPaths.count) selected folders.")
                                 .font(.subheadline)
@@ -607,6 +624,17 @@ struct DashboardView: View {
                                         .help("Reveal in Finder")
                                         .accessibilityLabel("Reveal \(file.path) in Finder")
                                     }
+                                    HStack {
+                                        Spacer()
+                                        Button(model.preservedDuplicatePaths[group.sha256] == file.path
+                                               ? "Chosen to keep"
+                                               : "Keep this copy") {
+                                            model.preserveDuplicateCopy(hash: group.sha256, path: file.path)
+                                        }
+                                        .controlSize(.small)
+                                        .disabled(model.preservedDuplicatePaths[group.sha256] == file.path)
+                                        .accessibilityLabel("Keep this copy at \(file.path)")
+                                    }
                                 }
                                 Divider()
                                 Text("Potential space to reclaim: unknown. Identical contents do not prove a file is safe to remove; APFS clones and shared blocks can change physical savings.")
@@ -617,6 +645,50 @@ struct DashboardView: View {
                             .padding(16)
                             .background(.background, in: RoundedRectangle(cornerRadius: 14))
                         }
+                    }
+
+                    if let plan = model.cleanupPlan, !plan.entries.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Text("Dry-run cleanup plan")
+                                    .font(.title3.weight(.semibold))
+                                Spacer()
+                                Button("Clear choices", action: model.clearDuplicateKeeperChoices)
+                                    .controlSize(.small)
+                            }
+                            Text("Based on your choice of which copy to keep. These exact paths are proposed for manual review only; Disker will not move or remove them.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if !plan.sourceCoverageComplete {
+                                Text("The verification scope was partial. This plan covers only groups that were confirmed; other matches may remain unmeasured.")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            ForEach(plan.entries) { entry in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Proposed candidate · risk unknown")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.orange)
+                                    Text(entry.targetPath)
+                                        .font(.caption.monospaced())
+                                        .textSelection(.enabled)
+                                    Text("Keep: \(entry.preservedPath)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                        .truncationMode(.middle)
+                                    Text("Logical \(format(entry.logicalBytes)) · allocated ~\(format(entry.allocatedBytesEstimate)) · expected reclaimable space unknown")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.vertical, 7)
+                                Divider()
+                            }
+                        }
+                        .padding(18)
+                        .background(.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
                     }
                 } else {
                     ContentUnavailableView {
@@ -630,7 +702,7 @@ struct DashboardView: View {
                 }
 
                 Label {
-                    Text("Checks are read-only. Symlinks are not followed, hard links count as one file, and no cleanup action is provided.")
+                Text("Checks are read-only. Symlinks are not followed, hard links count as one file, and no move or deletion action is available.")
                 } icon: {
                     Image(systemName: "lock.shield")
                 }

@@ -22,7 +22,7 @@ Folder-history comparisons use the same selected path and a prior complete obser
 
 ## Duplicate verification
 
-Duplicate review is a separate, user-confirmed operation. The user selects exact folders, sees those paths in a confirmation dialog, and authorizes content reads. Disker first groups regular files by logical size and hashes only groups with multiple distinct `(device, inode)` identities. Directory and file opens are descriptor-relative with no-follow flags; file identity, size, modification time, and change time are rechecked before and after hashing. Read failures, symlinks, special files, detected changes, and cancellation leave the result incomplete. Only SHA-256-matched groups and their exact paths are reported in the current session; hashes are not persisted. Identical contents do not prove that removal is safe or estimate reclaimable APFS space. No deletion action exists.
+Duplicate review is a separate, user-confirmed operation. The user selects exact folders, sees those paths in a confirmation dialog, and authorizes content reads. Disker first groups regular files by logical size and hashes only groups with multiple distinct `(device, inode)` identities. Directory and file opens are descriptor-relative with no-follow flags; file identity, size, modification time, and change time are rechecked before and after hashing. Read failures, symlinks, special files, detected changes, and cancellation leave the result incomplete. Only SHA-256-matched groups and their exact paths are reported in the current session; hashes are not persisted. Identical contents do not prove that removal is safe or estimate reclaimable APFS space. A read-only dry-run plan can list exact non-preserved paths only after the user chooses which verified copy to keep; it marks risk and reclaimable bytes unknown, records selected-scope coverage, and provides no execution control.
 
 ## Persistence and privacy
 
@@ -34,7 +34,7 @@ The app writes at most 180 scan observations and 180 on-demand RAM observations 
 
 ## Not implemented
 
-Application/project ownership attribution, activity monitoring, cleanup plans, automatic scans, RAM pressure/swap trends, leak diagnosis, sandbox entitlements, signing/notarization, and an installer. Duplicate verification is implemented as a read-only, explicitly confirmed current-session report; it does not determine safe removal or provide a cleanup plan.
+Application/project ownership attribution, broad cleanup discovery and execution, activity monitoring, automatic scans, RAM pressure/swap trends, leak diagnosis, sandbox entitlements, signing/notarization, and an installer. The only cleanup plan supported is a read-only dry run derived from verified duplicates and an explicit keeper selection; it is not a general cleanup plan and performs no operation.
 
 ## Historical commit presentation
 

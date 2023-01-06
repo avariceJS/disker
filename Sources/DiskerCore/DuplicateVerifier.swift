@@ -12,12 +12,23 @@ public struct DuplicateFile: Codable, Equatable, Sendable {
     public let path: String
     public let logicalBytes: UInt64
     public let allocatedBytes: UInt64
+
+    public init(path: String, logicalBytes: UInt64, allocatedBytes: UInt64) {
+        self.path = path
+        self.logicalBytes = logicalBytes
+        self.allocatedBytes = allocatedBytes
+    }
 }
 
 public struct DuplicateGroup: Codable, Equatable, Sendable, Identifiable {
     public var id: String { sha256 }
     public let sha256: String
     public let files: [DuplicateFile]
+
+    public init(sha256: String, files: [DuplicateFile]) {
+        self.sha256 = sha256
+        self.files = files
+    }
 }
 
 public struct DuplicateVerificationResult: Codable, Equatable, Sendable {
@@ -29,6 +40,21 @@ public struct DuplicateVerificationResult: Codable, Equatable, Sendable {
     public let excludedSpecialFileCount: Int
     public let changedDuringCheckCount: Int
     public let cancelled: Bool
+
+    public init(
+        selectedRootPaths: [String], groups: [DuplicateGroup], checkedFileCount: Int,
+        inaccessibleCount: Int, excludedSymlinkCount: Int, excludedSpecialFileCount: Int,
+        changedDuringCheckCount: Int, cancelled: Bool
+    ) {
+        self.selectedRootPaths = selectedRootPaths
+        self.groups = groups
+        self.checkedFileCount = checkedFileCount
+        self.inaccessibleCount = inaccessibleCount
+        self.excludedSymlinkCount = excludedSymlinkCount
+        self.excludedSpecialFileCount = excludedSpecialFileCount
+        self.changedDuringCheckCount = changedDuringCheckCount
+        self.cancelled = cancelled
+    }
 
     public var complete: Bool {
         !cancelled && inaccessibleCount == 0 && excludedSymlinkCount == 0

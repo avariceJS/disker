@@ -33,7 +33,8 @@ The bundle is an unsigned development app under `.build/Disker.app`. The user-le
 - Keeps up to 180 on-demand RAM samples locally and plots free and compressed page counts separately from storage. It does not infer pressure or diagnose leaks.
 - Flags possible process resident-size growth only across three consecutive manual samples spanning at least 15 minutes, with a stable PID, process name, and kernel-reported start time plus at least 100 MiB growth. It is an investigation signal, not a leak diagnosis.
 - Verifies byte-identical duplicate candidates only after a separate folder selection and confirmation. It hashes regular files sharing a logical size, skips symlinks and hard-link aliases, and reports no reclaimable-space estimate.
-- Does not include cleanup, duplicate hashing, background monitoring, or application ownership attribution yet.
+- Provides an optional dry-run plan from verified duplicate groups only after the user explicitly chooses a path to preserve. The plan identifies exact other paths and unknown risk/reclaimable space; no file action is implemented.
+- Does not include general cleanup discovery, background monitoring, or application ownership attribution yet.
 
 Folder totals are estimates. APFS clones, snapshots, shared blocks, concurrent changes, inaccessible areas, and system-managed storage prevent recursive file totals from reconciling with physical volume usage.
 
