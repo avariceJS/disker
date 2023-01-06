@@ -11,10 +11,16 @@ final class DashboardModel {
     var ram: RAMObservation?
     var history = LocalHistory()
     var isScanning = false
+    var duplicateResult: DuplicateVerificationResult?
+    var isVerifyingDuplicates = false
+    var duplicateCurrentPath = ""
+    var duplicateBytesHashed: UInt64 = 0
+    var duplicateCandidateBytes: UInt64 = 0
     var errorMessage: String?
     var currentPath = ""
     var visitedFiles = 0
     private var scanTask: Task<ScanObservation, Never>?
+    private var duplicateTask: Task<DuplicateVerificationResult, Never>?
 
     init() {
         do {
@@ -100,6 +106,35 @@ final class DashboardModel {
         scanTask?.cancel()
     }
 
+    func verifyDuplicates(in roots: [URL]) {
+        guard !roots.isEmpty, !isVerifyingDuplicates else { return }
+        duplicateResult = nil
+        duplicateCurrentPath = ""
+        duplicateBytesHashed = 0
+        duplicateCandidateBytes = 0
+        isVerifyingDuplicates = true
+        let task = Task.detached(priority: .utility) {
+            DuplicateVerifier.verify(roots: roots, progress: { [weak self] progress in
+                Task { @MainActor [weak self] in
+                    self?.duplicateCurrentPath = progress.currentPath
+                    self?.duplicateBytesHashed = progress.bytesHashed
+                    self?.duplicateCandidateBytes = progress.candidateBytes
+                }
+            })
+        }
+        duplicateTask = task
+        Task {
+            duplicateResult = await task.value
+            isVerifyingDuplicates = false
+            duplicateCurrentPath = ""
+            duplicateTask = nil
+        }
+    }
+
+    func cancelDuplicateVerification() {
+        duplicateTask?.cancel()
+    }
+
     func clearHistory() {
         do {
             try ObservationStore.clear()
@@ -129,7 +164,7 @@ struct DashboardView: View {
     @State private var selectedSection: String? = "Overview"
     @State private var isConfirmingHistoryClear = false
 
-    private let sections = ["Overview", "Folders", "History", "RAM", "About"]
+    private let sections = ["Overview", "Folders", "Duplicates", "History", "RAM", "About"]
 
     var body: some View {
         NavigationSplitView {
@@ -155,6 +190,7 @@ struct DashboardView: View {
             Group {
                 switch selectedSection ?? "Overview" {
                 case "Folders": foldersPage
+                case "Duplicates": duplicatesPage
                 case "History": historyPage
                 case "RAM": ramPage
                 case "About": aboutPage
@@ -210,7 +246,7 @@ struct DashboardView: View {
                     if model.isScanning { model.cancelScan() }
                     else { model.chooseFolders() }
                 } label: {
-                    Label(model.isScanning ? "Cancel Scan" : "Scan Folders", systemImage: model.isScanning ? "stop.circle" : "folder.badge.magnifyingglass")
+                    Label(model.isScanning ? "Cancel Scan" : "Scan Folders", systemImage: model.isScanning ? "stop.circle" : "folder")
                 }
             }
         }
@@ -261,7 +297,7 @@ struct DashboardView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } else {
-                ContentUnavailableView("Capacity unavailable", systemImage: "internaldrive.badge.exclamationmark", description: Text("macOS did not provide capacity information for this volume."))
+                ContentUnavailableView("Capacity unavailable", systemImage: "internaldrive", description: Text("macOS did not provide capacity information for this volume."))
                     .frame(height: 140)
             }
         }
@@ -463,6 +499,184 @@ struct DashboardView: View {
             .padding(30)
             .frame(maxWidth: 800, alignment: .leading)
         }
+    }
+
+    private var duplicatesPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                header(
+                    "Duplicate review",
+                    subtitle: "Confirm byte-identical files inside folders you choose. Disker will not change them."
+                )
+                if model.isVerifyingDuplicates {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Verifying same-size file candidates…")
+                            .font(.headline)
+                        if model.duplicateCandidateBytes > 0 {
+                            ProgressView(
+                                value: Double(model.duplicateBytesHashed),
+                                total: Double(model.duplicateCandidateBytes)
+                            )
+                        } else {
+                            ProgressView()
+                        }
+                        Text(model.duplicateCurrentPath)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                        HStack {
+                            Text("Read \(format(model.duplicateBytesHashed)) of \(format(model.duplicateCandidateBytes)) candidate bytes")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Cancel Check", action: model.cancelDuplicateVerification)
+                        }
+                    }
+                    .padding(18)
+                    .background(.background, in: RoundedRectangle(cornerRadius: 14))
+                } else if let result = model.duplicateResult {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(result.cancelled ? "Verification cancelled" : "Verification complete")
+                                .font(.title3.weight(.semibold))
+                            Text("\(result.checkedFileCount) same-size candidates hashed across \(result.selectedRootPaths.count) selected folders.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            if !result.complete {
+                                Text(duplicateCoverageSummary(result))
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                        Spacer()
+                        Button("Verify Folders…", action: chooseDuplicateFolders)
+                    }
+
+                    if result.groups.isEmpty {
+                        ContentUnavailableView {
+                            Label(
+                                result.complete ? "No confirmed duplicates" : "No confirmed groups yet",
+                                systemImage: "doc.on.doc"
+                            )
+                        } description: {
+                            Text(result.complete
+                                 ? "No byte-identical files were found among the same-size candidates in these folders."
+                                 : "Coverage was incomplete, so this check cannot rule out additional matches.")
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 220)
+                    } else {
+                        Text("Confirmed byte-identical groups")
+                            .font(.title3.weight(.semibold))
+                        ForEach(result.groups) { group in
+                            VStack(alignment: .leading, spacing: 11) {
+                                HStack {
+                                    Text("\(group.files.count) matching files")
+                                        .font(.headline)
+                                    Spacer()
+                                    Text(format(group.files[0].logicalBytes))
+                                        .font(.system(.body, design: .rounded).weight(.semibold))
+                                    Text("each")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text("SHA-256  \(group.sha256)")
+                                    .font(.caption.monospaced())
+                                    .textSelection(.enabled)
+                                    .foregroundStyle(.secondary)
+                                ForEach(group.files, id: \.path) { file in
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "doc")
+                                            .foregroundStyle(.secondary)
+                                        Text(file.path)
+                                            .font(.caption)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                        Spacer(minLength: 4)
+                                        Text("Allocated ~\(format(file.allocatedBytes))")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                        Button {
+                                            NSWorkspace.shared.activateFileViewerSelecting([
+                                                URL(fileURLWithPath: file.path)
+                                            ])
+                                        } label: {
+                                            Image(systemName: "arrow.up.right.square")
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .help("Reveal in Finder")
+                                        .accessibilityLabel("Reveal \(file.path) in Finder")
+                                    }
+                                }
+                                Divider()
+                                Text("Potential space to reclaim: unknown. Identical contents do not prove a file is safe to remove; APFS clones and shared blocks can change physical savings.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .padding(16)
+                            .background(.background, in: RoundedRectangle(cornerRadius: 14))
+                        }
+                    }
+                } else {
+                    ContentUnavailableView {
+                        Label("No duplicate check yet", systemImage: "doc.on.doc")
+                    } description: {
+                        Text("Choose folders for a one-time content check. Disker first groups regular files by size, then reads only those candidates to verify their SHA-256 digest.")
+                    } actions: {
+                        Button("Verify Folders…", action: chooseDuplicateFolders)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 260)
+                }
+
+                Label {
+                    Text("Checks are read-only. Symlinks are not followed, hard links count as one file, and no cleanup action is provided.")
+                } icon: {
+                    Image(systemName: "lock.shield")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(30)
+            .frame(maxWidth: 960, alignment: .leading)
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Verify Folders…", action: chooseDuplicateFolders)
+                    .disabled(model.isVerifyingDuplicates)
+            }
+        }
+    }
+
+    private func chooseDuplicateFolders() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose folders for duplicate verification"
+        panel.prompt = "Choose Folders"
+        panel.message = "Disker will hash regular files with matching sizes in these folders. Contents of other files are not read."
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.canCreateDirectories = false
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+
+        let confirmation = NSAlert()
+        confirmation.messageText = "Read selected files to verify duplicates?"
+        confirmation.informativeText = "Disker will read contents only for regular files that share a logical size inside the selected folders. It will not modify files.\n\n" + panel.urls.map(\.path).joined(separator: "\n")
+        confirmation.addButton(withTitle: "Read and Verify")
+        confirmation.addButton(withTitle: "Cancel")
+        guard confirmation.runModal() == .alertFirstButtonReturn else { return }
+        model.verifyDuplicates(in: panel.urls)
+    }
+
+    private func duplicateCoverageSummary(_ result: DuplicateVerificationResult) -> String {
+        var reasons: [String] = []
+        if result.inaccessibleCount > 0 { reasons.append("\(result.inaccessibleCount) inaccessible") }
+        if result.excludedSymlinkCount > 0 { reasons.append("\(result.excludedSymlinkCount) symlinks skipped") }
+        if result.excludedSpecialFileCount > 0 { reasons.append("\(result.excludedSpecialFileCount) special files skipped") }
+        if result.changedDuringCheckCount > 0 { reasons.append("\(result.changedDuringCheckCount) items changed") }
+        if result.cancelled { reasons.append("cancelled") }
+        return "Partial coverage · " + reasons.joined(separator: " · ")
     }
 
     private var ramPage: some View {
@@ -820,6 +1034,7 @@ struct DashboardView: View {
     private func icon(for section: String) -> String {
         switch section {
         case "Folders": "folder"
+        case "Duplicates": "doc.on.doc"
         case "History": "clock.arrow.circlepath"
         case "RAM": "memorychip"
         case "About": "info.circle"

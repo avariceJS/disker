@@ -31,11 +31,14 @@ The bundle is an unsigned development app under `.build/Disker.app`. The user-le
 - Provides Finder reveal for selected folder roots.
 - Provides a separate, manual RAM sample using Mach VM page counts and process resident sizes.
 - Keeps up to 180 on-demand RAM samples locally and plots free and compressed page counts separately from storage. It does not infer pressure or diagnose leaks.
+- Verifies byte-identical duplicate candidates only after a separate folder selection and confirmation. It hashes regular files sharing a logical size, skips symlinks and hard-link aliases, and reports no reclaimable-space estimate.
 - Does not include cleanup, duplicate hashing, background monitoring, or application ownership attribution yet.
 
 Folder totals are estimates. APFS clones, snapshots, shared blocks, concurrent changes, inaccessible areas, and system-managed storage prevent recursive file totals from reconciling with physical volume usage.
 
 RAM is sampled on demand. Inactive pages may be reclaimable cache; process resident size differs from physical footprint. Disker does not currently report system memory pressure or diagnose leaks. RAM history shares the bounded local observation file and is removed through **About → Clear Local History…**.
+
+Duplicate verification reads file contents only after the user selects folders and confirms the exact scope. SHA-256 results remain in the current app session; no file is moved or removed. Identical content does not establish ownership, safety to delete, or physical space that would be reclaimed.
 
 ## Privacy
 

@@ -20,9 +20,13 @@ The scan is not an atomic filesystem snapshot. Disker checks that opened directo
 
 Folder-history comparisons use the same selected path and a prior complete observation before the current observation. Directory-history comparisons additionally require the same root-relative directory path and complete root and subtree coverage in both observations. Incomplete scans are skipped and future observations are never used. An arithmetic overflow suppresses the delta. Deltas describe allocated-byte estimates, not reclaimable space.
 
+## Duplicate verification
+
+Duplicate review is a separate, user-confirmed operation. The user selects exact folders, sees those paths in a confirmation dialog, and authorizes content reads. Disker first groups regular files by logical size and hashes only groups with multiple distinct `(device, inode)` identities. Directory and file opens are descriptor-relative with no-follow flags; file identity, size, modification time, and change time are rechecked before and after hashing. Read failures, symlinks, special files, detected changes, and cancellation leave the result incomplete. Only SHA-256-matched groups and their exact paths are reported in the current session; hashes are not persisted. Identical contents do not prove that removal is safe or estimate reclaimable APFS space. No deletion action exists.
+
 ## Persistence and privacy
 
-The app writes at most 180 scan observations and 180 on-demand RAM observations to `~/Library/Application Support/Disker/observations.json`. Storage scans store paths and sizes, not file contents. RAM samples contain aggregate page counts plus the names, PIDs, and resident-size measurements of the ten largest processes. No network or telemetry code is present. The current app asks the user to choose scope each time; it does not retain security-scoped bookmarks or silently monitor folders.
+The app writes at most 180 scan observations and 180 on-demand RAM observations to `~/Library/Application Support/Disker/observations.json`. Storage scans store paths and sizes, not file contents. RAM samples contain aggregate page counts plus the names, PIDs, and resident-size measurements of the ten largest processes. Duplicate checks do not persist file contents or hashes. No network or telemetry code is present. The current app asks the user to choose scope each time; it does not retain security-scoped bookmarks or silently monitor folders.
 
 ## RAM sampling
 
@@ -30,7 +34,7 @@ The app writes at most 180 scan observations and 180 on-demand RAM observations 
 
 ## Not implemented
 
-Application/project ownership attribution, activity monitoring, duplicate hashing, cleanup plans, automatic scans, RAM pressure/swap trends, leak diagnosis, sandbox entitlements, signing/notarization, and an installer. These require separate measured implementations; the UI does not claim them.
+Application/project ownership attribution, activity monitoring, cleanup plans, automatic scans, RAM pressure/swap trends, leak diagnosis, sandbox entitlements, signing/notarization, and an installer. Duplicate verification is implemented as a read-only, explicitly confirmed current-session report; it does not determine safe removal or provide a cleanup plan.
 
 ## Historical commit presentation
 

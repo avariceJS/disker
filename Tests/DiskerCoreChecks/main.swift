@@ -22,6 +22,8 @@ private struct DiskerCoreChecks {
             ("live root volume capacity", testLiveCapacitySource),
             ("live RAM and process sample", testLiveRAMSample),
             ("metadata scan and symlink exclusion", testMetadataScanAndSymlinkExclusion),
+            ("selected-scope duplicate verification", testDuplicateVerification),
+            ("duplicate verification cancellation", testDuplicateVerificationCancellation),
             ("nested directory usage summaries", testNestedDirectorySummaries),
             ("Git metadata marker detection", testGitMetadataMarkerDetection),
             ("Git metadata footprint survives summary cap", testGitMetadataUsageSurvivesSummaryCap),
@@ -115,6 +117,46 @@ private struct DiskerCoreChecks {
             try expect(nestedSummary.logicalBytes == 1024, "nested summary should include its measured descendant files")
             try expect(nestedSummary.excludedSymlinkCount == 1, "nested summary should report its own excluded symlink")
             try expect(!nestedSummary.complete, "a subtree with an excluded symlink should not look fully measured")
+        }
+    }
+
+    private static func testDuplicateVerification() throws {
+        try withTemporaryDirectory { root in
+            let first = root.appendingPathComponent("first.bin")
+            let second = root.appendingPathComponent("second.bin")
+            let different = root.appendingPathComponent("different.bin")
+            let unique = root.appendingPathComponent("unique.bin")
+            let sharedBytes = Data("same synthetic bytes".utf8)
+            try sharedBytes.write(to: first)
+            try sharedBytes.write(to: second)
+            try Data("other synthetic data".utf8).write(to: different)
+            try Data("short".utf8).write(to: unique)
+            try FileManager.default.linkItem(at: first, to: root.appendingPathComponent("z-hard-link.bin"))
+            try FileManager.default.createSymbolicLink(
+                at: root.appendingPathComponent("alias.bin"), withDestinationURL: first
+            )
+
+            var lastProgress: DuplicateVerificationProgress?
+            let result = DuplicateVerifier.verify(roots: [root], progress: { lastProgress = $0 })
+            try expect(result.groups.count == 1, "only byte-identical same-size files should form a duplicate group")
+            try expect(result.groups[0].files.map(\.path) == [first.path, second.path], "hard-link aliases should not be reported as separate files")
+            try expect(result.groups[0].files.allSatisfy { $0.logicalBytes == UInt64(sharedBytes.count) }, "duplicate candidates should retain exact logical sizes")
+            try expect(result.checkedFileCount == 3, "only regular files in shared-size buckets should be hashed")
+            try expect(result.excludedSymlinkCount == 1 && !result.complete, "symlinks should remain excluded and make verification coverage partial")
+            try expect(lastProgress?.bytesHashed == UInt64(sharedBytes.count * 3), "progress should report bytes actually read from size-matched candidates")
+            let firstAfterVerification = try Data(contentsOf: first)
+            let secondAfterVerification = try Data(contentsOf: second)
+            try expect(firstAfterVerification == sharedBytes && secondAfterVerification == sharedBytes, "verification must leave all selected files unchanged")
+        }
+    }
+
+    private static func testDuplicateVerificationCancellation() throws {
+        try withTemporaryDirectory { root in
+            try Data("synthetic bytes".utf8).write(to: root.appendingPathComponent("one.bin"))
+            try Data("synthetic bytes".utf8).write(to: root.appendingPathComponent("two.bin"))
+            let result = DuplicateVerifier.verify(roots: [root], shouldCancel: { true })
+            try expect(result.cancelled && !result.complete, "cancelled duplicate verification must stay explicitly incomplete")
+            try expect(result.groups.isEmpty && result.checkedFileCount == 0, "immediate cancellation must not read or report file content")
         }
     }
 
