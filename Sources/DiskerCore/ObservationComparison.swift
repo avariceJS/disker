@@ -1,6 +1,63 @@
 import Foundation
 
 public enum ObservationComparison {
+    public struct ProcessGrowthSignal: Equatable, Identifiable, Sendable {
+        public var id: Int32 { processID }
+        public let processID: Int32
+        public let processName: String
+        public let firstObservedAt: Date
+        public let lastObservedAt: Date
+        public let firstResidentBytes: UInt64
+        public let lastResidentBytes: UInt64
+
+        public var growthBytes: UInt64 { lastResidentBytes - firstResidentBytes }
+    }
+
+    /// A cautious investigation signal from three consecutive manual samples.
+    /// It requires stable PID, process name, and kernel-reported start time.
+    public static func possibleProcessGrowth(in history: LocalHistory) -> [ProcessGrowthSignal] {
+        let recent = Array(history.ramObservations.suffix(3))
+        guard recent.count == 3,
+              recent.allSatisfy(\.processListAvailable),
+              let first = recent.first,
+              let last = recent.last,
+              last.observedAt.timeIntervalSince(first.observedAt) >= 15 * 60
+        else { return [] }
+
+        let firstSamples = first.largestProcesses
+        let finalSamples = last.largestProcesses
+        let threshold = UInt64(100 * 1024 * 1024)
+
+        return firstSamples.compactMap { initial -> ProcessGrowthSignal? in
+            guard let startTime = initial.processStartTime else { return nil }
+            let matching = recent.compactMap { observation in
+                observation.largestProcesses.first(where: {
+                    $0.processID == initial.processID
+                        && $0.name == initial.name
+                        && $0.processStartTime == startTime
+                })
+            }
+            guard matching.count == 3,
+                  let latest = finalSamples.first(where: {
+                      $0.processID == initial.processID
+                          && $0.name == initial.name
+                          && $0.processStartTime == startTime
+                  }),
+                  latest.residentBytes >= initial.residentBytes,
+                  latest.residentBytes - initial.residentBytes >= threshold
+            else { return nil }
+
+            return ProcessGrowthSignal(
+                processID: initial.processID,
+                processName: initial.name,
+                firstObservedAt: first.observedAt,
+                lastObservedAt: last.observedAt,
+                firstResidentBytes: initial.residentBytes,
+                lastResidentBytes: latest.residentBytes
+            )
+        }.sorted { $0.growthBytes > $1.growthBytes }
+    }
+
     public static func previousCompleteFolder(
         for current: FolderObservation,
         in history: LocalHistory

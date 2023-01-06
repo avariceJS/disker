@@ -31,6 +31,7 @@ The bundle is an unsigned development app under `.build/Disker.app`. The user-le
 - Provides Finder reveal for selected folder roots.
 - Provides a separate, manual RAM sample using Mach VM page counts and process resident sizes.
 - Keeps up to 180 on-demand RAM samples locally and plots free and compressed page counts separately from storage. It does not infer pressure or diagnose leaks.
+- Flags possible process resident-size growth only across three consecutive manual samples spanning at least 15 minutes, with a stable PID, process name, and kernel-reported start time plus at least 100 MiB growth. It is an investigation signal, not a leak diagnosis.
 - Verifies byte-identical duplicate candidates only after a separate folder selection and confirmation. It hashes regular files sharing a logical size, skips symlinks and hard-link aliases, and reports no reclaimable-space estimate.
 - Does not include cleanup, duplicate hashing, background monitoring, or application ownership attribution yet.
 

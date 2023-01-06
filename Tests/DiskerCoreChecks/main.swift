@@ -21,6 +21,7 @@ private struct DiskerCoreChecks {
             ("zero important-usage fallback", testImportantUsageFallback),
             ("live root volume capacity", testLiveCapacitySource),
             ("live RAM and process sample", testLiveRAMSample),
+            ("cautious sustained process growth signal", testPossibleProcessGrowth),
             ("metadata scan and symlink exclusion", testMetadataScanAndSymlinkExclusion),
             ("selected-scope duplicate verification", testDuplicateVerification),
             ("duplicate verification cancellation", testDuplicateVerificationCancellation),
@@ -84,6 +85,43 @@ private struct DiskerCoreChecks {
         try expect(sample.largestProcesses.count <= 1, "process list should respect its requested limit")
         try expect(sample.sampledProcessCount > 0, "process list should include accessible processes")
         print("  RAM: \(sample.physicalBytes) bytes; process list available: \(sample.processListAvailable); \(sample.sampledProcessCount) processes sampled")
+    }
+
+    private static func testPossibleProcessGrowth() throws {
+        let processStart = Date(timeIntervalSince1970: 1_700_000_000)
+        let samples = [
+            ramObservation(at: 0, processStart: processStart, residentBytes: 50 * 1_048_576),
+            ramObservation(at: 15 * 60, processStart: processStart, residentBytes: 100 * 1_048_576),
+            ramObservation(at: 30 * 60, processStart: processStart, residentBytes: 220 * 1_048_576),
+        ]
+        let signals = ObservationComparison.possibleProcessGrowth(
+            in: LocalHistory(ramObservations: samples)
+        )
+        try expect(signals.count == 1, "three consecutive samples over the minimum interval should expose a substantial sustained growth signal")
+        try expect(signals[0].processID == 4242 && signals[0].growthBytes == 170 * 1_048_576, "the signal should report the same process and observed resident-size change")
+
+        let reusedPID = ramObservation(
+            at: 30 * 60,
+            processStart: processStart.addingTimeInterval(1),
+            residentBytes: 220 * 1_048_576
+        )
+        try expect(ObservationComparison.possibleProcessGrowth(
+            in: LocalHistory(ramObservations: [samples[0], samples[1], reusedPID])
+        ).isEmpty, "a reused PID with a different kernel start time must not be compared")
+
+        let unavailable = RAMObservation(
+            observedAt: Date(timeIntervalSince1970: 30 * 60), physicalBytes: 16_000,
+            freeBytes: 0, activeBytes: 0, inactiveBytes: 0, wiredBytes: 0,
+            compressedBytes: 0, processListAvailable: false,
+            sampledProcessCount: 0, unavailableProcessCount: 1,
+            largestProcesses: samples[2].largestProcesses
+        )
+        try expect(ObservationComparison.possibleProcessGrowth(
+            in: LocalHistory(ramObservations: [samples[0], samples[1], unavailable])
+        ).isEmpty, "an unavailable process list must suppress growth signals")
+        try expect(ObservationComparison.possibleProcessGrowth(
+            in: LocalHistory(ramObservations: Array(samples.prefix(2)))
+        ).isEmpty, "two short-interval samples must not look like sustained growth")
     }
 
     private static func testMetadataScanAndSymlinkExclusion() throws {
@@ -287,6 +325,10 @@ private struct DiskerCoreChecks {
         try expect(folder.subdirectorySummaries[0].changedDuringScanCount == 0, "old directory summaries should default mutation count to zero")
         try expect(!folder.subdirectorySummaries[0].gitMetadataEntryDetected, "old directory summaries should default Git marker state to false")
         try expect(!folder.subdirectorySummariesTruncated, "old folder history should default truncation to false")
+
+        let oldProcessJSON = #"{"processID":123,"name":"OldSample","residentBytes":4096}"#
+        let oldProcess = try JSONDecoder().decode(ProcessRAMSample.self, from: Data(oldProcessJSON.utf8))
+        try expect(oldProcess.processStartTime == nil, "old process samples without a start time should remain readable but ineligible for PID-safe trends")
     }
 
     private static func testSparseFileAccounting() throws {
@@ -567,6 +609,22 @@ private struct DiskerCoreChecks {
             wiredBytes: 2_000, compressedBytes: 1_000,
             processListAvailable: true, sampledProcessCount: 0,
             unavailableProcessCount: 0, largestProcesses: []
+        )
+    }
+
+    private static func ramObservation(
+        at timestamp: TimeInterval, processStart: Date, residentBytes: UInt64
+    ) -> RAMObservation {
+        RAMObservation(
+            observedAt: Date(timeIntervalSince1970: timestamp), physicalBytes: 16_000,
+            freeBytes: 2_000, activeBytes: 4_000, inactiveBytes: 3_000,
+            wiredBytes: 2_000, compressedBytes: 1_000,
+            processListAvailable: true, sampledProcessCount: 1,
+            unavailableProcessCount: 0,
+            largestProcesses: [ProcessRAMSample(
+                processID: 4242, name: "Synthetic", processStartTime: processStart,
+                residentBytes: residentBytes
+            )]
         )
     }
 

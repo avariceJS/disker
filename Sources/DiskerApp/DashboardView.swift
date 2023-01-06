@@ -744,10 +744,46 @@ struct DashboardView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
+                        Text("A possible process-growth signal requires the same PID and kernel start time in three consecutive samples spanning at least 15 minutes, with a resident-size increase of 100 MiB or more.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(20)
                     .background(.background, in: RoundedRectangle(cornerRadius: 16))
                     .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
+
+                    let growthSignals = ObservationComparison.possibleProcessGrowth(in: model.history)
+                    if !growthSignals.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Possible sustained resident-size growth")
+                                .font(.title3.weight(.semibold))
+                            ForEach(growthSignals) { signal in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack {
+                                        Text(signal.processName).font(.headline)
+                                        Text("PID \(signal.processID)")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                        Text("+\(format(signal.growthBytes))")
+                                            .foregroundStyle(.orange)
+                                    }
+                                    Text("\(signal.firstObservedAt.formatted(date: .abbreviated, time: .shortened)) to \(signal.lastObservedAt.formatted(date: .abbreviated, time: .shortened)) · resident size")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.vertical, 6)
+                                Divider()
+                            }
+                            Text("This is an investigation signal only. Workload changes and caches can explain resident-size growth; it is not proof of a memory leak.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(20)
+                        .background(.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: 16))
+                    }
 
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Processes by resident size").font(.title3.weight(.semibold))

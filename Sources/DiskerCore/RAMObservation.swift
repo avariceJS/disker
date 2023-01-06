@@ -5,7 +5,35 @@ public struct ProcessRAMSample: Codable, Equatable, Identifiable, Sendable {
     public var id: Int32 { processID }
     public let processID: Int32
     public let name: String
+    public let processStartTime: Date?
     public let residentBytes: UInt64
+
+    public init(processID: Int32, name: String, processStartTime: Date? = nil, residentBytes: UInt64) {
+        self.processID = processID
+        self.name = name
+        self.processStartTime = processStartTime
+        self.residentBytes = residentBytes
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case processID, name, processStartTime, residentBytes
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        processID = try values.decode(Int32.self, forKey: .processID)
+        name = try values.decode(String.self, forKey: .name)
+        processStartTime = try values.decodeIfPresent(Date.self, forKey: .processStartTime)
+        residentBytes = try values.decode(UInt64.self, forKey: .residentBytes)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(processID, forKey: .processID)
+        try values.encode(name, forKey: .name)
+        try values.encodeIfPresent(processStartTime, forKey: .processStartTime)
+        try values.encode(residentBytes, forKey: .residentBytes)
+    }
 }
 
 public struct RAMObservation: Codable, Equatable, Sendable {
@@ -75,9 +103,11 @@ public struct RAMObservation: Codable, Equatable, Sendable {
                 )
             }
             guard infoBytes == Int32(MemoryLayout<proc_taskinfo>.size) else { continue }
+            let startTime = processStartTime(pid)
             processes.append(ProcessRAMSample(
                 processID: pid,
                 name: processName(pid) ?? "Process \(pid)",
+                processStartTime: startTime,
                 residentBytes: taskInfo.pti_resident_size
             ))
         }
@@ -126,6 +156,23 @@ public struct RAMObservation: Codable, Equatable, Sendable {
         }
         guard count > 0 else { return nil }
         return String(cString: buffer)
+    }
+
+    private static func processStartTime(_ pid: pid_t) -> Date? {
+        var information = proc_bsdinfo()
+        let count = withUnsafeMutablePointer(to: &information) { pointer in
+            proc_pidinfo(
+                pid, PROC_PIDTBSDINFO, 0, pointer,
+                Int32(MemoryLayout<proc_bsdinfo>.size)
+            )
+        }
+        guard count == Int32(MemoryLayout<proc_bsdinfo>.size), information.pbi_pid == UInt32(pid) else {
+            return nil
+        }
+        return Date(
+            timeIntervalSince1970: TimeInterval(information.pbi_start_tvsec)
+                + TimeInterval(information.pbi_start_tvusec) / 1_000_000
+        )
     }
 }
 
