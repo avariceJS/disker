@@ -194,6 +194,9 @@ private struct DiskerCoreChecks {
             try expect(plan.entries[0].preservedPath == first.path && plan.entries[0].verifiedSHA256 == group.sha256, "each proposed action should carry its chosen keeper and content evidence")
             try expect(plan.entries[0].reclaimableBytes == nil && plan.entries[0].risk == .unknown, "duplicate equality must not invent reclaimed bytes or low risk")
             try expect(!plan.sourceCoverageComplete && plan.selectedRootPaths == [root.path], "the plan should preserve its partial-scope provenance")
+            let firstAfterPlan = try Data(contentsOf: first)
+            let secondAfterPlan = try Data(contentsOf: second)
+            try expect(firstAfterPlan == sharedBytes && secondAfterPlan == sharedBytes, "generating a dry-run plan must not alter selected files")
 
             do {
                 _ = try CleanupPlanner.makePlan(from: result, preserving: [group.sha256: unique.path])
@@ -219,6 +222,8 @@ private struct DiskerCoreChecks {
                 )
                 throw CheckFailure.assertion("cleanup planning should reject paths outside the selected scope")
             } catch CleanupPlanError.pathOutsideSelectedScope { }
+            let outsideAfterPlan = try Data(contentsOf: outside)
+            try expect(outsideAfterPlan == sharedBytes, "rejected out-of-scope plans must leave files unchanged")
         }
     }
 
