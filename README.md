@@ -16,6 +16,18 @@ open "$HOME/Applications/Disker.app"
 
 The bundle is an unsigned development app under `.build/Disker.app`. The user-level `~/Applications/Disker.app` copy is convenient for Finder and LaunchServices, but this is not a signed or notarized release and is not installed system-wide in `/Applications`. To remove the app, move it to Trash in Finder; clear Disker's locally stored observations first from **About → Clear Local History…** if desired. The scripts use SwiftPM's `--disable-sandbox` for build subprocesses because this development environment disallows SwiftPM's nested sandbox. This package has no dependencies or build plugins.
 
+## Development tool inventory
+
+Observed on 2026-10-19. These are shared machine tools; Disker did not install them during this session.
+
+| Tool | Version and location | Role | Update and removal |
+| --- | --- | --- | --- |
+| Xcode | 27.1 (27A9275), `/Applications/Xcode.app`; active developer directory `/Applications/Xcode.app/Contents/Developer` | Apple SDK, Swift 6.4.0, SwiftPM, build and checks | Update through Apple's Xcode distribution channel. Remove `Xcode.app` in Finder; Command Line Tools are installed separately. |
+| Command Line Tools | Apple package 26.6.0, `/Library/Developer/CommandLineTools` package location | Shared system developer tools; not the active `xcode-select` toolchain | Managed by Apple's Command Line Tools installer and package. |
+| Git | 2.56.0, `/opt/homebrew/bin/git` | Repository history and publication | Homebrew 7.0.9 manages this shared install: `brew upgrade git` / `brew uninstall git`. The system Git remains separate. |
+
+The Swift package has no third-party dependencies. Node.js is not installed and is not required.
+
 ## Current behavior
 
 - Reads total and available capacity reported by macOS for `/`.
