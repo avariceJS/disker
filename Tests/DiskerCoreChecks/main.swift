@@ -25,6 +25,7 @@ private struct DiskerCoreChecks {
             ("metadata scan and symlink exclusion", testMetadataScanAndSymlinkExclusion),
             ("selected-scope duplicate verification", testDuplicateVerification),
             ("duplicate verification cancellation", testDuplicateVerificationCancellation),
+            ("duplicate directory mutation coverage", testDuplicateDirectoryMutationCoverage),
             ("nested directory usage summaries", testNestedDirectorySummaries),
             ("Git metadata marker detection", testGitMetadataMarkerDetection),
             ("Git metadata footprint survives summary cap", testGitMetadataUsageSurvivesSummaryCap),
@@ -234,6 +235,24 @@ private struct DiskerCoreChecks {
             let result = DuplicateVerifier.verify(roots: [root], shouldCancel: { true })
             try expect(result.cancelled && !result.complete, "cancelled duplicate verification must stay explicitly incomplete")
             try expect(result.groups.isEmpty && result.checkedFileCount == 0, "immediate cancellation must not read or report file content")
+        }
+    }
+
+    private static func testDuplicateDirectoryMutationCoverage() throws {
+        try withTemporaryDirectory { root in
+            let data = Data("synthetic same-size candidate".utf8)
+            try data.write(to: root.appendingPathComponent("first.bin"))
+            try data.write(to: root.appendingPathComponent("second.bin"))
+            var mutated = false
+            let result = DuplicateVerifier.verify(roots: [root], progress: { _ in
+                guard !mutated else { return }
+                mutated = true
+                try? Data("created after enumeration".utf8)
+                    .write(to: root.appendingPathComponent("late-file.bin"))
+            })
+            try expect(mutated, "the verification progress checkpoint should run after candidate hashing")
+            try expect(result.changedDuringCheckCount > 0 && !result.complete, "a directory entry change during hashing must make final coverage partial")
+            try expect(result.groups.count == 1, "already verified groups may be retained alongside an explicit partial-coverage result")
         }
     }
 

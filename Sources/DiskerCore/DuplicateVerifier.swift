@@ -92,6 +92,14 @@ public enum DuplicateVerifier {
         let metadata: stat
     }
 
+    private struct ScannedDirectory {
+        let rootDescriptor: Int32
+        let components: [String]
+        let path: String
+        let identity: DirectoryIdentity
+        let metadata: stat
+    }
+
     private enum OpenResult {
         case opened(Int32)
         case changed
@@ -111,6 +119,7 @@ public enum DuplicateVerifier {
         }
 
         var candidatesBySize: [UInt64: [Candidate]] = [:]
+        var scannedDirectories: [ScannedDirectory] = []
         var inaccessibleCount = 0
         var excludedSymlinkCount = 0
         var excludedSpecialFileCount = 0
@@ -217,8 +226,18 @@ public enum DuplicateVerifier {
                     }
                 }
                 var after = stat()
-                if fstat(directoryFD, &after) != 0 { inaccessibleCount += 1 }
-                else if directoryMetadataChanged(before, after) { changedDuringCheckCount += 1 }
+                if fstat(directoryFD, &after) != 0 {
+                    inaccessibleCount += 1
+                } else {
+                    if directoryMetadataChanged(before, after) { changedDuringCheckCount += 1 }
+                    scannedDirectories.append(ScannedDirectory(
+                        rootDescriptor: rootDescriptor,
+                        components: directory.components,
+                        path: directory.path,
+                        identity: directory.identity,
+                        metadata: after
+                    ))
+                }
                 closedir(stream)
                 close(directoryFD)
                 pending.append(contentsOf: discovered)
@@ -284,6 +303,30 @@ public enum DuplicateVerifier {
             }
         }
 
+        if !cancelled {
+            for directory in scannedDirectories {
+                let pending = PendingDirectory(
+                    components: directory.components,
+                    path: directory.path,
+                    identity: directory.identity
+                )
+                switch openDirectory(rootFD: directory.rootDescriptor, directory: pending) {
+                case .opened(let descriptor):
+                    var current = stat()
+                    if fstat(descriptor, &current) != 0 {
+                        inaccessibleCount += 1
+                    } else if directoryMetadataChanged(directory.metadata, current) {
+                        changedDuringCheckCount += 1
+                    }
+                    close(descriptor)
+                case .changed:
+                    changedDuringCheckCount += 1
+                case .unavailable:
+                    inaccessibleCount += 1
+                }
+            }
+        }
+
         let groups = filesByHash.compactMap { digest, files -> DuplicateGroup? in
             guard files.count > 1 else { return nil }
             return DuplicateGroup(sha256: digest, files: files.sorted { utf8LessThan($0.path, $1.path) })
@@ -323,7 +366,6 @@ public enum DuplicateVerifier {
             }
             guard next >= 0 else {
                 let error = errno
-                close(parentFD)
                 return itemChanged(error) ? .changed : .unavailable
             }
             close(parentFD)
