@@ -36,6 +36,12 @@ The app writes at most 180 scan observations and 180 on-demand RAM observations 
 
 Application/project ownership attribution, broad cleanup discovery and execution, activity monitoring, automatic scans, RAM pressure/swap trends, leak diagnosis, sandbox entitlements, signing/notarization, and an installer. The only cleanup plan supported is a read-only dry run derived from verified duplicates and an explicit keeper selection; it is not a general cleanup plan and performs no operation.
 
+## Distribution and sandbox constraints
+
+Apple requires App Sandbox for Mac App Store distribution. A sandboxed edition can request the least privilege needed here: user-selected read-only file access through an open panel. macOS grants the selected folder's scope, including descendants, for the interaction; Disker calls `startAccessingSecurityScopedResource()` while each scan or duplicate check runs and stops access when it finishes. Disker does not persist security-scoped bookmarks, so historical paths and metrics remain viewable, but a later rescan requires the user to select the folder again. This also keeps background monitoring out of the current design.
+
+The development bundle is unsigned and has no App Sandbox entitlement; this is not evidence of App Store readiness. A signed sandboxed build must validate selected-folder traversal, duplicate reads, local history placement, and protected-folder failure states. macOS may still deny access because of file permissions, ACLs, system protections, or data-protection rules. Disker must surface those cases as incomplete coverage. It must not claim whole-volume visibility or attempt to grant itself Full Disk Access. See Apple's [App Sandbox](https://developer.apple.com/documentation/security/app-sandbox), [accessing files from the macOS App Sandbox](https://developer.apple.com/documentation/security/accessing-files-from-the-macos-app-sandbox), and [NSOpenPanel](https://developer.apple.com/documentation/appkit/nsopenpanel) documentation.
+
 ## Historical commit presentation
 
 The requested historical commit timeline begins `2023-01-01` in UTC, only after remote chronology and an owner-associated Git email are verified. These timestamps are intentionally simulated for contribution-calendar presentation; they do not represent actual implementation dates. Actual build/release timestamps and handoffs remain truthful. GitHub controls contribution attribution and display.
