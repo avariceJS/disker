@@ -76,6 +76,8 @@ private struct DiskerCoreChecks {
             availableBytes: 650, availabilityBasis: .importantUsage
         )
         let history = LocalHistory(capacityObservations: [previous, current])
+        try expect(ObservationComparison.comparableCapacitySeries(in: history) == [previous, current],
+                   "capacity history should expose a comparable sequence")
         try expect(ObservationComparison.previousComparableCapacity(for: current, in: history) == previous,
                    "capacity history should find the preceding sample for the same volume size and method")
         try expect(ObservationComparison.availableCapacityDelta(current: current, previous: previous) == -50,
@@ -92,6 +94,9 @@ private struct DiskerCoreChecks {
         )
         try expect(ObservationComparison.availableCapacityDelta(current: changedMethod, previous: previous) == nil,
                    "different macOS availability methods must not be compared")
+        let methodChangedHistory = LocalHistory(capacityObservations: [previous, current, changedMethod])
+        try expect(ObservationComparison.comparableCapacitySeries(in: methodChangedHistory) == [changedMethod],
+                   "capacity history chart data must start a new series after the API basis changes")
     }
 
     private static func testImportantUsageFallback() throws {

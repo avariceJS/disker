@@ -75,6 +75,19 @@ public enum ObservationComparison {
         })
     }
 
+    /// The trailing run of samples for the same reported volume size and
+    /// availability API basis. A capacity or method change starts a new run.
+    public static func comparableCapacitySeries(in history: LocalHistory) -> [CapacityObservation] {
+        guard let latest = history.capacityObservations.last else { return [] }
+        var series: [CapacityObservation] = []
+        for sample in history.capacityObservations.reversed() {
+            guard sample.totalBytes == latest.totalBytes,
+                  sample.availabilityBasis == latest.availabilityBasis else { break }
+            series.append(sample)
+        }
+        return series.reversed()
+    }
+
     /// Change in macOS-reported available bytes, comparable only for the same
     /// volume capacity and availability API basis.
     public static func availableCapacityDelta(

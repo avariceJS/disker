@@ -296,6 +296,32 @@ struct DashboardView: View {
                     .tint(.blue)
                     .accessibilityLabel("Available capacity")
                     .accessibilityValue("\(format(capacity.availableBytes)) of \(format(capacity.totalBytes))")
+                let capacitySeries = Array(ObservationComparison.comparableCapacitySeries(in: model.history).suffix(24))
+                if capacitySeries.count > 1 {
+                    let values = capacitySeries.map { Double($0.availableBytes) / 1_073_741_824 }
+                    let minimum = values.min() ?? 0
+                    let maximum = values.max() ?? minimum
+                    let padding = max((maximum - minimum) * 0.15, max(Double(capacity.totalBytes) / 1_073_741_824 * 0.005, 0.25))
+                    Chart(capacitySeries, id: \.observedAt) { sample in
+                        LineMark(
+                            x: .value("Observed", sample.observedAt),
+                            y: .value("Available GiB", Double(sample.availableBytes) / 1_073_741_824)
+                        )
+                        .foregroundStyle(.blue)
+                        PointMark(
+                            x: .value("Observed", sample.observedAt),
+                            y: .value("Available GiB", Double(sample.availableBytes) / 1_073_741_824)
+                        )
+                        .foregroundStyle(.blue)
+                    }
+                    .chartYScale(domain: max(0, minimum - padding)...(maximum + padding))
+                    .chartYAxisLabel("Available (GiB)")
+                    .frame(height: 120)
+                    .accessibilityLabel("Available-space history for the latest \(capacitySeries.count) comparable observations")
+                    Text("Latest comparable observations · focused vertical scale · not attributed to folders")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
                 if let previous = ObservationComparison.previousComparableCapacity(for: capacity, in: model.history),
                    let delta = ObservationComparison.availableCapacityDelta(current: capacity, previous: previous) {
                     Label {
