@@ -1006,6 +1006,10 @@ struct DashboardView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                        Text("Some exact directory names get a descriptive development-data hint. A name match does not confirm ownership or mean the contents are safe to remove.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
 
                         ForEach(folder.subdirectorySummaries, id: \.rootRelativePath) { directory in
                             let directoryURL = URL(fileURLWithPath: folder.path)
@@ -1018,6 +1022,11 @@ struct DashboardView: View {
                                         .font(.subheadline.weight(.medium))
                                         .lineLimit(1)
                                         .truncationMode(.middle)
+                                    if let hint = StorageAreaHint.matching(relativePath: directory.rootRelativePath) {
+                                        Label("\(hint.title) · name match", systemImage: hint.symbolName)
+                                            .font(.caption2)
+                                            .foregroundStyle(.blue)
+                                    }
                                     HStack(spacing: 8) {
                                         Text("Logical \(format(directory.logicalBytes))")
                                 Text("Allocated ~\(format(directory.allocatedBytes))")

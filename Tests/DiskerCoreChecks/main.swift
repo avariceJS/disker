@@ -27,6 +27,7 @@ private struct DiskerCoreChecks {
             ("duplicate verification cancellation", testDuplicateVerificationCancellation),
             ("duplicate directory mutation coverage", testDuplicateDirectoryMutationCoverage),
             ("nested directory usage summaries", testNestedDirectorySummaries),
+            ("cautious development storage hints", testStorageAreaHints),
             ("Git metadata marker detection", testGitMetadataMarkerDetection),
             ("Git metadata footprint survives summary cap", testGitMetadataUsageSurvivesSummaryCap),
             ("selected symlink root is incomplete", testSelectedSymlinkRootIsIncomplete),
@@ -277,6 +278,21 @@ private struct DiskerCoreChecks {
             try expect(beta.logicalBytes == 500 && beta.fileCount == 1, "sibling subtree should remain independent")
             try expect(alpha.complete && deep.complete && beta.complete, "fully enumerated subtrees should be complete")
         }
+    }
+
+    private static func testStorageAreaHints() throws {
+        try expect(StorageAreaHint.matching(relativePath: "Packages/App/.build/debug") == .swiftPackageBuild,
+                   "Swift build products should be recognized by an exact path component")
+        try expect(StorageAreaHint.matching(relativePath: "Library/Developer/Xcode/DerivedData/App") == .xcodeDerivedData,
+                   "Xcode derived data should be recognized in a nested selected scope")
+        try expect(StorageAreaHint.matching(relativePath: "frontend/node_modules/react") == .javascriptDependencies,
+                   "JavaScript dependency trees should be recognized by their exact name")
+        try expect(StorageAreaHint.matching(relativePath: "project/.venv/lib") == .pythonEnvironment,
+                   "Python environments should be recognized without inspecting their contents")
+        try expect(StorageAreaHint.matching(relativePath: "project/node_modules_backup") == nil,
+                   "similar but non-exact names must not be classified")
+        try expect(StorageAreaHint.matching(relativePath: "project/output") == nil,
+                   "unrecognized directory names must remain unclassified")
     }
 
     private static func testGitMetadataMarkerDetection() throws {
