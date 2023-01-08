@@ -3,26 +3,33 @@ import Foundation
 public struct LocalHistory: Codable, Sendable {
     public var observations: [ScanObservation]
     public var ramObservations: [RAMObservation]
+    public var capacityObservations: [CapacityObservation]
 
-    public init(observations: [ScanObservation] = [], ramObservations: [RAMObservation] = []) {
+    public init(
+        observations: [ScanObservation] = [], ramObservations: [RAMObservation] = [],
+        capacityObservations: [CapacityObservation] = []
+    ) {
         self.observations = observations
         self.ramObservations = ramObservations
+        self.capacityObservations = capacityObservations
     }
 
     private enum CodingKeys: String, CodingKey {
-        case observations, ramObservations
+        case observations, ramObservations, capacityObservations
     }
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         observations = try values.decodeIfPresent([ScanObservation].self, forKey: .observations) ?? []
         ramObservations = try values.decodeIfPresent([RAMObservation].self, forKey: .ramObservations) ?? []
+        capacityObservations = try values.decodeIfPresent([CapacityObservation].self, forKey: .capacityObservations) ?? []
     }
 
     public func encode(to encoder: Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
         try values.encode(observations, forKey: .observations)
         try values.encode(ramObservations, forKey: .ramObservations)
+        try values.encode(capacityObservations, forKey: .capacityObservations)
     }
 }
 
@@ -55,6 +62,15 @@ public enum ObservationStore {
         var history = try load(from: fileURL)
         history.ramObservations.append(observation)
         history.ramObservations = Array(history.ramObservations.suffix(maximumObservationCount))
+        try save(history, fileURL: fileURL)
+        return history
+    }
+
+    @discardableResult
+    public static func append(_ observation: CapacityObservation, to fileURL: URL? = nil) throws -> LocalHistory {
+        var history = try load(from: fileURL)
+        history.capacityObservations.append(observation)
+        history.capacityObservations = Array(history.capacityObservations.suffix(maximumObservationCount))
         try save(history, fileURL: fileURL)
         return history
     }

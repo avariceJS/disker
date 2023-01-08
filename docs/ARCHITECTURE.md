@@ -28,7 +28,7 @@ Duplicate review is a separate, user-confirmed operation. The user selects exact
 
 ## Persistence and privacy
 
-The app writes at most 180 scan observations and 180 on-demand RAM observations to `~/Library/Application Support/Disker/observations.json`. Storage scans store paths and sizes, not file contents. RAM samples contain aggregate page counts plus the names, PIDs, and resident-size measurements of the ten largest processes. Duplicate checks do not persist file contents or hashes. No network or telemetry code is present. The current app asks the user to choose scope each time; it does not retain security-scoped bookmarks or silently monitor folders.
+The app writes at most 180 root-volume capacity observations, 180 folder-scan observations, and 180 on-demand RAM observations to `~/Library/Application Support/Disker/observations.json`. Capacity observations are taken on app open and after a folder scan, not on a background schedule. Capacity deltas require matching total capacity and macOS availability method and report only the system-reported available-space change; they do not attribute that change to folders. Storage scans store paths and sizes, not file contents. RAM samples contain aggregate page counts plus the names, PIDs, and resident-size measurements of the ten largest processes. Duplicate checks do not persist file contents or hashes. No network or telemetry code is present. The current app asks the user to choose scope each time; it does not retain security-scoped bookmarks or silently monitor folders.
 
 ## RAM sampling
 

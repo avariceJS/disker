@@ -18,6 +18,7 @@ private struct DiskerCoreChecks {
         let checks: [(String, () throws -> Void)] = [
             ("capacity math", testCapacityMath),
             ("capacity clamping", testCapacityClamping),
+            ("comparable capacity history", testCapacityHistoryComparison),
             ("zero important-usage fallback", testImportantUsageFallback),
             ("live root volume capacity", testLiveCapacitySource),
             ("live RAM and process sample", testLiveRAMSample),
@@ -63,6 +64,34 @@ private struct DiskerCoreChecks {
         let sample = CapacityObservation(totalBytes: 100, availableBytes: 200)
         try expect(sample.availableBytes == 100, "available bytes should not exceed total capacity")
         try expect(sample.notAvailableBytes == 0, "not-available bytes should never be negative")
+    }
+
+    private static func testCapacityHistoryComparison() throws {
+        let previous = CapacityObservation(
+            observedAt: Date(timeIntervalSince1970: 100), totalBytes: 1_000,
+            availableBytes: 700, availabilityBasis: .importantUsage
+        )
+        let current = CapacityObservation(
+            observedAt: Date(timeIntervalSince1970: 200), totalBytes: 1_000,
+            availableBytes: 650, availabilityBasis: .importantUsage
+        )
+        let history = LocalHistory(capacityObservations: [previous, current])
+        try expect(ObservationComparison.previousComparableCapacity(for: current, in: history) == previous,
+                   "capacity history should find the preceding sample for the same volume size and method")
+        try expect(ObservationComparison.availableCapacityDelta(current: current, previous: previous) == -50,
+                   "available-capacity change should preserve its sign")
+        let changedVolume = CapacityObservation(
+            observedAt: current.observedAt, totalBytes: 2_000,
+            availableBytes: 1_650, availabilityBasis: .importantUsage
+        )
+        try expect(ObservationComparison.availableCapacityDelta(current: changedVolume, previous: previous) == nil,
+                   "a changed volume capacity must not be compared")
+        let changedMethod = CapacityObservation(
+            observedAt: current.observedAt, totalBytes: 1_000,
+            availableBytes: 650, availabilityBasis: .standardVolume
+        )
+        try expect(ObservationComparison.availableCapacityDelta(current: changedMethod, previous: previous) == nil,
+                   "different macOS availability methods must not be compared")
     }
 
     private static func testImportantUsageFallback() throws {
@@ -395,6 +424,7 @@ private struct DiskerCoreChecks {
         try expect(!folder.gitMetadataEntryDetected, "old folder history should default Git marker state to false")
         try expect(folder.gitMetadataUsage == nil, "old folder history should default retained Git metrics to absent")
         try expect(history.ramObservations.isEmpty, "old folder history should default manual RAM history to empty")
+        try expect(history.capacityObservations.isEmpty, "old history should default capacity observations to empty")
         try expect(folder.subdirectorySummaries.count == 1, "old folder history should preserve existing directory summaries")
         try expect(folder.subdirectorySummaries[0].changedDuringScanCount == 0, "old directory summaries should default mutation count to zero")
         try expect(!folder.subdirectorySummaries[0].gitMetadataEntryDetected, "old directory summaries should default Git marker state to false")
@@ -494,6 +524,19 @@ private struct DiskerCoreChecks {
             )
             let afterFolderAppend = try ObservationStore.load(from: fileURL)
             try expect(afterFolderAppend.ramObservations.count == 180, "saving folder scans must preserve manual RAM history")
+            for index in 0...180 {
+                try ObservationStore.append(CapacityObservation(
+                    observedAt: Date(timeIntervalSince1970: TimeInterval(index)),
+                    totalBytes: 1_000, availableBytes: Int64(900 - index),
+                    availabilityBasis: .standardVolume
+                ), to: fileURL)
+            }
+            let withCapacityHistory = try ObservationStore.load(from: fileURL)
+            try expect(withCapacityHistory.capacityObservations.count == 180, "capacity history should retain at most 180 samples")
+            try expect(withCapacityHistory.capacityObservations.first?.availableBytes == 899, "capacity history should evict only its oldest samples")
+            try expect(withCapacityHistory.capacityObservations.last?.availableBytes == 720, "latest capacity sample should survive reload")
+            try expect(withCapacityHistory.ramObservations.count == 180 && withCapacityHistory.observations.count == 180,
+                       "capacity samples should preserve folder and RAM history")
         }
     }
 

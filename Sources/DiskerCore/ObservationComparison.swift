@@ -58,6 +58,36 @@ public enum ObservationComparison {
         }.sorted { $0.growthBytes > $1.growthBytes }
     }
 
+    public static func previousComparableCapacity(
+        for current: CapacityObservation, in history: LocalHistory
+    ) -> CapacityObservation? {
+        guard let currentIndex = history.capacityObservations.lastIndex(where: {
+            $0.observedAt == current.observedAt
+                && $0.totalBytes == current.totalBytes
+                && $0.availableBytes == current.availableBytes
+                && $0.availabilityBasis == current.availabilityBasis
+        }) else { return nil }
+
+        return history.capacityObservations[..<currentIndex].reversed().first(where: {
+            $0.totalBytes == current.totalBytes
+                && $0.availabilityBasis == current.availabilityBasis
+                && $0.observedAt <= current.observedAt
+        })
+    }
+
+    /// Change in macOS-reported available bytes, comparable only for the same
+    /// volume capacity and availability API basis.
+    public static func availableCapacityDelta(
+        current: CapacityObservation, previous: CapacityObservation
+    ) -> Int64? {
+        guard current.totalBytes == previous.totalBytes,
+              current.availabilityBasis == previous.availabilityBasis,
+              current.observedAt >= previous.observedAt
+        else { return nil }
+        let (delta, overflow) = current.availableBytes.subtractingReportingOverflow(previous.availableBytes)
+        return overflow ? nil : delta
+    }
+
     public static func previousCompleteFolder(
         for current: FolderObservation,
         in history: LocalHistory

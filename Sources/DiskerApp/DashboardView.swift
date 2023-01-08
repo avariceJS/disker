@@ -36,7 +36,13 @@ final class DashboardModel {
 
     func refreshCapacity() {
         do {
-            capacity = try CapacityObservation.current()
+            let sample = try CapacityObservation.current()
+            capacity = sample
+            do {
+                history = try ObservationStore.append(sample)
+            } catch {
+                errorMessage = "Capacity is current, but local history could not be saved: \(error.localizedDescription)"
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -230,14 +236,14 @@ struct DashboardView: View {
             Text(model.errorMessage ?? "")
         }
         .confirmationDialog(
-            "Clear saved folder observations?",
+            "Clear Disker’s local history?",
             isPresented: $isConfirmingHistoryClear,
             titleVisibility: .visible
         ) {
             Button("Clear History", role: .destructive) { model.clearHistory() }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("This removes Disker's local scan history only. Your files and folders will not be changed.")
+            Text("This removes Disker’s saved capacity, folder, and RAM observations from this Mac. Your files and folders will not be changed.")
         }
     }
 
@@ -290,6 +296,21 @@ struct DashboardView: View {
                     .tint(.blue)
                     .accessibilityLabel("Available capacity")
                     .accessibilityValue("\(format(capacity.availableBytes)) of \(format(capacity.totalBytes))")
+                if let previous = ObservationComparison.previousComparableCapacity(for: capacity, in: model.history),
+                   let delta = ObservationComparison.availableCapacityDelta(current: capacity, previous: previous) {
+                    Label {
+                        Text("Available space \(delta >= 0 ? "increased" : "decreased") by \(format(delta.magnitude)) since \(previous.observedAt.formatted(date: .abbreviated, time: .shortened)).")
+                    } icon: {
+                        Image(systemName: delta >= 0 ? "arrow.up.right" : "arrow.down.right")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(delta >= 0 ? .green : .orange)
+                    .accessibilityElement(children: .combine)
+                } else {
+                    Text("No earlier capacity measurement with this volume size and availability method is available for comparison.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 VStack(spacing: 3) {
                     HStack(alignment: .top, spacing: 24) {
                         Text("Capacity minus available")
@@ -502,7 +523,7 @@ struct DashboardView: View {
                 }
                 GroupBox {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Remove saved folder paths, sizes, and scan dates from this Mac. Scanned files are not changed.")
+                        Text("Remove saved capacity measurements, folder paths and sizes, and RAM samples from this Mac. Scanned files are not changed.")
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .fixedSize(horizontal: false, vertical: true)
                         Button("Clear Local History…", role: .destructive) {

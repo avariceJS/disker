@@ -1,6 +1,6 @@
 # Disker
 
-Disker is a native macOS storage observability app. It separates macOS-reported volume capacity from metadata estimates for folders explicitly selected by the user. It stores bounded scan history locally and reports incomplete coverage instead of presenting access failures as zero bytes.
+Disker is a native macOS storage observability app. It separates macOS-reported volume capacity from metadata estimates for folders explicitly selected by the user. It stores bounded capacity, folder, and RAM observations locally and reports incomplete coverage instead of presenting access failures as zero bytes.
 
 ## Build and run
 
@@ -37,7 +37,7 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 - Detects changed/replaced directories where possible and marks their coverage partial; a scan is still not an atomic snapshot.
 - Flags a direct `.git` metadata entry as a project marker and separately measures a real `.git` directory even when it falls outside the largest-folder ranking. A `.git` file remains a marker only; Disker does not read its contents or claim project ownership.
 - Shows logical file size separately from allocated blocks summed from `st_blocks`.
-- Saves the latest 180 scan observations under `~/Library/Application Support/Disker/observations.json`.
+- Saves up to 180 capacity, folder-scan, and RAM observations under `~/Library/Application Support/Disker/observations.json`. Capacity history is sampled when Disker opens and after a folder scan; it is not a background monitor.
 - Compares complete folder scans to earlier complete scans for the same path; incomplete scans never produce growth deltas.
 - Reports complete-only allocated-estimate deltas for matching descendant paths under the same selected root.
 - Provides Finder reveal for selected folder roots.
