@@ -8,6 +8,7 @@ Requires a Swift 5.9+ toolchain and a macOS 14 or newer SDK. Xcode is useful for
 
 ```sh
 scripts/check-core.sh
+scripts/benchmark-selected-root.sh "$PWD"
 scripts/package-app.sh
 mkdir -p "$HOME/Applications"
 ditto .build/Disker.app "$HOME/Applications/Disker.app"
@@ -37,6 +38,7 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 - Detects changed/replaced directories where possible and marks their coverage partial; a scan is still not an atomic snapshot.
 - Flags a direct `.git` metadata entry as a project marker and separately measures a real `.git` directory even when it falls outside the largest-folder ranking. A `.git` file remains a marker only; Disker does not read its contents or claim project ownership.
 - Shows logical file size separately from allocated blocks summed from `st_blocks`.
+- Adds cautious, exact-name hints for common development storage locations such as SwiftPM build output, Xcode DerivedData, `node_modules`, and Python environments. These hints do not determine ownership or safety to remove.
 - Saves up to 180 capacity, folder-scan, and RAM observations under `~/Library/Application Support/Disker/observations.json`. Capacity history is sampled when Disker opens and after a folder scan; it is not a background monitor.
 - Compares complete folder scans to earlier complete scans for the same path; incomplete scans never produce growth deltas.
 - Reports complete-only allocated-estimate deltas for matching descendant paths under the same selected root.
@@ -49,6 +51,8 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 - Does not include general cleanup discovery, background monitoring, or application ownership attribution yet.
 
 Folder totals are estimates. APFS clones, snapshots, shared blocks, concurrent changes, inaccessible areas, and system-managed storage prevent recursive file totals from reconciling with physical volume usage.
+
+`scripts/benchmark-selected-root.sh <directory>` measures metadata-scan elapsed time, process CPU time, coverage, and logical/allocated estimates for one explicitly supplied directory. It does not read file contents or persist the observation.
 
 RAM is sampled on demand. Inactive pages may be reclaimable cache; process resident size differs from physical footprint. Disker does not currently report system memory pressure or diagnose leaks. RAM history shares the bounded local observation file and is removed through **About → Clear Local History…**.
 

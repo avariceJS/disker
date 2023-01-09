@@ -15,6 +15,11 @@ private enum CheckFailure: Error, CustomStringConvertible {
 @main
 private struct DiskerCoreChecks {
     static func main() throws {
+        if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--benchmark-root" {
+            try benchmarkSelectedRoot(at: URL(fileURLWithPath: CommandLine.arguments[2]))
+            return
+        }
+
         let checks: [(String, () throws -> Void)] = [
             ("capacity math", testCapacityMath),
             ("capacity clamping", testCapacityClamping),
@@ -53,6 +58,31 @@ private struct DiskerCoreChecks {
             print("PASS  \(name)")
         }
         print("\(checks.count) core checks passed.")
+    }
+
+    private static func benchmarkSelectedRoot(at root: URL) throws {
+        var before = rusage()
+        _ = getrusage(RUSAGE_SELF, &before)
+        let start = ContinuousClock.now
+        let observation = FolderScanner.scan(roots: [root])
+        let elapsed = start.duration(to: .now).components
+        var after = rusage()
+        _ = getrusage(RUSAGE_SELF, &after)
+
+        guard let folder = observation.folders.first else {
+            throw CheckFailure.assertion("benchmark scan produced no selected-root observation")
+        }
+        let userCPU = timevalSeconds(after.ru_utime) - timevalSeconds(before.ru_utime)
+        let systemCPU = timevalSeconds(after.ru_stime) - timevalSeconds(before.ru_stime)
+        let seconds = Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
+        print("Selected-root metadata scan (no file contents): \(folder.fileCount) files")
+        print("Elapsed: \(String(format: "%.3f", seconds)) s · process CPU: \(String(format: "%.3f", userCPU + systemCPU)) s")
+        print("Logical: \(folder.logicalBytes) bytes · allocated estimate: \(folder.allocatedBytes) bytes")
+        print("Coverage: \(folder.complete ? "complete" : "partial") · inaccessible: \(folder.inaccessibleCount) · symlinks excluded: \(folder.excludedSymlinkCount) · changed: \(folder.changedDuringScanCount)")
+    }
+
+    private static func timevalSeconds(_ value: timeval) -> Double {
+        Double(value.tv_sec) + Double(value.tv_usec) / 1_000_000
     }
 
     private static func testCapacityMath() throws {
