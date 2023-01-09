@@ -284,6 +284,15 @@ struct DashboardView: View {
                 Text(model.capacity.map { $0.observedAt.formatted(date: .abbreviated, time: .shortened) } ?? "Unavailable")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Button {
+                    model.refreshCapacity()
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .help("Record a new system-reported capacity observation")
+                .accessibilityLabel("Refresh storage capacity")
             }
             if let capacity = model.capacity {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {

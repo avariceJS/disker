@@ -39,7 +39,8 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 - Flags a direct `.git` metadata entry as a project marker and separately measures a real `.git` directory even when it falls outside the largest-folder ranking. A `.git` file remains a marker only; Disker does not read its contents or claim project ownership.
 - Shows logical file size separately from allocated blocks summed from `st_blocks`.
 - Adds cautious, exact-name hints for common development storage locations such as SwiftPM build output, Xcode DerivedData, `node_modules`, and Python environments. These hints do not determine ownership or safety to remove.
-- Saves up to 180 capacity, folder-scan, and RAM observations under `~/Library/Application Support/Disker/observations.json`. Capacity history is sampled when Disker opens and after a folder scan; it is not a background monitor.
+- Saves up to 180 capacity, folder-scan, and RAM observations under `~/Library/Application Support/Disker/observations.json`. Capacity history is sampled when Disker opens, after a folder scan, or when the user presses Refresh; it is not a background monitor.
+- Plots up to 24 comparable root-capacity observations, separating series when reported capacity or the macOS availability method changes. The chart reports system availability and does not explain which folders changed.
 - Compares complete folder scans to earlier complete scans for the same path; incomplete scans never produce growth deltas.
 - Reports complete-only allocated-estimate deltas for matching descendant paths under the same selected root.
 - Provides Finder reveal for selected folder roots.
