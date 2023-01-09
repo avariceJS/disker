@@ -33,10 +33,12 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 
 - Reads total and available capacity reported by macOS for `/`.
 - Scans only folders selected in the native open panel.
+- Provides a separate **Applications** view for explicitly selected `.app` bundles; it measures the bundle only and does not infer or measure support folders, caches, containers, or shared data.
 - Reads filesystem metadata only; does not open file contents.
 - Does not follow symbolic links; deduplicates hard links within each selected folder.
 - Detects changed/replaced directories where possible and marks their coverage partial; a scan is still not an atomic snapshot.
 - Flags a direct `.git` metadata entry as a project marker and separately measures a real `.git` directory even when it falls outside the largest-folder ranking. A `.git` file remains a marker only; Disker does not read its contents or claim project ownership.
+- Adds name-based hints for a few common development-storage directories without deciding whether they are owned, reproducible, or removable.
 - Shows logical file size separately from allocated blocks summed from `st_blocks`.
 - Adds cautious, exact-name hints for common development storage locations such as SwiftPM build output, Xcode DerivedData, `node_modules`, and Python environments. These hints do not determine ownership or safety to remove.
 - Saves up to 180 capacity, folder-scan, and RAM observations under `~/Library/Application Support/Disker/observations.json`. Capacity history is sampled when Disker opens, after a folder scan, or when the user presses Refresh; it is not a background monitor.
@@ -49,7 +51,7 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 - Flags possible process resident-size growth only across three consecutive manual samples spanning at least 15 minutes, with a stable PID, process name, and kernel-reported start time plus at least 100 MiB growth. It is an investigation signal, not a leak diagnosis.
 - Verifies byte-identical duplicate candidates only after a separate folder selection and confirmation. It hashes regular files sharing a logical size, skips symlinks and hard-link aliases, and reports no reclaimable-space estimate.
 - Provides an optional dry-run plan from verified duplicate groups only after the user explicitly chooses a path to preserve. The plan identifies exact other paths and unknown risk/reclaimable space; no file action is implemented.
-- Does not include general cleanup discovery, background monitoring, or application ownership attribution yet.
+- Does not include full application ownership attribution, associated-data discovery, general cleanup discovery, or background monitoring. The Applications view covers selected app bundles only.
 
 Folder totals are estimates. APFS clones, snapshots, shared blocks, concurrent changes, inaccessible areas, and system-managed storage prevent recursive file totals from reconciling with physical volume usage.
 

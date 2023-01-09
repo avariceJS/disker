@@ -3,6 +3,7 @@ import Charts
 import DiskerCore
 import Observation
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 @Observable
@@ -33,6 +34,10 @@ final class DashboardModel {
     }
 
     var latestScan: ScanObservation? { history.observations.last }
+
+    var measuredApplicationBundles: [FolderObservation] {
+        ApplicationBundleIndex.latestMeasurements(in: history)
+    }
 
     func refreshCapacity() {
         do {
@@ -76,6 +81,21 @@ final class DashboardModel {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
         panel.canCreateDirectories = false
+        guard panel.runModal() == .OK else { return }
+        scan(panel.urls)
+    }
+
+    func chooseApplicationBundle(startingAt directory: URL? = nil) {
+        let panel = NSOpenPanel()
+        panel.title = "Choose an application bundle to measure"
+        panel.prompt = "Measure Bundle"
+        panel.message = "Disker measures only the selected .app bundle. Support data, caches, and shared files are not included."
+        panel.directoryURL = directory
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.allowedContentTypes = [.applicationBundle]
         guard panel.runModal() == .OK else { return }
         scan(panel.urls)
     }
@@ -187,7 +207,7 @@ struct DashboardView: View {
     @State private var selectedSection: String? = "Overview"
     @State private var isConfirmingHistoryClear = false
 
-    private let sections = ["Overview", "Folders", "Duplicates", "History", "RAM", "About"]
+    private let sections = ["Overview", "Applications", "Folders", "Duplicates", "History", "RAM", "About"]
 
     var body: some View {
         NavigationSplitView {
@@ -212,6 +232,7 @@ struct DashboardView: View {
         } detail: {
             Group {
                 switch selectedSection ?? "Overview" {
+                case "Applications": applicationsPage
                 case "Folders": foldersPage
                 case "Duplicates": duplicatesPage
                 case "History": historyPage
@@ -446,6 +467,98 @@ struct DashboardView: View {
         .font(.caption)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var applicationsPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                header("Application bundles", subtitle: "Measure the selected .app bundle; associated data is outside this measurement.")
+                Label {
+                    Text("Disker does not infer support folders, caches, containers, or shared files. Those locations are not included unless you measure them separately, and a bundle total alone is not an uninstall plan.")
+                } icon: {
+                    Image(systemName: "info.circle")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+                Button(model.isScanning ? "Cancel Scan" : "Choose an Application Bundle…") {
+                    if model.isScanning { model.cancelScan() }
+                    else { model.chooseApplicationBundle() }
+                }
+
+                let bundles = model.measuredApplicationBundles
+                if bundles.isEmpty {
+                    ContentUnavailableView {
+                        Label("No application bundles measured", systemImage: "app.dashed")
+                    } description: {
+                        Text("Choose one .app bundle to measure its file tree. Disker will not scan neighboring support data.")
+                    } actions: {
+                        Button(model.isScanning ? "Cancel Scan" : "Choose an Application Bundle…") {
+                            if model.isScanning { model.cancelScan() }
+                            else { model.chooseApplicationBundle() }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 190)
+                    .background(.background, in: RoundedRectangle(cornerRadius: 14))
+                } else {
+                    ForEach(bundles) { bundle in
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(alignment: .top) {
+                                Label(bundle.displayName, systemImage: "app.fill")
+                                    .font(.headline)
+                                Spacer()
+                                Button("Rescan…") {
+                                    model.chooseApplicationBundle(
+                                        startingAt: URL(fileURLWithPath: bundle.path).deletingLastPathComponent()
+                                    )
+                                }
+                                .disabled(model.isScanning)
+                                Button {
+                                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: bundle.path)])
+                                } label: {
+                                    Image(systemName: "arrow.up.right.square")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Reveal application bundle in Finder")
+                                .accessibilityLabel("Reveal \(bundle.displayName) in Finder")
+                            }
+                            Text(bundle.path)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            HStack(spacing: 12) {
+                                Text("Logical \(format(bundle.logicalBytes))")
+                                Text("Allocated estimate \(format(bundle.allocatedBytes))")
+                                Text("\(bundle.fileCount) files")
+                                if bundle.complete {
+                                    Label("Complete", systemImage: "checkmark.circle")
+                                        .foregroundStyle(.green)
+                                } else {
+                                    Text(coverageSummary(
+                                        inaccessible: bundle.inaccessibleCount,
+                                        excludedSymlinks: bundle.excludedSymlinkCount,
+                                        changed: bundle.changedDuringScanCount,
+                                        wasCancelled: false
+                                    ))
+                                    .foregroundStyle(.orange)
+                                }
+                                Spacer(minLength: 0)
+                                Text(bundle.finishedAt.formatted(date: .abbreviated, time: .shortened))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .font(.caption2)
+                        }
+                        .padding(16)
+                        .background(.background, in: RoundedRectangle(cornerRadius: 12))
+                        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
+                    }
+                }
+            }
+            .padding(30)
+            .frame(maxWidth: 960, alignment: .leading)
+        }
     }
 
     private var foldersPage: some View {
@@ -1206,6 +1319,7 @@ struct DashboardView: View {
 
     private func icon(for section: String) -> String {
         switch section {
+        case "Applications": "app.dashed"
         case "Folders": "folder"
         case "Duplicates": "doc.on.doc"
         case "History": "clock.arrow.circlepath"

@@ -24,6 +24,7 @@ private struct DiskerCoreChecks {
             ("capacity math", testCapacityMath),
             ("capacity clamping", testCapacityClamping),
             ("comparable capacity history", testCapacityHistoryComparison),
+            ("explicit application bundle history index", testApplicationBundleIndex),
             ("zero important-usage fallback", testImportantUsageFallback),
             ("live root volume capacity", testLiveCapacitySource),
             ("live RAM and process sample", testLiveRAMSample),
@@ -127,6 +128,30 @@ private struct DiskerCoreChecks {
         let methodChangedHistory = LocalHistory(capacityObservations: [previous, current, changedMethod])
         try expect(ObservationComparison.comparableCapacitySeries(in: methodChangedHistory) == [changedMethod],
                    "capacity history chart data must start a new series after the API basis changes")
+    }
+
+    private static func testApplicationBundleIndex() throws {
+        func folder(_ path: String, _ bytes: Int64, _ complete: Bool = true) -> FolderObservation {
+            FolderObservation(
+                path: path, displayName: URL(fileURLWithPath: path).lastPathComponent,
+                logicalBytes: bytes, allocatedBytes: bytes, fileCount: 1,
+                inaccessibleCount: 0, complete: complete
+            )
+        }
+        let firstBundle = folder("/Applications/Example.app", 900)
+        let laterBundle = folder("/Applications/Example.app", 500, false)
+        let otherBundle = folder("/Applications/Other.app", 700)
+        let notBundle = folder("/Projects/Example.app-cache", 10)
+        let history = LocalHistory(observations: [
+            ScanObservation(startedAt: Date(timeIntervalSince1970: 1), folders: [firstBundle, notBundle], cancelled: false),
+            ScanObservation(startedAt: Date(timeIntervalSince1970: 2), folders: [laterBundle, otherBundle], cancelled: false)
+        ])
+        let indexed = ApplicationBundleIndex.latestMeasurements(in: history)
+        try expect(indexed.count == 2, "the application index should include only selected .app root paths")
+        try expect(indexed.first?.path == otherBundle.path && indexed.last?.path == laterBundle.path,
+                   "latest bundle measurements should be sorted by allocated estimate")
+        try expect(indexed.last?.complete == false && indexed.last?.allocatedBytes == 500,
+                   "the latest partial observation should replace an older complete bundle measurement")
     }
 
     private static func testImportantUsageFallback() throws {
