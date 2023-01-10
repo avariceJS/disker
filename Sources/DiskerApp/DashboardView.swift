@@ -39,6 +39,12 @@ final class DashboardModel {
         ApplicationBundleIndex.latestMeasurements(in: history)
     }
 
+    func scanWasCancelled(for folder: FolderObservation) -> Bool {
+        history.observations.last(where: { observation in
+            observation.folders.contains(where: { $0.id == folder.id })
+        })?.cancelled ?? false
+    }
+
     func refreshCapacity() {
         do {
             let sample = try CapacityObservation.current()
@@ -486,6 +492,17 @@ struct DashboardView: View {
                     if model.isScanning { model.cancelScan() }
                     else { model.chooseApplicationBundle() }
                 }
+                if model.isScanning {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text(model.currentPath.isEmpty ? "Starting bundle scan…" : "Scanning (model.currentPath)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
 
                 let bundles = model.measuredApplicationBundles
                 if bundles.isEmpty {
@@ -540,7 +557,7 @@ struct DashboardView: View {
                                         inaccessible: bundle.inaccessibleCount,
                                         excludedSymlinks: bundle.excludedSymlinkCount,
                                         changed: bundle.changedDuringScanCount,
-                                        wasCancelled: false
+                                        wasCancelled: model.scanWasCancelled(for: bundle)
                                     ))
                                     .foregroundStyle(.orange)
                                 }
