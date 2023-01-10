@@ -549,6 +549,14 @@ struct DashboardView: View {
                                 Text("Logical \(format(bundle.logicalBytes))")
                                 Text("Allocated estimate \(format(bundle.allocatedBytes))")
                                 Text("\(bundle.fileCount) files")
+                                if let previous = model.previousCompleteObservation(for: bundle),
+                                   let delta = ObservationComparison.allocatedByteDelta(current: bundle, previous: previous) {
+                                    Text(changeDescription(delta))
+                                        .foregroundStyle(delta >= 0 ? .orange : .green)
+                                } else if bundle.complete {
+                                    Text("First complete measurement")
+                                        .foregroundStyle(.secondary)
+                                }
                                 if bundle.complete {
                                     Label("Complete", systemImage: "checkmark.circle")
                                         .foregroundStyle(.green)
