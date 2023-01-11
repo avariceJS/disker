@@ -1,7 +1,6 @@
 import Foundation
 
 public enum StorageAreaHint: String, CaseIterable, Sendable {
-    case gitMetadata
     case swiftPackageBuild
     case xcodeDerivedData
     case javascriptDependencies
@@ -10,7 +9,6 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
 
     public var title: String {
         switch self {
-        case .gitMetadata: "Git metadata"
         case .swiftPackageBuild: "Swift build products"
         case .xcodeDerivedData: "Xcode derived data"
         case .javascriptDependencies: "JavaScript dependencies"
@@ -21,7 +19,6 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
 
     public var symbolName: String {
         switch self {
-        case .gitMetadata: "chevron.left.forwardslash.chevron.right"
         case .swiftPackageBuild, .xcodeDerivedData: "hammer"
         case .javascriptDependencies: "shippingbox"
         case .pythonEnvironment, .pythonBytecode: "curlybraces"
@@ -33,7 +30,6 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
     public static func matching(relativePath: String) -> StorageAreaHint? {
         for component in relativePath.split(separator: "/", omittingEmptySubsequences: true) {
             switch component {
-            case ".git": return .gitMetadata
             case ".build": return .swiftPackageBuild
             case "DerivedData": return .xcodeDerivedData
             case "node_modules": return .javascriptDependencies

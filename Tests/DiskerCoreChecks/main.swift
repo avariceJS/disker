@@ -382,6 +382,8 @@ private struct DiskerCoreChecks {
                    "similar but non-exact names must not be classified")
         try expect(StorageAreaHint.matching(relativePath: "project/output") == nil,
                    "unrecognized directory names must remain unclassified")
+        try expect(StorageAreaHint.matching(relativePath: "project/.git/objects") == nil,
+                   "Git metadata should keep its dedicated marker and footprint presentation")
     }
 
     private static func testGitMetadataMarkerDetection() throws {
