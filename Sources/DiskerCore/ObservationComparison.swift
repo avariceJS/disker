@@ -101,6 +101,22 @@ public enum ObservationComparison {
         return overflow ? nil : delta
     }
 
+    /// Complete observations of the same selected root through the specified
+    /// current result. Partial scans and future observations are excluded.
+    public static func completeFolderSeries(
+        for current: FolderObservation, in history: LocalHistory
+    ) -> [FolderObservation] {
+        guard current.complete,
+              let currentIndex = history.observations.firstIndex(where: { observation in
+                  observation.folders.contains(where: { $0.id == current.id })
+              }) else { return [] }
+
+        let prior = history.observations[..<currentIndex].compactMap { observation in
+            observation.folders.first(where: { $0.path == current.path && $0.complete })
+        }
+        return Array((prior + [current]).suffix(24))
+    }
+
     public static func previousCompleteFolder(
         for current: FolderObservation,
         in history: LocalHistory

@@ -22,7 +22,7 @@ Selected-folder summaries add a small set of exact-component name hints for `.bu
 
 The scan is not an atomic filesystem snapshot. Disker checks that opened directories match the identity discovered during enumeration and compares directory metadata before and after reading each directory. Detected changes make coverage partial. This does not detect every file-content write that races with metadata sampling, and the tree is not frozen for the duration of a scan. A complete observation means no detected directory changes, metadata/access failures, or excluded symlinks; it is not a transactional snapshot guarantee.
 
-Folder-history comparisons use the same selected path and a prior complete observation before the current observation. Directory-history comparisons additionally require the same root-relative directory path and complete root and subtree coverage in both observations. Incomplete scans are skipped and future observations are never used. An arithmetic overflow suppresses the delta. Deltas describe allocated-byte estimates, not reclaimable space.
+Folder-history comparisons and charts use the same selected path and complete observations through the current observation. The chart shows up to 24 samples from that path; incomplete scans and future observations are not plotted. Directory-history comparisons additionally require the same root-relative directory path and complete root and subtree coverage in both observations. An arithmetic overflow suppresses a delta. Deltas and charts describe allocated-byte estimates, not reclaimable space.
 
 ## Duplicate verification
 

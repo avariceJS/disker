@@ -659,10 +659,14 @@ private struct DiskerCoreChecks {
 
         let previous = ObservationComparison.previousCompleteFolder(for: current, in: history)
         try expect(previous?.id == earlierComplete.id, "comparison should skip incomplete scans and never use future observations")
+        try expect(ObservationComparison.completeFolderSeries(for: current, in: history).map(\.id) == [earlierComplete.id, current.id],
+                   "folder history series should include only earlier complete scans of the same path")
         try expect(ObservationComparison.allocatedByteDelta(current: current, previous: earlierComplete) == 35, "allocated-size delta should use the matching complete path")
         let otherPath = syntheticFolder(path: "/other", bytes: 135, complete: true)
         try expect(ObservationComparison.allocatedByteDelta(current: current, previous: otherPath) == nil, "different paths must not be compared")
         try expect(ObservationComparison.previousCompleteFolder(for: laterIncomplete, in: history) == nil, "incomplete current observations must not produce a growth comparison")
+        try expect(ObservationComparison.completeFolderSeries(for: laterIncomplete, in: history).isEmpty,
+                   "an incomplete current observation must not be plotted as a complete growth series")
     }
 
     private static func testDirectoryGrowthComparison() throws {

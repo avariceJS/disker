@@ -495,7 +495,7 @@ struct DashboardView: View {
                 if model.isScanning {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text(model.currentPath.isEmpty ? "Starting bundle scan…" : "Scanning (model.currentPath)")
+                        Text(model.currentPath.isEmpty ? "Starting bundle scan…" : "Scanning \(model.currentPath)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -574,6 +574,7 @@ struct DashboardView: View {
                                     .foregroundStyle(.secondary)
                             }
                             .font(.caption2)
+                            folderHistoryChart(for: bundle)
                         }
                         .padding(16)
                         .background(.background, in: RoundedRectangle(cornerRadius: 12))
@@ -1155,6 +1156,8 @@ struct DashboardView: View {
                 .background(.background, in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
 
+                folderHistoryChart(for: folder)
+
                 if let gitUsage = folder.gitMetadataUsage {
                     VStack(alignment: .leading, spacing: 7) {
                         Label("Git metadata in this selected folder", systemImage: "chevron.left.forwardslash.chevron.right")
@@ -1311,6 +1314,37 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(.caption).foregroundStyle(.secondary)
             Text(format(bytes)).font(.system(.body, design: .rounded).weight(.medium))
+        }
+    }
+
+    @ViewBuilder
+    private func folderHistoryChart(for folder: FolderObservation) -> some View {
+        let samples = ObservationComparison.completeFolderSeries(for: folder, in: model.history)
+        if samples.count > 1 {
+            let visibleSamples = Array(samples.suffix(24))
+            let values = visibleSamples.map { Double($0.allocatedBytes) / 1_073_741_824 }
+            let minimum = values.min() ?? 0
+            let maximum = values.max() ?? minimum
+            let padding = max((maximum - minimum) * 0.15, 0.25)
+            Chart(visibleSamples, id: \.id) { sample in
+                LineMark(
+                    x: .value("Observed", sample.finishedAt),
+                    y: .value("Allocated GiB", Double(sample.allocatedBytes) / 1_073_741_824)
+                )
+                .foregroundStyle(.indigo)
+                PointMark(
+                    x: .value("Observed", sample.finishedAt),
+                    y: .value("Allocated GiB", Double(sample.allocatedBytes) / 1_073_741_824)
+                )
+                .foregroundStyle(.indigo)
+            }
+            .chartYScale(domain: max(0, minimum - padding)...(maximum + padding))
+            .chartYAxisLabel("Allocated (GiB)")
+            .frame(height: 112)
+            .accessibilityLabel("Allocated-size history from \(visibleSamples.count) complete scans of \(folder.path)")
+            Text("Complete scans of this selected path only · focused vertical scale")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
     }
 
