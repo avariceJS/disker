@@ -33,7 +33,7 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 
 - Reads total and available capacity reported by macOS for `/`.
 - Scans only folders selected in the native open panel.
-- Provides a separate **Applications** view for explicitly selected `.app` bundles; it measures the bundle only and lets the user manually associate separately selected folders. The association is not independently verified, does not establish exclusive ownership, and measurements are never summed into an app total.
+- Provides a separate **Applications** view for explicitly selected `.app` bundles; it measures the bundle only and lets the user manually associate up to 50 separately selected folders. The association is not independently verified, does not establish exclusive ownership, and measurements are never summed into an app total.
 - Compares repeated complete bundle scans of the same selected app path using allocated-byte estimates; incomplete results stay explicitly partial.
 - Reads filesystem metadata only; does not open file contents.
 - Does not follow symbolic links; deduplicates hard links within each selected folder.
