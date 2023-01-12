@@ -25,6 +25,7 @@ private struct DiskerCoreChecks {
             ("capacity clamping", testCapacityClamping),
             ("comparable capacity history", testCapacityHistoryComparison),
             ("explicit application bundle history index", testApplicationBundleIndex),
+            ("explicit app-folder associations", testApplicationFolderAssociations),
             ("zero important-usage fallback", testImportantUsageFallback),
             ("live root volume capacity", testLiveCapacitySource),
             ("live RAM and process sample", testLiveRAMSample),
@@ -152,6 +153,42 @@ private struct DiskerCoreChecks {
                    "latest bundle measurements should be sorted by allocated estimate")
         try expect(indexed.last?.complete == false && indexed.last?.allocatedBytes == 500,
                    "the latest partial observation should replace an older complete bundle measurement")
+    }
+
+    private static func testApplicationFolderAssociations() throws {
+        try withTemporaryDirectory { root in
+            let folder = root.appendingPathComponent("selected-support", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let sentinel = folder.appendingPathComponent("user-state.sqlite")
+            let sentinelContents = Data("synthetic user state".utf8)
+            try sentinelContents.write(to: sentinel)
+            let fileURL = root.appendingPathComponent("Disker/observations.json")
+            let bundlePath = "/Applications/Example.app"
+
+            try ObservationStore.associateApplicationFolders(
+                [folder.path, folder.path], with: bundlePath, to: fileURL
+            )
+            try ObservationStore.associateApplicationFolders(
+                ["/synthetic/second-support"], with: bundlePath, to: fileURL
+            )
+            var history = try ObservationStore.load(from: fileURL)
+            try expect(history.applicationAssociations.count == 1, "folder links should be grouped under the explicitly selected bundle path")
+            try expect(history.applicationAssociations[0].relatedFolderPaths == [folder.path, "/synthetic/second-support"],
+                       "associations should deduplicate exact paths and preserve selection order")
+
+            history = try ObservationStore.removeApplicationFolderAssociation(folder.path, from: bundlePath, at: fileURL)
+            try expect(history.applicationAssociations[0].relatedFolderPaths == ["/synthetic/second-support"],
+                       "removing a link should remove only that relationship")
+            let fileAfterAssociation = try Data(contentsOf: sentinel)
+            try expect(fileAfterAssociation == sentinelContents,
+                       "adding or removing a relationship must leave selected folder contents unchanged")
+
+            let bounded = ApplicationFolderAssociation(
+                bundlePath: bundlePath, relatedFolderPaths: (0..<60).map { "/synthetic/\($0)" }
+            )
+            try expect(bounded.relatedFolderPaths.count == 50,
+                       "one app association should retain no more than 50 selected folder paths")
+        }
     }
 
     private static func testImportantUsageFallback() throws {
@@ -487,6 +524,7 @@ private struct DiskerCoreChecks {
         try expect(folder.gitMetadataUsage == nil, "old folder history should default retained Git metrics to absent")
         try expect(history.ramObservations.isEmpty, "old folder history should default manual RAM history to empty")
         try expect(history.capacityObservations.isEmpty, "old history should default capacity observations to empty")
+        try expect(history.applicationAssociations.isEmpty, "old history should default application associations to empty")
         try expect(folder.subdirectorySummaries.count == 1, "old folder history should preserve existing directory summaries")
         try expect(folder.subdirectorySummaries[0].changedDuringScanCount == 0, "old directory summaries should default mutation count to zero")
         try expect(!folder.subdirectorySummaries[0].gitMetadataEntryDetected, "old directory summaries should default Git marker state to false")
@@ -636,12 +674,16 @@ private struct DiskerCoreChecks {
             )
             try ObservationStore.append(observation, to: fileURL)
             try ObservationStore.append(ramSample(at: 1), to: fileURL)
+            try ObservationStore.associateApplicationFolders(
+                ["/synthetic/support"], with: "/synthetic/Test.app", to: fileURL
+            )
 
             try ObservationStore.clear(at: fileURL)
             try ObservationStore.clear(at: fileURL)
             let reloaded = try ObservationStore.load(from: fileURL)
             try expect(reloaded.observations.isEmpty, "clearing history should leave an empty store")
             try expect(reloaded.ramObservations.isEmpty, "clearing local history should clear manual RAM samples too")
+            try expect(reloaded.applicationAssociations.isEmpty, "clearing local history should clear app-folder associations")
             let preservedNeighbor = try Data(contentsOf: neighboringFile)
             try expect(preservedNeighbor == sentinel, "history reset must not remove neighboring files")
         }

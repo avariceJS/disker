@@ -4,18 +4,21 @@ public struct LocalHistory: Codable, Sendable {
     public var observations: [ScanObservation]
     public var ramObservations: [RAMObservation]
     public var capacityObservations: [CapacityObservation]
+    public var applicationAssociations: [ApplicationFolderAssociation]
 
     public init(
         observations: [ScanObservation] = [], ramObservations: [RAMObservation] = [],
-        capacityObservations: [CapacityObservation] = []
+        capacityObservations: [CapacityObservation] = [],
+        applicationAssociations: [ApplicationFolderAssociation] = []
     ) {
         self.observations = observations
         self.ramObservations = ramObservations
         self.capacityObservations = capacityObservations
+        self.applicationAssociations = applicationAssociations
     }
 
     private enum CodingKeys: String, CodingKey {
-        case observations, ramObservations, capacityObservations
+        case observations, ramObservations, capacityObservations, applicationAssociations
     }
 
     public init(from decoder: Decoder) throws {
@@ -23,6 +26,7 @@ public struct LocalHistory: Codable, Sendable {
         observations = try values.decodeIfPresent([ScanObservation].self, forKey: .observations) ?? []
         ramObservations = try values.decodeIfPresent([RAMObservation].self, forKey: .ramObservations) ?? []
         capacityObservations = try values.decodeIfPresent([CapacityObservation].self, forKey: .capacityObservations) ?? []
+        applicationAssociations = try values.decodeIfPresent([ApplicationFolderAssociation].self, forKey: .applicationAssociations) ?? []
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -30,6 +34,7 @@ public struct LocalHistory: Codable, Sendable {
         try values.encode(observations, forKey: .observations)
         try values.encode(ramObservations, forKey: .ramObservations)
         try values.encode(capacityObservations, forKey: .capacityObservations)
+        try values.encode(applicationAssociations, forKey: .applicationAssociations)
     }
 }
 
@@ -71,6 +76,40 @@ public enum ObservationStore {
         var history = try load(from: fileURL)
         history.capacityObservations.append(observation)
         history.capacityObservations = Array(history.capacityObservations.suffix(maximumObservationCount))
+        try save(history, fileURL: fileURL)
+        return history
+    }
+
+    @discardableResult
+    public static func associateApplicationFolders(
+        _ paths: [String], with bundlePath: String, to fileURL: URL? = nil
+    ) throws -> LocalHistory {
+        var history = try load(from: fileURL)
+        if let index = history.applicationAssociations.firstIndex(where: { $0.bundlePath == bundlePath }) {
+            history.applicationAssociations[index] = history.applicationAssociations[index].adding(paths)
+        } else {
+            history.applicationAssociations.append(ApplicationFolderAssociation(
+                bundlePath: bundlePath, relatedFolderPaths: paths
+            ))
+        }
+        history.applicationAssociations = Array(history.applicationAssociations.suffix(maximumObservationCount))
+        try save(history, fileURL: fileURL)
+        return history
+    }
+
+    @discardableResult
+    public static func removeApplicationFolderAssociation(
+        _ path: String, from bundlePath: String, at fileURL: URL? = nil
+    ) throws -> LocalHistory {
+        var history = try load(from: fileURL)
+        guard let index = history.applicationAssociations.firstIndex(where: { $0.bundlePath == bundlePath }) else {
+            return history
+        }
+        if let remaining = history.applicationAssociations[index].removing(path) {
+            history.applicationAssociations[index] = remaining
+        } else {
+            history.applicationAssociations.remove(at: index)
+        }
         try save(history, fileURL: fileURL)
         return history
     }

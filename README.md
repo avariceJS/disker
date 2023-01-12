@@ -33,7 +33,7 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 
 - Reads total and available capacity reported by macOS for `/`.
 - Scans only folders selected in the native open panel.
-- Provides a separate **Applications** view for explicitly selected `.app` bundles; it measures the bundle only and does not infer or measure support folders, caches, containers, or shared data.
+- Provides a separate **Applications** view for explicitly selected `.app` bundles; it measures the bundle only and lets the user manually associate separately selected folders. The association is not independently verified, does not establish exclusive ownership, and measurements are never summed into an app total.
 - Compares repeated complete bundle scans of the same selected app path using allocated-byte estimates; incomplete results stay explicitly partial.
 - Reads filesystem metadata only; does not open file contents.
 - Does not follow symbolic links; deduplicates hard links within each selected folder.
@@ -53,7 +53,7 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 - Flags possible process resident-size growth only across three consecutive manual samples spanning at least 15 minutes, with a stable PID, process name, and kernel-reported start time plus at least 100 MiB growth. It is an investigation signal, not a leak diagnosis.
 - Verifies byte-identical duplicate candidates only after a separate folder selection and confirmation. It hashes regular files sharing a logical size, skips symlinks and hard-link aliases, and reports no reclaimable-space estimate.
 - Provides an optional dry-run plan from verified duplicate groups only after the user explicitly chooses a path to preserve. The plan identifies exact other paths and unknown risk/reclaimable space; no file action is implemented.
-- Does not include full application ownership attribution, associated-data discovery, general cleanup discovery, or background monitoring. The Applications view covers selected app bundles only.
+- Does not include full application ownership attribution, automatic associated-data discovery, general cleanup discovery, or background monitoring. The Applications view covers selected app bundles and user-associated folders only.
 
 Folder totals are estimates. APFS clones, snapshots, shared blocks, concurrent changes, inaccessible areas, and system-managed storage prevent recursive file totals from reconciling with physical volume usage.
 
@@ -65,6 +65,6 @@ Duplicate verification reads file contents only after the user selects folders a
 
 ## Privacy
 
-No account, network service, or telemetry is used. Folder selection is explicit per scan. The app stores metadata observations locally; the About page's confirmed “Clear Local History…” action removes only Disker's saved observations.
+No account, network service, or telemetry is used. Folder selection is explicit per scan. The app stores metadata observations and user-selected app-folder associations locally; the About page's confirmed “Clear Local History…” action removes only Disker's saved history and associations.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/HANDOFF.md](docs/HANDOFF.md).

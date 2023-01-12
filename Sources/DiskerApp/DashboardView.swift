@@ -45,6 +45,16 @@ final class DashboardModel {
         })?.cancelled ?? false
     }
 
+    func relatedFolders(for bundlePath: String) -> [String] {
+        history.applicationAssociations.first(where: { $0.bundlePath == bundlePath })?.relatedFolderPaths ?? []
+    }
+
+    func latestFolderObservation(at path: String) -> FolderObservation? {
+        history.observations.reversed().lazy
+            .flatMap(\.folders)
+            .first(where: { $0.path == path })
+    }
+
     func refreshCapacity() {
         do {
             let sample = try CapacityObservation.current()
@@ -104,6 +114,34 @@ final class DashboardModel {
         panel.allowedContentTypes = [.applicationBundle]
         guard panel.runModal() == .OK else { return }
         scan(panel.urls)
+    }
+
+    func chooseRelatedFolders(for bundlePath: String) {
+        let panel = NSOpenPanel()
+        panel.title = "Choose folders associated with this app"
+        panel.prompt = "Associate and Scan"
+        panel.message = "Choose folders you want to group with this app. Disker records your association but does not verify ownership or shared use. Measurements stay separate."
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.canCreateDirectories = false
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        do {
+            history = try ObservationStore.associateApplicationFolders(
+                panel.urls.map(\.path), with: bundlePath
+            )
+            scan(panel.urls)
+        } catch {
+            errorMessage = "Folders were selected, but their association could not be saved: \(error.localizedDescription)"
+        }
+    }
+
+    func removeRelatedFolder(_ path: String, from bundlePath: String) {
+        do {
+            history = try ObservationStore.removeApplicationFolderAssociation(path, from: bundlePath)
+        } catch {
+            errorMessage = "The saved folder association could not be removed: \(error.localizedDescription)"
+        }
     }
 
     func scan(_ urls: [URL]) {
@@ -270,7 +308,7 @@ struct DashboardView: View {
             Button("Clear History", role: .destructive) { model.clearHistory() }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("This removes Disker’s saved capacity, folder, and RAM observations from this Mac. Your files and folders will not be changed.")
+            Text("This removes Disker’s saved capacity, folder, and RAM observations plus app-folder associations from this Mac. Your files and folders will not be changed.")
         }
     }
 
@@ -574,6 +612,78 @@ struct DashboardView: View {
                                     .foregroundStyle(.secondary)
                             }
                             .font(.caption2)
+                            Button("Associate Folders…") {
+                                model.chooseRelatedFolders(for: bundle.path)
+                            }
+                            .disabled(model.isScanning)
+
+                            let relatedPaths = model.relatedFolders(for: bundle.path)
+                            if !relatedPaths.isEmpty {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Label("Folders you associated", systemImage: "link")
+                                        .font(.subheadline.weight(.semibold))
+                                    Text("These are your selected relationships; Disker does not verify ownership or shared use. Sizes are shown separately and are not added into an app total.")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    ForEach(relatedPaths, id: \.self) { path in
+                                        HStack(spacing: 8) {
+                                            VStack(alignment: .leading, spacing: 3) {
+                                                Text(path)
+                                                    .font(.caption)
+                                                    .lineLimit(1)
+                                                    .truncationMode(.middle)
+                                                if let observation = model.latestFolderObservation(at: path) {
+                                                    HStack(spacing: 8) {
+                                                        Text("Logical \(format(observation.logicalBytes))")
+                                                        Text("Allocated estimate \(format(observation.allocatedBytes))")
+                                                        Text("Measured \(observation.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                                                        if observation.complete {
+                                                            Text("Complete")
+                                                                .foregroundStyle(.green)
+                                                        } else {
+                                                            Text(coverageSummary(
+                                                                inaccessible: observation.inaccessibleCount,
+                                                                excludedSymlinks: observation.excludedSymlinkCount,
+                                                                changed: observation.changedDuringScanCount,
+                                                                wasCancelled: model.scanWasCancelled(for: observation)
+                                                            ))
+                                                            .foregroundStyle(.orange)
+                                                        }
+                                                    }
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.secondary)
+                                                } else {
+                                                    Text("Selected for association; no measurement saved yet")
+                                                        .font(.caption2)
+                                                        .foregroundStyle(.secondary)
+                                                }
+                                            }
+                                            Spacer(minLength: 4)
+                                            Button {
+                                                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                                            } label: {
+                                                Image(systemName: "arrow.up.right.square")
+                                            }
+                                            .buttonStyle(.borderless)
+                                            .help("Reveal associated folder in Finder")
+                                            .accessibilityLabel("Reveal associated folder in Finder")
+                                            Button {
+                                                model.removeRelatedFolder(path, from: bundle.path)
+                                            } label: {
+                                                Image(systemName: "link.badge.minus")
+                                            }
+                                            .buttonStyle(.borderless)
+                                            .help("Remove Disker's association; files and scan history remain")
+                                            .accessibilityLabel("Remove association for selected folder")
+                                        }
+                                        .padding(.vertical, 4)
+                                        Divider()
+                                    }
+                                }
+                                .padding(12)
+                                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+                            }
                             folderHistoryChart(for: bundle)
                         }
                         .padding(16)
@@ -697,7 +807,7 @@ struct DashboardView: View {
                 }
                 GroupBox {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Remove saved capacity measurements, folder paths and sizes, and RAM samples from this Mac. Scanned files are not changed.")
+                        Text("Remove saved capacity measurements, folder paths and sizes, RAM samples, and app-folder associations from this Mac. Scanned files are not changed.")
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .fixedSize(horizontal: false, vertical: true)
                         Button("Clear Local History…", role: .destructive) {
