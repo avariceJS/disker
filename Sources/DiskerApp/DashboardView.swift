@@ -120,7 +120,7 @@ final class DashboardModel {
         let panel = NSOpenPanel()
         panel.title = "Choose folders associated with this app"
         panel.prompt = "Associate and Scan"
-        panel.message = "Choose folders you want to group with this app. Disker records your association but does not verify ownership or shared use. Measurements stay separate."
+        panel.message = "Choose up to 50 folders you want to group with this app. Disker records your association but does not verify ownership or shared use. Measurements stay separate."
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true

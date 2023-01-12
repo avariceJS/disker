@@ -188,6 +188,8 @@ private struct DiskerCoreChecks {
             )
             try expect(bounded.relatedFolderPaths.count == 50,
                        "one app association should retain no more than 50 selected folder paths")
+            try expect(bounded.adding(["/synthetic/overflow"]) == nil,
+                       "adding a 51st unique folder should fail instead of silently dropping a saved link")
         }
     }
 

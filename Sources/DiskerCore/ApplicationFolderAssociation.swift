@@ -1,6 +1,7 @@
 import Foundation
 
 public struct ApplicationFolderAssociation: Codable, Equatable, Identifiable, Sendable {
+    public static let maximumRelatedFolderCount = 50
     public var id: String { bundlePath }
     public let bundlePath: String
     public let relatedFolderPaths: [String]
@@ -13,14 +14,16 @@ public struct ApplicationFolderAssociation: Codable, Equatable, Identifiable, Se
         for path in relatedFolderPaths where !path.isEmpty && seen.insert(path).inserted {
             uniquePaths.append(path)
         }
-        self.relatedFolderPaths = Array(uniquePaths.suffix(50))
+        self.relatedFolderPaths = Array(uniquePaths.suffix(Self.maximumRelatedFolderCount))
         self.updatedAt = updatedAt
     }
 
-    public func adding(_ paths: [String], at date: Date = .now) -> ApplicationFolderAssociation {
-        ApplicationFolderAssociation(
+    public func adding(_ paths: [String], at date: Date = .now) -> ApplicationFolderAssociation? {
+        let combinedPaths = relatedFolderPaths + paths
+        guard Set(combinedPaths.filter { !$0.isEmpty }).count <= Self.maximumRelatedFolderCount else { return nil }
+        return ApplicationFolderAssociation(
             bundlePath: bundlePath,
-            relatedFolderPaths: relatedFolderPaths + paths,
+            relatedFolderPaths: combinedPaths,
             updatedAt: date
         )
     }
@@ -31,5 +34,13 @@ public struct ApplicationFolderAssociation: Codable, Equatable, Identifiable, Se
         return ApplicationFolderAssociation(
             bundlePath: bundlePath, relatedFolderPaths: remaining, updatedAt: date
         )
+    }
+}
+
+public enum ApplicationFolderAssociationError: Error, LocalizedError {
+    case tooManyRelatedFolders
+
+    public var errorDescription: String? {
+        "An app can have at most \(ApplicationFolderAssociation.maximumRelatedFolderCount) associated folders. Remove an existing link before adding more."
     }
 }

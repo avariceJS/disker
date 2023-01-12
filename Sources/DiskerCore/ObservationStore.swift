@@ -85,9 +85,16 @@ public enum ObservationStore {
         _ paths: [String], with bundlePath: String, to fileURL: URL? = nil
     ) throws -> LocalHistory {
         var history = try load(from: fileURL)
+        guard !paths.isEmpty else { return history }
         if let index = history.applicationAssociations.firstIndex(where: { $0.bundlePath == bundlePath }) {
-            history.applicationAssociations[index] = history.applicationAssociations[index].adding(paths)
+            guard let updated = history.applicationAssociations[index].adding(paths) else {
+                throw ApplicationFolderAssociationError.tooManyRelatedFolders
+            }
+            history.applicationAssociations[index] = updated
         } else {
+            guard Set(paths.filter { !$0.isEmpty }).count <= ApplicationFolderAssociation.maximumRelatedFolderCount else {
+                throw ApplicationFolderAssociationError.tooManyRelatedFolders
+            }
             history.applicationAssociations.append(ApplicationFolderAssociation(
                 bundlePath: bundlePath, relatedFolderPaths: paths
             ))
