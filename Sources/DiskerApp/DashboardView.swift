@@ -627,6 +627,7 @@ struct DashboardView: View {
                                         .foregroundStyle(.secondary)
                                         .fixedSize(horizontal: false, vertical: true)
                                     ForEach(relatedPaths, id: \.self) { path in
+                                        let folderName = URL(fileURLWithPath: path).lastPathComponent
                                         HStack(spacing: 8) {
                                             VStack(alignment: .leading, spacing: 3) {
                                                 Text(path)
@@ -667,7 +668,7 @@ struct DashboardView: View {
                                             }
                                             .buttonStyle(.borderless)
                                             .help("Reveal associated folder in Finder")
-                                            .accessibilityLabel("Reveal associated folder in Finder")
+                                            .accessibilityLabel("Reveal \(folderName) in Finder")
                                             Button {
                                                 model.removeRelatedFolder(path, from: bundle.path)
                                             } label: {
@@ -675,7 +676,7 @@ struct DashboardView: View {
                                             }
                                             .buttonStyle(.borderless)
                                             .help("Remove Disker's association; files and scan history remain")
-                                            .accessibilityLabel("Remove association for selected folder")
+                                            .accessibilityLabel("Remove association for \(folderName)")
                                         }
                                         .padding(.vertical, 4)
                                         Divider()
