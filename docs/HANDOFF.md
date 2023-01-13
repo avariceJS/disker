@@ -36,6 +36,6 @@ Updated: 2026-10-19 (actual session date).
 
 ## Next priorities
 
-1. Develop defensible app/project attribution and RAM trends from measured inputs; avoid guessing ownership from folder names.
-2. Add bounded, user-approved duplicate verification and read-only cleanup plans only if these can be explained safely. Never delete real user data.
-3. Measure representative scan and idle resource costs; add install/update/uninstall verification, Xcode/App Store sandbox analysis, and a compact dependency inventory.
+1. Visually exercise the newest Applications, associations, duplicate review, and history charts when a GUI window is available; use only Disker fixtures and the app bundle.
+2. Extend app/project attribution beyond bundle measurements and user-defined links only with defensible evidence; keep shared and unverified paths explicit.
+3. Build a general read-only cleanup review only with exact path evidence and honest risk/reclaimable estimates; never add file deletion. Measure representative interactive scan/idle costs and finish App Store sandbox analysis.
