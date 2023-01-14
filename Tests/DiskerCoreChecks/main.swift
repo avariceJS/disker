@@ -26,6 +26,7 @@ private struct DiskerCoreChecks {
             ("comparable capacity history", testCapacityHistoryComparison),
             ("explicit application bundle history index", testApplicationBundleIndex),
             ("explicit app-folder associations", testApplicationFolderAssociations),
+            ("bounded read-only selected-scope bookmarks", testSelectedScopeBookmarks),
             ("zero important-usage fallback", testImportantUsageFallback),
             ("live root volume capacity", testLiveCapacitySource),
             ("live RAM and process sample", testLiveRAMSample),
@@ -190,6 +191,57 @@ private struct DiskerCoreChecks {
                        "one app association should retain no more than 50 selected folder paths")
             try expect(bounded.adding(["/synthetic/overflow"]) == nil,
                        "adding a 51st unique folder should fail instead of silently dropping a saved link")
+        }
+    }
+
+    private static func testSelectedScopeBookmarks() throws {
+        try withTemporaryDirectory { base in
+            let root = base.appendingPathComponent("selected-folder", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+            let fixture = root.appendingPathComponent("keep.bin")
+            let bytes = Data("synthetic selected-scope fixture".utf8)
+            try bytes.write(to: fixture)
+            let storeURL = base.appendingPathComponent("nested/scopes.json")
+
+            let saved = try SelectedScopeBookmarkStore.remember([root], at: storeURL)
+            try expect(saved.count == 1 && saved[0].path == root.standardizedFileURL.path,
+                       "a selected folder should be stored once by its canonical path")
+            let loaded = try SelectedScopeBookmarkStore.load(from: storeURL)
+            try expect(loaded == saved, "saved scope bookmarks should round-trip locally")
+            let permissions = try FileManager.default.attributesOfItem(atPath: storeURL.path)[.posixPermissions] as? NSNumber
+            try expect(permissions?.intValue == 0o600,
+                       "saved permission bookmarks should be readable only by the local account")
+            let directoryPermissions = try FileManager.default.attributesOfItem(
+                atPath: storeURL.deletingLastPathComponent().path
+            )[.posixPermissions] as? NSNumber
+            try expect(directoryPermissions?.intValue == 0o700,
+                       "the scope store directory should be accessible only by the local account")
+            let resolved = try SelectedScopeBookmarkStore.resolve(loaded[0], at: storeURL)
+            try expect(resolved.standardizedFileURL.path == root.standardizedFileURL.path,
+                       "a bookmark should resolve to its selected folder")
+
+            let repeated = try SelectedScopeBookmarkStore.remember([root], at: storeURL)
+            try expect(repeated.count == 1, "selecting the same folder again should update rather than duplicate it")
+            let forgotten = try SelectedScopeBookmarkStore.remove(path: root.path, at: storeURL)
+            try expect(forgotten.isEmpty, "forget should remove the saved access bookmark")
+            let unchangedBytes = try Data(contentsOf: fixture)
+            try expect(unchangedBytes == bytes,
+                       "remembering, resolving, and forgetting a scope must not alter selected files")
+
+            let crowdedStore = base.appendingPathComponent("crowded.json")
+            var locations: [URL] = []
+            for index in 0...SelectedScopeBookmarkStore.maximumBookmarkCount {
+                let location = base.appendingPathComponent("scope-\(index)", isDirectory: true)
+                try FileManager.default.createDirectory(at: location, withIntermediateDirectories: false)
+                locations.append(location)
+            }
+            do {
+                _ = try SelectedScopeBookmarkStore.remember(locations, at: crowdedStore)
+                throw CheckFailure.assertion("scope store should reject more than its bounded capacity")
+            } catch SelectedScopeBookmarkError.tooManyBookmarks { }
+            let rejectedBookmarks = try SelectedScopeBookmarkStore.load(from: crowdedStore)
+            try expect(rejectedBookmarks.isEmpty,
+                       "a rejected over-limit selection must not partially persist permissions")
         }
     }
 

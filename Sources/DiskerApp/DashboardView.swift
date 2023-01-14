@@ -18,6 +18,7 @@ final class DashboardModel {
     var duplicateBytesHashed: UInt64 = 0
     var duplicateCandidateBytes: UInt64 = 0
     var preservedDuplicatePaths: [String: String] = [:]
+    var rememberedScopes: [SelectedScopeBookmark] = []
     var errorMessage: String?
     var currentPath = ""
     var visitedFiles = 0
@@ -30,6 +31,11 @@ final class DashboardModel {
             ram = history.ramObservations.last
         } catch {
             errorMessage = error.localizedDescription
+        }
+        do {
+            rememberedScopes = try SelectedScopeBookmarkStore.load()
+        } catch {
+            errorMessage = "Saved scan locations could not be loaded: \(error.localizedDescription)"
         }
     }
 
@@ -98,6 +104,7 @@ final class DashboardModel {
         panel.allowsMultipleSelection = true
         panel.canCreateDirectories = false
         guard panel.runModal() == .OK else { return }
+        rememberFolders(panel.urls)
         scan(panel.urls)
     }
 
@@ -130,6 +137,7 @@ final class DashboardModel {
             history = try ObservationStore.associateApplicationFolders(
                 panel.urls.map(\.path), with: bundlePath
             )
+            rememberFolders(panel.urls)
             scan(panel.urls)
         } catch {
             errorMessage = "Folders were selected, but their association could not be saved: \(error.localizedDescription)"
@@ -141,6 +149,32 @@ final class DashboardModel {
             history = try ObservationStore.removeApplicationFolderAssociation(path, from: bundlePath)
         } catch {
             errorMessage = "The saved folder association could not be removed: \(error.localizedDescription)"
+        }
+    }
+
+    private func rememberFolders(_ urls: [URL]) {
+        do {
+            rememberedScopes = try SelectedScopeBookmarkStore.remember(urls)
+        } catch {
+            errorMessage = "The scan can continue, but Disker could not save a reusable read-only permission: \(error.localizedDescription)"
+        }
+    }
+
+    func rescanRememberedFolder(_ path: String) {
+        guard !isScanning,
+              let bookmark = rememberedScopes.first(where: { $0.path == path }) else { return }
+        do {
+            scan([try SelectedScopeBookmarkStore.resolve(bookmark)])
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func forgetRememberedFolder(_ path: String) {
+        do {
+            rememberedScopes = try SelectedScopeBookmarkStore.remove(path: path)
+        } catch {
+            errorMessage = "Saved folder permission could not be removed: \(error.localizedDescription)"
         }
     }
 
@@ -225,7 +259,9 @@ final class DashboardModel {
     func clearHistory() {
         do {
             try ObservationStore.clear()
+            try SelectedScopeBookmarkStore.clear()
             history = LocalHistory()
+            rememberedScopes = []
             ram = nil
             errorMessage = nil
         } catch {
@@ -308,7 +344,7 @@ struct DashboardView: View {
             Button("Clear History", role: .destructive) { model.clearHistory() }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("This removes Disker’s saved capacity, folder, and RAM observations plus app-folder associations from this Mac. Your files and folders will not be changed.")
+            Text("This removes saved capacity, folder, and RAM observations, app-folder associations, and remembered read-only scan permissions from this Mac. Your files and folders will not be changed.")
         }
     }
 
@@ -642,6 +678,16 @@ struct DashboardView: View {
                                                         if observation.complete {
                                                             Text("Complete")
                                                                 .foregroundStyle(.green)
+                                                            if let previous = model.previousCompleteObservation(for: observation),
+                                                               let delta = ObservationComparison.allocatedByteDelta(
+                                                                current: observation, previous: previous
+                                                               ) {
+                                                                Text("\(changeDescription(delta)) since \(previous.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                                                                    .foregroundStyle(delta >= 0 ? .orange : .green)
+                                                            } else {
+                                                                Text("First complete measurement")
+                                                                    .foregroundStyle(.secondary)
+                                                            }
                                                         } else {
                                                             Text(coverageSummary(
                                                                 inaccessible: observation.inaccessibleCount,
@@ -701,7 +747,49 @@ struct DashboardView: View {
     private var foldersPage: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                header("Selected folders", subtitle: "File sizes are measured only inside the locations you choose.")
+                header("Selected folders", subtitle: "Measure only locations you choose. Saved read-only access lets you rescan them on demand.")
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Disker remembers up to 20 folders you selected so you can rescan without reopening the picker. Scans remain manual; removing a location forgets its permission and does not touch files.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if model.rememberedScopes.isEmpty {
+                            Label("No saved scan locations", systemImage: "folder.badge.questionmark")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(model.rememberedScopes) { scope in
+                                HStack(spacing: 10) {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(URL(fileURLWithPath: scope.path).lastPathComponent)
+                                            .font(.subheadline.weight(.medium))
+                                        Text(scope.path)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                    }
+                                    Spacer(minLength: 8)
+                                    Button("Scan") { model.rescanRememberedFolder(scope.path) }
+                                        .disabled(model.isScanning)
+                                    Button {
+                                        model.forgetRememberedFolder(scope.path)
+                                    } label: {
+                                        Image(systemName: "xmark.circle")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .disabled(model.isScanning)
+                                    .help("Forget this saved location and its access permission")
+                                    .accessibilityLabel("Forget saved location \(URL(fileURLWithPath: scope.path).lastPathComponent)")
+                                }
+                                Divider()
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } label: {
+                    Label("Saved scan locations (\(model.rememberedScopes.count)/\(SelectedScopeBookmarkStore.maximumBookmarkCount))", systemImage: "bookmark")
+                }
                 if let folders = model.latestScan?.folders, !folders.isEmpty {
                     folderList(folders, title: "Latest scan", scanCancelled: model.latestScan?.cancelled ?? false)
                 } else {
@@ -789,8 +877,8 @@ struct DashboardView: View {
                 header("About Disker", subtitle: "Understand storage without guessing what is safe to remove.")
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        Label("No file contents are read during folder scans.", systemImage: "hand.raised")
-                        Label("Scan scope is chosen by you each time.", systemImage: "folder.badge.plus")
+                        Label("Folder-size scans read metadata only. Duplicate verification reads selected candidate contents after confirmation.", systemImage: "hand.raised")
+                        Label("Scan scope is chosen by you. Saved permissions are read-only and scans stay manual.", systemImage: "folder.badge.plus")
                         Label("No cleanup or deletion actions are available.", systemImage: "lock.shield")
                         Label("History stays in this Mac's Application Support folder.", systemImage: "internaldrive")
                     }
@@ -808,7 +896,7 @@ struct DashboardView: View {
                 }
                 GroupBox {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Remove saved capacity measurements, folder paths and sizes, RAM samples, and app-folder associations from this Mac. Scanned files are not changed.")
+                        Text("Remove saved capacity measurements, folder paths and sizes, RAM samples, app-folder associations, and remembered read-only scan permissions from this Mac. Scanned files are not changed.")
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .fixedSize(horizontal: false, vertical: true)
                         Button("Clear Local History…", role: .destructive) {
