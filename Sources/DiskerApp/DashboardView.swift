@@ -120,6 +120,7 @@ final class DashboardModel {
         panel.canCreateDirectories = false
         panel.allowedContentTypes = [.applicationBundle]
         guard panel.runModal() == .OK else { return }
+        rememberFolders(panel.urls)
         scan(panel.urls)
     }
 
@@ -156,7 +157,7 @@ final class DashboardModel {
         do {
             rememberedScopes = try SelectedScopeBookmarkStore.remember(urls)
         } catch {
-            errorMessage = "The scan can continue, but Disker could not save a reusable read-only permission: \(error.localizedDescription)"
+            errorMessage = "The scan can continue, but Disker could not save a reusable read-only location: \(error.localizedDescription)"
         }
     }
 
@@ -750,7 +751,7 @@ struct DashboardView: View {
                 header("Selected folders", subtitle: "Measure only locations you choose. Saved read-only access lets you rescan them on demand.")
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Disker remembers up to 20 folders you selected so you can rescan without reopening the picker. Scans remain manual; removing a location forgets its permission and does not touch files.")
+                        Text("Disker remembers up to 20 folders or application bundles you selected so you can rescan without reopening the picker. Scans remain manual; removing a location forgets its permission and does not touch files.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -788,7 +789,7 @@ struct DashboardView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 } label: {
-                    Label("Saved scan locations (\(model.rememberedScopes.count)/\(SelectedScopeBookmarkStore.maximumBookmarkCount))", systemImage: "bookmark")
+                    Label("Saved scan roots (\(model.rememberedScopes.count)/\(SelectedScopeBookmarkStore.maximumBookmarkCount))", systemImage: "bookmark")
                 }
                 if let folders = model.latestScan?.folders, !folders.isEmpty {
                     folderList(folders, title: "Latest scan", scanCancelled: model.latestScan?.cancelled ?? false)
@@ -878,7 +879,7 @@ struct DashboardView: View {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Label("Folder-size scans read metadata only. Duplicate verification reads selected candidate contents after confirmation.", systemImage: "hand.raised")
-                        Label("Scan scope is chosen by you. Saved permissions are read-only and scans stay manual.", systemImage: "folder.badge.plus")
+                        Label("Scan locations are chosen by you. Saved permissions are read-only and scans stay manual.", systemImage: "folder.badge.plus")
                         Label("No cleanup or deletion actions are available.", systemImage: "lock.shield")
                         Label("History stays in this Mac's Application Support folder.", systemImage: "internaldrive")
                     }

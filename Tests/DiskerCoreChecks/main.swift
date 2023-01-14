@@ -224,6 +224,12 @@ private struct DiskerCoreChecks {
             try expect(repeated.count == 1, "selecting the same folder again should update rather than duplicate it")
             let forgotten = try SelectedScopeBookmarkStore.remove(path: root.path, at: storeURL)
             try expect(forgotten.isEmpty, "forget should remove the saved access bookmark")
+            let appBundle = base.appendingPathComponent("Sample.app", isDirectory: true)
+            try FileManager.default.createDirectory(at: appBundle, withIntermediateDirectories: false)
+            let savedBundle = try SelectedScopeBookmarkStore.remember([appBundle], at: storeURL)
+            try expect(savedBundle.map(\.path) == [appBundle.standardizedFileURL.path],
+                       "the same bounded store should accept an explicitly selected app bundle")
+            _ = try SelectedScopeBookmarkStore.remove(path: appBundle.path, at: storeURL)
             let unchangedBytes = try Data(contentsOf: fixture)
             try expect(unchangedBytes == bytes,
                        "remembering, resolving, and forgetting a scope must not alter selected files")

@@ -8,12 +8,12 @@ Disker is a native SwiftUI macOS storage utility. It reports system volume capac
 
 The app measures explicitly selected `.app` bundles. Users may associate separate folders with an app, but Disker labels those links unverified and never sums their sizes as app ownership. Associated folders now show change only against the previous complete measurement of that exact path. Exact-name development-storage hints are descriptive, not safety or ownership claims. Duplicate review is a separate content-reading action after confirmation; its dry-run plan requires an exact keeper and reports risk/reclaimable bytes as unknown. There is no deletion action.
 
-The Folders page now retains up to 20 read-only security-scoped bookmarks for folders explicitly selected by the user. Saved scopes are local, bounded, individually removable, and usable only through a manual rescan; Disker does not access them on launch or monitor them. Clearing local history also removes these bookmarks. The bookmark file is written with owner-only permissions. App-folder association paths remain separate metadata.
+The Folders page now retains up to 20 read-only security-scoped bookmarks for explicitly selected folders and application bundles. Saved scopes are local, bounded, individually removable, and usable only through a manual rescan; Disker does not access them on launch or monitor them. Clearing local history also removes these bookmarks. The bookmark file is written with owner-only permissions. App-folder association paths remain separate metadata.
 
 ## Latest verification
 
 - Active toolchain: `/Applications/Xcode.app/Contents/Developer`, Xcode 27.1 (27A9275), Swift 6.4.0.34.1, arm64.
-- `scripts/check-core.sh`: 33 checks passed, including synthetic bookmark create/load/resolve/remove, unchanged fixture content, private file mode, and over-limit rejection without partial persistence.
+- `scripts/check-core.sh`: 33 checks passed, including synthetic folder and app-bundle bookmark create/load/resolve/remove, unchanged fixture content, private file mode, and over-limit rejection without partial persistence.
 - `scripts/package-app.sh`: production app built. `plutil -lint` passed; executable is arm64. Bundle was copied to `~/Applications/Disker.app` and launched through LaunchServices; process path and bundle identifier were confirmed.
 - `git diff --check` passed. The installed app has not been visually reviewed for the newest bookmark and Applications states: CUA returned `Computer Use server error -10005: cgWindowNotFound`. Earlier Overview, Folders, History, `.git`, and RAM UI states were visually inspected; those do not validate the newest screens.
 - No personal folders were selected or scanned in this session. Tests use temporary synthetic fixtures.
