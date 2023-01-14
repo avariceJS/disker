@@ -15,6 +15,10 @@ CLANG_MODULE_CACHE_PATH="$PROJECT_ROOT/.build/clang-module-cache" swift build \
     --product Disker
 mkdir -p "$CONTENTS/MacOS"
 cp "$PROJECT_ROOT/.build/release/Disker" "$CONTENTS/MacOS/Disker"
+ICONSET="$PROJECT_ROOT/.build/Disker.iconset"
+swift "$PROJECT_ROOT/scripts/create-app-icon.swift" "$ICONSET"
+mkdir -p "$CONTENTS/Resources"
+/usr/bin/iconutil -c icns "$ICONSET" -o "$CONTENTS/Resources/AppIcon.icns"
 cat > "$CONTENTS/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -22,6 +26,7 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
 <dict>
     <key>CFBundleDevelopmentRegion</key><string>en</string>
     <key>CFBundleExecutable</key><string>Disker</string>
+    <key>CFBundleIconFile</key><string>AppIcon.icns</string>
     <key>CFBundleIdentifier</key><string>com.avaricejs.Disker</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>Disker</string>

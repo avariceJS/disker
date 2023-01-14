@@ -15,7 +15,7 @@ ditto .build/Disker.app "$HOME/Applications/Disker.app"
 open "$HOME/Applications/Disker.app"
 ```
 
-The bundle is an unsigned development app under `.build/Disker.app`. The user-level `~/Applications/Disker.app` copy is convenient for Finder and LaunchServices, but this is not a signed or notarized release and is not installed system-wide in `/Applications`. To remove the app, move it to Trash in Finder; clear Disker's locally stored observations first from **About → Clear Local History…** if desired. The scripts use SwiftPM's `--disable-sandbox` for build subprocesses because this development environment disallows SwiftPM's nested sandbox. This package has no dependencies or build plugins.
+The bundle is an unsigned development app under `.build/Disker.app`; packaging generates its multi-size drive icon from Core Graphics. The user-level `~/Applications/Disker.app` copy is convenient for Finder and LaunchServices, but this is not a signed or notarized release and is not installed system-wide in `/Applications`. To remove the app, move it to Trash in Finder; clear Disker's locally stored observations first from **About → Clear Local History…** if desired. The scripts use SwiftPM's `--disable-sandbox` for build subprocesses because this development environment disallows SwiftPM's nested sandbox. This package has no dependencies or build plugins.
 
 ## Development tool inventory
 
