@@ -165,7 +165,13 @@ final class DashboardModel {
         guard !isScanning,
               let bookmark = rememberedScopes.first(where: { $0.path == path }) else { return }
         do {
-            scan([try SelectedScopeBookmarkStore.resolve(bookmark)])
+            let url = try SelectedScopeBookmarkStore.resolve(bookmark)
+            do {
+                rememberedScopes = try SelectedScopeBookmarkStore.load()
+            } catch {
+                errorMessage = "The folder is available for this scan, but saved locations could not be refreshed: \(error.localizedDescription)"
+            }
+            scan([url])
         } catch {
             errorMessage = error.localizedDescription
         }

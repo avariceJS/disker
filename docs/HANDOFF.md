@@ -8,7 +8,7 @@ Disker is a native SwiftUI macOS storage utility. It reports system volume capac
 
 The app measures explicitly selected `.app` bundles. Users may associate separate folders with an app, but Disker labels those links unverified and never sums their sizes as app ownership. Associated folders now show change only against the previous complete measurement of that exact path. Exact-name development-storage hints are descriptive, not safety or ownership claims. Duplicate review is a separate content-reading action after confirmation; its dry-run plan requires an exact keeper and reports risk/reclaimable bytes as unknown. There is no deletion action.
 
-The Folders page now retains up to 20 read-only security-scoped bookmarks for explicitly selected folders and application bundles. Saved scopes are local, bounded, individually removable, and usable only through a manual rescan; Disker does not access them on launch or monitor them. Clearing local history also removes these bookmarks. The bookmark file is written with owner-only permissions. App-folder association paths remain separate metadata.
+The Folders page now retains up to 20 read-only security-scoped bookmarks for explicitly selected folders and application bundles. Saved scopes are local, bounded, individually removable, refreshed when a stale bookmark resolves, and usable only through a manual rescan; Disker does not access them on launch or monitor them. Clearing local history also removes these bookmarks. The bookmark file is written with owner-only permissions. App-folder association paths remain separate metadata.
 
 ## Latest verification
 
