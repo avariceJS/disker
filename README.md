@@ -32,14 +32,14 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 ## Current behavior
 
 - Reads total and available capacity reported by macOS for `/`.
-- Scans only folders selected in the native open panel.
+- Scans only folders or application bundles selected in the native open panel.
+- Remembers up to 20 selected scan locations as read-only security-scoped bookmarks in `~/Library/Application Support/Disker/selected-scopes.json`. Users can rescan them manually or remove each saved permission; Disker does not access them on launch or monitor them in the background.
 - Provides a separate **Applications** view for explicitly selected `.app` bundles; it measures the bundle only and lets the user manually associate up to 50 separately selected folders. The association is not independently verified, does not establish exclusive ownership, and measurements are never summed into an app total.
-- Compares repeated complete bundle scans of the same selected app path using allocated-byte estimates; incomplete results stay explicitly partial.
-- Reads filesystem metadata only; does not open file contents.
+- Compares repeated complete bundle scans and app-associated folder scans of the same selected path using allocated-byte estimates; incomplete results stay explicitly partial.
+- Folder-size scans read filesystem metadata only and do not open file contents.
 - Does not follow symbolic links; deduplicates hard links within each selected folder.
 - Detects changed/replaced directories where possible and marks their coverage partial; a scan is still not an atomic snapshot.
 - Flags a direct `.git` metadata entry as a project marker and separately measures a real `.git` directory even when it falls outside the largest-folder ranking. A `.git` file remains a marker only; Disker does not read its contents or claim project ownership.
-- Adds name-based hints for a few common development-storage directories without deciding whether they are owned, reproducible, or removable.
 - Shows logical file size separately from allocated blocks summed from `st_blocks`.
 - Adds cautious, exact-name hints for common development storage locations such as SwiftPM build output, Xcode DerivedData, `node_modules`, and Python environments. These hints do not determine ownership or safety to remove.
 - Saves up to 180 capacity, folder-scan, and RAM observations under `~/Library/Application Support/Disker/observations.json`. Capacity history is sampled when Disker opens, after a folder scan, or when the user presses Refresh; it is not a background monitor.
@@ -65,6 +65,6 @@ Duplicate verification reads file contents only after the user selects folders a
 
 ## Privacy
 
-No account, network service, or telemetry is used. Folder selection is explicit per scan. The app stores metadata observations and user-selected app-folder associations locally; the About page's confirmed “Clear Local History…” action removes only Disker's saved history and associations.
+No account, network service, or telemetry is used. Folder selection is explicit, and later access is limited to the user's manual rescan action. Disker stores metadata observations and app-folder associations locally in `observations.json`; read-only bookmarks for up to 20 selected scan roots are kept separately in `selected-scopes.json`, with owner-only file permissions. The About page's confirmed “Clear Local History…” action removes both files and never changes selected folders or their contents.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/HANDOFF.md](docs/HANDOFF.md).
