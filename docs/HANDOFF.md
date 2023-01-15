@@ -13,7 +13,7 @@ The Folders page now retains up to 20 read-only security-scoped bookmarks for ex
 ## Latest verification
 
 - Active toolchain: `/Applications/Xcode.app/Contents/Developer`, Xcode 27.1 (27A9275), Swift 6.4.0.34.1, arm64.
-- `scripts/check-core.sh`: 33 checks passed, including synthetic folder and app-bundle bookmark create/load/resolve/remove, unchanged fixture content, private file mode, and over-limit rejection without partial persistence.
+- `scripts/check-core.sh`: 33 checks passed, including synthetic folder and app-bundle bookmark create/load/resolve/remove, a metadata rescan from a resolved bookmark, unchanged fixture content, private file mode, and over-limit rejection without partial persistence.
 - `scripts/package-app.sh`: production app built. `plutil -lint` passed; executable is arm64. Bundle was copied to `~/Applications/Disker.app` and launched through LaunchServices; process path and bundle identifier were confirmed.
 - `git diff --check` passed. The installed app has not been visually reviewed for the newest bookmark and Applications states: CUA returned `Computer Use server error -10005: cgWindowNotFound`. Earlier Overview, Folders, History, `.git`, and RAM UI states were visually inspected; those do not validate the newest screens.
 - No personal folders were selected or scanned in this session. Tests use temporary synthetic fixtures.

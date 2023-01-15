@@ -219,6 +219,11 @@ private struct DiskerCoreChecks {
             let resolved = try SelectedScopeBookmarkStore.resolve(loaded[0], at: storeURL)
             try expect(resolved.standardizedFileURL.path == root.standardizedFileURL.path,
                        "a bookmark should resolve to its selected folder")
+            let rescanned = FolderScanner.scan(roots: [resolved])
+            try expect(rescanned.folders.first?.complete == true && rescanned.folders.first?.fileCount == 1,
+                       "the metadata scanner should be able to rescan a resolved selected-scope bookmark")
+            try expect(rescanned.folders.first?.logicalBytes == Int64(bytes.count),
+                       "bookmark rescans should report fixture metadata without changing its size")
 
             let repeated = try SelectedScopeBookmarkStore.remember([root], at: storeURL)
             try expect(repeated.count == 1, "selecting the same folder again should update rather than duplicate it")
