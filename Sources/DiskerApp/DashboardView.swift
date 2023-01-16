@@ -121,7 +121,7 @@ final class DashboardModel {
         let panel = NSOpenPanel()
         panel.title = "Choose an application bundle to measure"
         panel.prompt = "Measure Bundle"
-        panel.message = "Disker measures only the selected .app bundle and reads its declared bundle identifier from Info.plist to label possible container-path matches. Support data, caches, and shared files are not included."
+        panel.message = "Disker measures only the selected .app bundle. It reads the declared bundle ID and embedded App Groups claim for path hints; signature validity is not checked, and group data is shared. Other support data is not included."
         panel.directoryURL = directory
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -130,11 +130,7 @@ final class DashboardModel {
         panel.allowedContentTypes = [.applicationBundle]
         guard panel.runModal() == .OK else { return }
         rememberFolders(panel.urls)
-        let identifiers = Dictionary(uniqueKeysWithValues: panel.urls.compactMap { url in
-            ApplicationBundleMetadata.identifier(fromSelectedBundleAt: url)
-                .map { (url.path, $0) }
-        })
-        scan(panel.urls, applicationBundleIdentifiers: identifiers)
+        scan(panel.urls, inspectSelectedAppBundles: true)
     }
 
     func chooseRelatedFolders(for bundlePath: String) {
@@ -142,7 +138,7 @@ final class DashboardModel {
         let panel = NSOpenPanel()
         panel.title = "Choose folders associated with this app"
         panel.prompt = "Associate and Scan"
-        panel.message = "Choose up to 50 folders to associate. An exact ~/Library/Containers/<bundle-id> path may be labeled probable from the selected app's declared bundle identifier; signing identity and shared use are not verified. Other associations remain unverified and measurements stay separate."
+        panel.message = "Choose up to 50 folders to associate. An exact ~/Library/Containers/<bundle-id> path may receive a probable match. An exact ~/Library/Group Containers/<group-id> path may match an embedded App Groups claim and is marked shared. Signature validity, signing identity, and exclusive ownership are not verified; measurements stay separate."
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
@@ -200,18 +196,30 @@ final class DashboardModel {
         }
     }
 
-    func scan(_ urls: [URL], applicationBundleIdentifiers: [String: String] = [:]) {
+    func scan(
+        _ urls: [URL], applicationBundleIdentities: [String: ApplicationBundleIdentity] = [:],
+        inspectSelectedAppBundles: Bool = false
+    ) {
         guard !urls.isEmpty, !isScanning else { return }
         isScanning = true
         currentPath = ""
         visitedFiles = 0
         let scanTask = Task.detached(priority: .utility) {
-            FolderScanner.scan(roots: urls, progress: { [weak self] progress in
+            var identities = applicationBundleIdentities
+            if inspectSelectedAppBundles {
+                for url in urls where url.pathExtension.lowercased() == "app" {
+                    if let identity = ApplicationBundleMetadata.identity(fromSelectedBundleAt: url) {
+                        identities[url.path] = identity
+                    }
+                }
+            }
+            let observation = FolderScanner.scan(roots: urls, progress: { [weak self] progress in
                 Task { @MainActor [weak self] in
                     self?.currentPath = progress.currentPath
                     self?.visitedFiles = progress.visitedFiles
                 }
-            }).includingApplicationBundleIdentifiers(applicationBundleIdentifiers)
+            })
+            return observation.includingApplicationBundleIdentities(identities)
         }
         self.scanTask = scanTask
         Task {
@@ -683,92 +691,12 @@ struct DashboardView: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Label("Folders you associated", systemImage: "link")
                                         .font(.subheadline.weight(.semibold))
-                                    Text("Disker never sums these folders into an app total or claims exclusive ownership. Only an exact user Containers path may receive a probable bundle-ID match; signing identity and shared use remain unverified.")
+                                    Text("Disker never sums these folders into an app total or claims exclusive ownership. Exact user Containers paths may receive a probable bundle-ID match; App Group paths are marked shared only when an embedded entitlement claim matches. Signature validity is not checked.")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                         .fixedSize(horizontal: false, vertical: true)
                                     ForEach(relatedPaths, id: \.self) { path in
-                                        let folderName = URL(fileURLWithPath: path).lastPathComponent
-                                        let attribution = ApplicationPathAttribution.classify(
-                                            bundleIdentifier: bundle.applicationBundleIdentifier,
-                                            associatedFolderPath: path,
-                                            homeDirectoryPath: NSHomeDirectory()
-                                        )
-                                        HStack(spacing: 8) {
-                                            VStack(alignment: .leading, spacing: 3) {
-                                                Text(path)
-                                                    .font(.caption)
-                                                    .lineLimit(1)
-                                                    .truncationMode(.middle)
-                                                Label(
-                                                    attribution.title,
-                                                    systemImage: attribution.evidence == .probableContainerPathMatch
-                                                        ? "folder.badge.questionmark" : "person.crop.circle.badge.questionmark"
-                                                )
-                                                .font(.caption2)
-                                                .foregroundStyle(
-                                                    attribution.evidence == .probableContainerPathMatch ? .blue : .secondary
-                                                )
-                                                Text(attribution.explanation)
-                                                    .font(.caption2)
-                                                    .foregroundStyle(.secondary)
-                                                    .fixedSize(horizontal: false, vertical: true)
-                                                if let observation = model.latestFolderObservation(at: path) {
-                                                    HStack(spacing: 8) {
-                                                        Text("Logical \(format(observation.logicalBytes))")
-                                                        Text("Allocated estimate \(format(observation.allocatedBytes))")
-                                                        Text("Measured \(observation.finishedAt.formatted(date: .abbreviated, time: .shortened))")
-                                                        if observation.complete {
-                                                            Text("Complete")
-                                                                .foregroundStyle(.green)
-                                                            if let previous = model.previousCompleteObservation(for: observation),
-                                                               let delta = ObservationComparison.allocatedByteDelta(
-                                                                current: observation, previous: previous
-                                                               ) {
-                                                                Text("\(changeDescription(delta)) since \(previous.finishedAt.formatted(date: .abbreviated, time: .shortened))")
-                                                                    .foregroundStyle(delta >= 0 ? .orange : .green)
-                                                            } else {
-                                                                Text("First complete measurement")
-                                                                    .foregroundStyle(.secondary)
-                                                            }
-                                                        } else {
-                                                            Text(coverageSummary(
-                                                                inaccessible: observation.inaccessibleCount,
-                                                                excludedSymlinks: observation.excludedSymlinkCount,
-                                                                changed: observation.changedDuringScanCount,
-                                                                wasCancelled: model.scanWasCancelled(for: observation)
-                                                            ))
-                                                            .foregroundStyle(.orange)
-                                                        }
-                                                    }
-                                                    .font(.caption2)
-                                                    .foregroundStyle(.secondary)
-                                                } else {
-                                                    Text("Selected for association; no measurement saved yet")
-                                                        .font(.caption2)
-                                                        .foregroundStyle(.secondary)
-                                                }
-                                            }
-                                            Spacer(minLength: 4)
-                                            Button {
-                                                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
-                                            } label: {
-                                                Image(systemName: "arrow.up.right.square")
-                                            }
-                                            .buttonStyle(.borderless)
-                                            .help("Reveal associated folder in Finder")
-                                            .accessibilityLabel("Reveal \(folderName) in Finder")
-                                            Button {
-                                                model.removeRelatedFolder(path, from: bundle.path)
-                                            } label: {
-                                                Image(systemName: "link.badge.minus")
-                                            }
-                                            .buttonStyle(.borderless)
-                                            .help("Remove Disker's association; files and scan history remain")
-                                            .accessibilityLabel("Remove association for \(folderName)")
-                                        }
-                                        .padding(.vertical, 4)
-                                        Divider()
+                                        applicationAssociationRow(path: path, bundle: bundle)
                                     }
                                 }
                                 .padding(12)
@@ -921,7 +849,7 @@ struct DashboardView: View {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Label("Folder-size scans read metadata only. Duplicate verification reads selected candidate contents after confirmation.", systemImage: "hand.raised")
-                        Label("For a selected app bundle, Disker reads its declared bundle ID to label exact container-path matches; this does not verify its signature.", systemImage: "app.badge.checkmark")
+                        Label("For a selected app bundle, Disker reads its declared bundle ID and embedded App Groups claim to label exact container-path matches. Claims are not signature-validated; group data is shared.", systemImage: "app.badge.checkmark")
                         Label("Scan locations are chosen by you. Saved permissions are read-only and scans stay manual.", systemImage: "folder.badge.plus")
                         Label("No cleanup or deletion actions are available.", systemImage: "lock.shield")
                         Label("History stays in this Mac's Application Support folder.", systemImage: "internaldrive")
@@ -1157,6 +1085,95 @@ struct DashboardView: View {
                     .disabled(model.isVerifyingDuplicates)
             }
         }
+    }
+
+    private func applicationAssociationRow(path: String, bundle: FolderObservation) -> some View {
+        let folderName = URL(fileURLWithPath: path).lastPathComponent
+        let attribution = ApplicationPathAttribution.classify(
+            bundleIdentifier: bundle.applicationBundleIdentifier,
+            associatedFolderPath: path,
+            homeDirectoryPath: NSHomeDirectory(),
+            claimedGroupIdentifiers: bundle.applicationGroupIdentifiers
+        )
+        let attributionSymbol: String
+        switch attribution.evidence {
+        case .declaredSharedGroupContainerClaim:
+            attributionSymbol = "person.2.badge.gearshape"
+        case .probableContainerPathMatch:
+            attributionSymbol = "folder.badge.questionmark"
+        case .userSelectedOnly:
+            attributionSymbol = "person.crop.circle.badge.questionmark"
+        }
+
+        return HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(path)
+                    .font(.caption)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Label(attribution.title, systemImage: attributionSymbol)
+                    .font(.caption2)
+                    .foregroundStyle(attribution.evidence == .userSelectedOnly ? Color.secondary : Color.blue)
+                Text(attribution.explanation)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let observation = model.latestFolderObservation(at: path) {
+                    HStack(spacing: 8) {
+                        Text("Logical \(format(observation.logicalBytes))")
+                        Text("Allocated estimate \(format(observation.allocatedBytes))")
+                        Text("Measured \(observation.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                        if observation.complete {
+                            Text("Complete")
+                                .foregroundStyle(.green)
+                            if let previous = model.previousCompleteObservation(for: observation),
+                               let delta = ObservationComparison.allocatedByteDelta(
+                                current: observation, previous: previous
+                               ) {
+                                Text("\(changeDescription(delta)) since \(previous.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                                    .foregroundStyle(delta >= 0 ? .orange : .green)
+                            } else {
+                                Text("First complete measurement")
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Text(coverageSummary(
+                                inaccessible: observation.inaccessibleCount,
+                                excludedSymlinks: observation.excludedSymlinkCount,
+                                changed: observation.changedDuringScanCount,
+                                wasCancelled: model.scanWasCancelled(for: observation)
+                            ))
+                            .foregroundStyle(.orange)
+                        }
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                } else {
+                    Text("Selected for association; no measurement saved yet")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 4)
+            Button {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+            } label: {
+                Image(systemName: "arrow.up.right.square")
+            }
+            .buttonStyle(.borderless)
+            .help("Reveal associated folder in Finder")
+            .accessibilityLabel("Reveal \(folderName) in Finder")
+            Button {
+                model.removeRelatedFolder(path, from: bundle.path)
+            } label: {
+                Image(systemName: "link.badge.minus")
+            }
+            .buttonStyle(.borderless)
+            .help("Remove Disker's association; files and scan history remain")
+            .accessibilityLabel("Remove association for \(folderName)")
+        }
+        .padding(.vertical, 4)
+        .background(alignment: .bottom) { Divider() }
     }
 
     private func chooseDuplicateFolders() {

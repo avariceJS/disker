@@ -153,9 +153,16 @@ private struct DiskerCoreChecks {
         let enriched = ScanObservation(
             startedAt: Date(timeIntervalSince1970: 3),
             folders: [firstBundle, notBundle], cancelled: false
-        ).includingApplicationBundleIdentifiers([firstBundle.path: "com.example.App"])
+        ).includingApplicationBundleIdentities([
+            firstBundle.path: ApplicationBundleIdentity(
+                bundleIdentifier: "com.example.App",
+                claimedGroupIdentifiers: ["TEAMID.group.example.shared"]
+            )
+        ])
         try expect(enriched.folders[0].applicationBundleIdentifier == "com.example.App",
                    "explicit bundle identity should be attached to the matching selected root")
+        try expect(enriched.folders[0].applicationGroupIdentifiers == ["TEAMID.group.example.shared"],
+                   "embedded group claims should persist with that selected app root")
         try expect(enriched.folders[1].applicationBundleIdentifier == nil,
                    "bundle identity must not leak to other selected roots")
         let history = LocalHistory(observations: [
@@ -197,6 +204,21 @@ private struct DiskerCoreChecks {
         try expect(descendant.evidence == .probableContainerPathMatch,
                    "a selected descendant inside the exact app container should retain the path evidence")
 
+        let groupIdentifier = "TEAMID.group.shared"
+        let groupContainer = "\(home)/Library/Group Containers/\(groupIdentifier)"
+        let sharedGroup = ApplicationPathAttribution.classify(
+            bundleIdentifier: identifier,
+            associatedFolderPath: groupContainer + "/Documents",
+            homeDirectoryPath: home,
+            claimedGroupIdentifiers: [groupIdentifier]
+        )
+        try expect(sharedGroup.evidence == .declaredSharedGroupContainerClaim
+                   && sharedGroup.groupIdentifier == groupIdentifier,
+                   "an exact embedded App Groups claim should identify a shared group-container path")
+        try expect(sharedGroup.explanation.contains("shared with other group members")
+                   && sharedGroup.explanation.contains("not validated"),
+                   "shared-container attribution must disclose shared use and unvalidated signature")
+
         for path in [
             "\(home)/Library/Containers/\(identifier)-other",
             "\(home)/Library/Group Containers/\(identifier)",
@@ -226,6 +248,19 @@ private struct DiskerCoreChecks {
                    && invalidID.evidence == .userSelectedOnly
                    && traversalID.evidence == .userSelectedOnly,
                    "missing or path-like bundle identifiers must not be treated as attribution evidence")
+        let unclaimedGroup = ApplicationPathAttribution.classify(
+            bundleIdentifier: identifier, associatedFolderPath: groupContainer,
+            homeDirectoryPath: home
+        )
+        let nearbyGroup = ApplicationPathAttribution.classify(
+            bundleIdentifier: identifier,
+            associatedFolderPath: groupContainer + "-other",
+            homeDirectoryPath: home,
+            claimedGroupIdentifiers: [groupIdentifier]
+        )
+        try expect(unclaimedGroup.evidence == .userSelectedOnly
+                   && nearbyGroup.evidence == .userSelectedOnly,
+                   "unclaimed and near-miss App Group paths must remain user-selected only")
     }
 
     private static func testApplicationBundleMetadata() throws {
@@ -242,16 +277,55 @@ private struct DiskerCoreChecks {
             )
             try plist.write(to: contents.appendingPathComponent("Info.plist"))
 
-            try expect(
-                ApplicationBundleMetadata.identifier(fromSelectedBundleAt: bundle)
-                    == "com.synthetic.DiskerFixture",
-                "an explicitly selected app bundle should expose only its declared identifier"
+            let unsignedIdentity = try requireApplicationIdentity(at: bundle)
+            try expect(unsignedIdentity.bundleIdentifier == "com.synthetic.DiskerFixture",
+                       "an explicitly selected app bundle should expose its declared identifier")
+            try expect(unsignedIdentity.claimedGroupIdentifiers.isEmpty,
+                       "an unsigned selected app must not receive invented App Groups claims")
+
+            let executableDirectory = contents.appendingPathComponent("MacOS", isDirectory: true)
+            try FileManager.default.createDirectory(at: executableDirectory, withIntermediateDirectories: false)
+            try FileManager.default.copyItem(
+                at: URL(fileURLWithPath: "/usr/bin/true"),
+                to: executableDirectory.appendingPathComponent("Synthetic")
             )
+            let entitlementsURL = root.appendingPathComponent("synthetic.entitlements")
+            let entitlements: [String: Any] = [
+                "com.apple.security.application-groups": [
+                    "TEAMID.group.synthetic.shared", "TEAMID.group.synthetic.shared", "bad/group"
+                ]
+            ]
+            let entitlementData = try PropertyListSerialization.data(
+                fromPropertyList: entitlements, format: .xml, options: 0
+            )
+            try entitlementData.write(to: entitlementsURL)
+            let signer = Process()
+            signer.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+            signer.arguments = [
+                "--force", "--sign", "-", "--entitlements", entitlementsURL.path, bundle.path
+            ]
+            signer.standardOutput = Pipe()
+            signer.standardError = Pipe()
+            try signer.run()
+            signer.waitUntilExit()
+            try expect(signer.terminationStatus == 0,
+                       "the synthetic app should accept an ad-hoc fixture signature")
+            let signedIdentity = try requireApplicationIdentity(at: bundle)
+            try expect(signedIdentity.claimedGroupIdentifiers == ["TEAMID.group.synthetic.shared"],
+                       "only unique, path-safe App Groups claims should be read from the embedded signature")
+
             let ordinaryFolder = root.appendingPathComponent("ordinary-folder", isDirectory: true)
             try FileManager.default.createDirectory(at: ordinaryFolder, withIntermediateDirectories: false)
-            try expect(ApplicationBundleMetadata.identifier(fromSelectedBundleAt: ordinaryFolder) == nil,
+            try expect(ApplicationBundleMetadata.identity(fromSelectedBundleAt: ordinaryFolder) == nil,
                        "bundle identity lookup must not inspect non-app folders")
         }
+    }
+
+    private static func requireApplicationIdentity(at url: URL) throws -> ApplicationBundleIdentity {
+        guard let identity = ApplicationBundleMetadata.identity(fromSelectedBundleAt: url) else {
+            throw CheckFailure.assertion("selected synthetic .app bundle should provide its Info.plist identity")
+        }
+        return identity
     }
 
     private static func testApplicationFolderAssociations() throws {
@@ -690,6 +764,8 @@ private struct DiskerCoreChecks {
         try expect(folder.gitMetadataUsage == nil, "old folder history should default retained Git metrics to absent")
         try expect(folder.applicationBundleIdentifier == nil,
                    "legacy folder observations should remain without an inferred bundle identifier")
+        try expect(folder.applicationGroupIdentifiers.isEmpty,
+                   "legacy folder observations should not gain inferred App Groups claims")
         try expect(history.ramObservations.isEmpty, "old folder history should default manual RAM history to empty")
         try expect(history.capacityObservations.isEmpty, "old history should default capacity observations to empty")
         try expect(history.applicationAssociations.count == 1,
