@@ -52,6 +52,7 @@ private struct DiskerCoreChecks {
             ("history reset is limited to its own file", testHistoryClearIsScoped),
             ("corrupt history fails closed and can be reset", testCorruptHistoryIsLeftUntouched),
             ("same-path complete history comparison", testSamePathCompleteHistoryComparison),
+            ("selected-folder growth highlights", testFolderGrowthHighlights),
             ("same-root complete directory growth comparison", testDirectoryGrowthComparison),
             ("scan progress callback", testScanProgressCallback),
             ("directory mutations make coverage partial", testDirectoryMutationCoverage),
@@ -990,6 +991,44 @@ private struct DiskerCoreChecks {
         try expect(ObservationComparison.previousCompleteFolder(for: laterIncomplete, in: history) == nil, "incomplete current observations must not produce a growth comparison")
         try expect(ObservationComparison.completeFolderSeries(for: laterIncomplete, in: history).isEmpty,
                    "an incomplete current observation must not be plotted as a complete growth series")
+    }
+
+    private static func testFolderGrowthHighlights() throws {
+        let history = LocalHistory(observations: [
+            ScanObservation(startedAt: .now, folders: [
+                syntheticFolder(path: "/selected/growing", bytes: 100, complete: true),
+                syntheticFolder(path: "/selected/largest-growth", bytes: 200, complete: true),
+                syntheticFolder(path: "/selected/shrinking", bytes: 300, complete: true),
+                syntheticFolder(path: "/selected/partial", bytes: 100, complete: true),
+            ], cancelled: false),
+            ScanObservation(startedAt: .now, folders: [
+                syntheticFolder(path: "/selected/growing", bytes: 240, complete: true),
+                syntheticFolder(path: "/selected/largest-growth", bytes: 500, complete: true),
+                syntheticFolder(path: "/selected/shrinking", bytes: 250, complete: true),
+                syntheticFolder(path: "/selected/partial", bytes: 900, complete: false),
+            ], cancelled: true),
+        ])
+
+        let signals = ObservationComparison.growingFolders(in: history)
+        try expect(signals.map(\.folder.path) == ["/selected/largest-growth", "/selected/growing"],
+                   "growth highlights should rank positive complete same-path changes and omit shrinking roots")
+        try expect(signals.map(\.growthBytes) == [300, 140],
+                   "growth highlights should report allocated-byte deltas against prior complete scans")
+        try expect(signals.allSatisfy { $0.folder.complete && $0.previous.complete },
+                   "growth highlights must never use a partial observation")
+        try expect(ObservationComparison.growingFolders(in: history, limit: 1).map(\.folder.path)
+                   == ["/selected/largest-growth"],
+                   "growth highlights should respect the requested result limit")
+        try expect(ObservationComparison.growingFolders(in: history, limit: 0).isEmpty,
+                   "growth highlights should allow an empty result limit")
+
+        let laterPartial = syntheticFolder(path: "/selected/growing", bytes: 1_000, complete: false)
+        let partialLatest = LocalHistory(observations: history.observations + [
+            ScanObservation(startedAt: .now, folders: [laterPartial], cancelled: true)
+        ])
+        try expect(!ObservationComparison.growingFolders(in: partialLatest).contains {
+            $0.folder.path == "/selected/growing"
+        }, "a newer partial result should suppress stale growth for that selected path")
     }
 
     private static func testDirectoryGrowthComparison() throws {

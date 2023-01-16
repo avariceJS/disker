@@ -387,6 +387,7 @@ struct DashboardView: View {
                 header("Storage overview", subtitle: "A measured view of your Mac's storage, with clear limits.")
                 capacityCard
                 scanCard
+                folderGrowthCard
                 if let latest = model.latestScan, !latest.folders.isEmpty {
                     folderList(latest.folders, title: "Largest selected folders", scanCancelled: latest.cancelled)
                 } else {
@@ -569,6 +570,43 @@ struct DashboardView: View {
         }
         .frame(maxWidth: .infinity, minHeight: 190)
         .background(.background, in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var folderGrowthCard: some View {
+        let signals = ObservationComparison.growingFolders(in: model.history)
+        return Group {
+            if !signals.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Growing selected folders", systemImage: "chart.line.uptrend.xyaxis")
+                        .font(.headline)
+                    Text("Largest positive allocated-byte changes between complete scans of the same selected path.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ForEach(signals) { signal in
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(signal.folder.path)
+                                    .font(.caption)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .textSelection(.enabled)
+                                Text("Since previous complete scan · \(signal.previous.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 4)
+                            Text(formattedDelta(signal.growthBytes))
+                                .font(.subheadline.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(.orange)
+                        }
+                        if signal.id != signals.last?.id { Divider() }
+                    }
+                }
+                .padding(18)
+                .background(.background, in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
+            }
+        }
     }
 
     private var methodologyNote: some View {

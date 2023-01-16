@@ -1,6 +1,13 @@
 import Foundation
 
 public enum ObservationComparison {
+    public struct FolderGrowthSignal: Equatable, Identifiable, Sendable {
+        public var id: String { folder.path }
+        public let folder: FolderObservation
+        public let previous: FolderObservation
+        public let growthBytes: Int64
+    }
+
     public struct ProcessGrowthSignal: Equatable, Identifiable, Sendable {
         public var id: Int32 { processID }
         public let processID: Int32
@@ -134,6 +141,35 @@ public enum ObservationComparison {
                 })
             }
             .first
+    }
+
+    /// Positive allocated-byte changes for the latest complete observation of
+    /// each exact selected path. A later partial observation suppresses a stale
+    /// signal for that path until another complete scan is recorded.
+    public static func growingFolders(
+        in history: LocalHistory, limit: Int = 3
+    ) -> [FolderGrowthSignal] {
+        guard limit > 0 else { return [] }
+        var latestByPath: [String: FolderObservation] = [:]
+        for observation in history.observations {
+            for folder in observation.folders {
+                latestByPath[folder.path] = folder
+            }
+        }
+
+        return latestByPath.values.compactMap { current -> FolderGrowthSignal? in
+            guard current.complete,
+                  let previous = previousCompleteFolder(for: current, in: history),
+                  let delta = allocatedByteDelta(current: current, previous: previous),
+                  delta > 0 else { return nil }
+            return FolderGrowthSignal(folder: current, previous: previous, growthBytes: delta)
+        }
+        .sorted {
+            if $0.growthBytes != $1.growthBytes { return $0.growthBytes > $1.growthBytes }
+            return $0.folder.path < $1.folder.path
+        }
+        .prefix(limit)
+        .map { $0 }
     }
 
     public static func allocatedByteDelta(
