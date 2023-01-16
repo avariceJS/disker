@@ -14,6 +14,10 @@ public struct ApplicationBundleIdentity: Equatable, Sendable {
 }
 
 public enum ApplicationBundleMetadata {
+    private static let maximumEmbeddedGroupEntries = 256
+    private static let maximumPersistedGroupIdentifiers = 64
+    private static let maximumGroupIdentifierLength = 255
+
     /// Reads the declared bundle ID and embedded App Groups claim only from the
     /// app the user selected. This is separate from file-tree size scanning.
     public static func identity(fromSelectedBundleAt url: URL) -> ApplicationBundleIdentity? {
@@ -46,8 +50,18 @@ public enum ApplicationBundleMetadata {
     }
 
     private static func validGroupIdentifiers(_ value: Any?) -> [String] {
-        guard let identifiers = value as? [String] else { return [] }
-        return Array(Set(identifiers.filter(isValidIdentifier))).sorted()
+        guard let identifiers = value as? [String],
+              identifiers.count <= maximumEmbeddedGroupEntries else { return [] }
+
+        var uniqueIdentifiers = Set<String>()
+        for identifier in identifiers where identifier.utf8.count <= maximumGroupIdentifierLength
+            && isValidIdentifier(identifier) {
+            uniqueIdentifiers.insert(identifier)
+            if uniqueIdentifiers.count > maximumPersistedGroupIdentifiers {
+                return []
+            }
+        }
+        return uniqueIdentifiers.sorted()
     }
 
     private static func isValidIdentifier(_ value: String) -> Bool {

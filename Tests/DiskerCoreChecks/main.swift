@@ -206,6 +206,14 @@ private struct DiskerCoreChecks {
 
         let groupIdentifier = "TEAMID.group.shared"
         let groupContainer = "\(home)/Library/Group Containers/\(groupIdentifier)"
+        let exactSharedGroup = ApplicationPathAttribution.classify(
+            bundleIdentifier: identifier,
+            associatedFolderPath: groupContainer,
+            homeDirectoryPath: home,
+            claimedGroupIdentifiers: [groupIdentifier]
+        )
+        try expect(exactSharedGroup.evidence == .declaredSharedGroupContainerClaim,
+                   "the exact path of an embedded App Group should receive the shared-container label")
         let sharedGroup = ApplicationPathAttribution.classify(
             bundleIdentifier: identifier,
             associatedFolderPath: groupContainer + "/Documents",
@@ -313,6 +321,30 @@ private struct DiskerCoreChecks {
             let signedIdentity = try requireApplicationIdentity(at: bundle)
             try expect(signedIdentity.claimedGroupIdentifiers == ["TEAMID.group.synthetic.shared"],
                        "only unique, path-safe App Groups claims should be read from the embedded signature")
+
+            let oversizedClaims: [String: Any] = [
+                "com.apple.security.application-groups": (0..<65).map {
+                    "TEAMID.group.synthetic.\($0)"
+                }
+            ]
+            let oversizedData = try PropertyListSerialization.data(
+                fromPropertyList: oversizedClaims, format: .xml, options: 0
+            )
+            try oversizedData.write(to: entitlementsURL)
+            let oversizedSigner = Process()
+            oversizedSigner.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+            oversizedSigner.arguments = [
+                "--force", "--sign", "-", "--entitlements", entitlementsURL.path, bundle.path
+            ]
+            oversizedSigner.standardOutput = Pipe()
+            oversizedSigner.standardError = Pipe()
+            try oversizedSigner.run()
+            oversizedSigner.waitUntilExit()
+            try expect(oversizedSigner.terminationStatus == 0,
+                       "the synthetic app should accept an oversized entitlement fixture")
+            let oversizedIdentity = try requireApplicationIdentity(at: bundle)
+            try expect(oversizedIdentity.claimedGroupIdentifiers.isEmpty,
+                       "oversized App Groups claims should be ignored instead of persisted without a bound")
 
             let ordinaryFolder = root.appendingPathComponent("ordinary-folder", isDirectory: true)
             try FileManager.default.createDirectory(at: ordinaryFolder, withIntermediateDirectories: false)
