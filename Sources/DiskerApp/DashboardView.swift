@@ -55,6 +55,13 @@ final class DashboardModel {
         history.applicationAssociations.first(where: { $0.bundlePath == bundlePath })?.relatedFolderPaths ?? []
     }
 
+    func applicationBundleIdentifier(for bundlePath: String) -> String? {
+        history.observations.reversed().lazy
+            .flatMap(\.folders)
+            .first(where: { $0.path == bundlePath })?
+            .applicationBundleIdentifier
+    }
+
     func latestFolderObservation(at path: String) -> FolderObservation? {
         history.observations.reversed().lazy
             .flatMap(\.folders)
@@ -114,7 +121,7 @@ final class DashboardModel {
         let panel = NSOpenPanel()
         panel.title = "Choose an application bundle to measure"
         panel.prompt = "Measure Bundle"
-        panel.message = "Disker measures only the selected .app bundle. Support data, caches, and shared files are not included."
+        panel.message = "Disker measures only the selected .app bundle and reads its declared bundle identifier from Info.plist to label possible container-path matches. Support data, caches, and shared files are not included."
         panel.directoryURL = directory
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -123,7 +130,11 @@ final class DashboardModel {
         panel.allowedContentTypes = [.applicationBundle]
         guard panel.runModal() == .OK else { return }
         rememberFolders(panel.urls)
-        scan(panel.urls)
+        let identifiers = Dictionary(uniqueKeysWithValues: panel.urls.compactMap { url in
+            ApplicationBundleMetadata.identifier(fromSelectedBundleAt: url)
+                .map { (url.path, $0) }
+        })
+        scan(panel.urls, applicationBundleIdentifiers: identifiers)
     }
 
     func chooseRelatedFolders(for bundlePath: String) {
@@ -131,7 +142,7 @@ final class DashboardModel {
         let panel = NSOpenPanel()
         panel.title = "Choose folders associated with this app"
         panel.prompt = "Associate and Scan"
-        panel.message = "Choose up to 50 folders you want to group with this app. Disker records your association but does not verify ownership or shared use. Measurements stay separate."
+        panel.message = "Choose up to 50 folders to associate. An exact ~/Library/Containers/<bundle-id> path may be labeled probable from the selected app's declared bundle identifier; signing identity and shared use are not verified. Other associations remain unverified and measurements stay separate."
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
@@ -139,7 +150,8 @@ final class DashboardModel {
         guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
         do {
             history = try ObservationStore.associateApplicationFolders(
-                panel.urls.map(\.path), with: bundlePath
+                panel.urls.map(\.path), with: bundlePath,
+                bundleIdentifier: applicationBundleIdentifier(for: bundlePath)
             )
             rememberFolders(panel.urls)
             scan(panel.urls)
@@ -188,7 +200,7 @@ final class DashboardModel {
         }
     }
 
-    func scan(_ urls: [URL]) {
+    func scan(_ urls: [URL], applicationBundleIdentifiers: [String: String] = [:]) {
         guard !urls.isEmpty, !isScanning else { return }
         isScanning = true
         currentPath = ""
@@ -199,7 +211,7 @@ final class DashboardModel {
                     self?.currentPath = progress.currentPath
                     self?.visitedFiles = progress.visitedFiles
                 }
-            })
+            }).includingApplicationBundleIdentifiers(applicationBundleIdentifiers)
         }
         self.scanTask = scanTask
         Task {
@@ -671,18 +683,36 @@ struct DashboardView: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Label("Folders you associated", systemImage: "link")
                                         .font(.subheadline.weight(.semibold))
-                                    Text("These are your selected relationships; Disker does not verify ownership or shared use. Sizes are shown separately and are not added into an app total.")
+                                    Text("Disker never sums these folders into an app total or claims exclusive ownership. Only an exact user Containers path may receive a probable bundle-ID match; signing identity and shared use remain unverified.")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                         .fixedSize(horizontal: false, vertical: true)
                                     ForEach(relatedPaths, id: \.self) { path in
                                         let folderName = URL(fileURLWithPath: path).lastPathComponent
+                                        let attribution = ApplicationPathAttribution.classify(
+                                            bundleIdentifier: bundle.applicationBundleIdentifier,
+                                            associatedFolderPath: path,
+                                            homeDirectoryPath: NSHomeDirectory()
+                                        )
                                         HStack(spacing: 8) {
                                             VStack(alignment: .leading, spacing: 3) {
                                                 Text(path)
                                                     .font(.caption)
                                                     .lineLimit(1)
                                                     .truncationMode(.middle)
+                                                Label(
+                                                    attribution.title,
+                                                    systemImage: attribution.evidence == .probableContainerPathMatch
+                                                        ? "folder.badge.questionmark" : "person.crop.circle.badge.questionmark"
+                                                )
+                                                .font(.caption2)
+                                                .foregroundStyle(
+                                                    attribution.evidence == .probableContainerPathMatch ? .blue : .secondary
+                                                )
+                                                Text(attribution.explanation)
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.secondary)
+                                                    .fixedSize(horizontal: false, vertical: true)
                                                 if let observation = model.latestFolderObservation(at: path) {
                                                     HStack(spacing: 8) {
                                                         Text("Logical \(format(observation.logicalBytes))")
@@ -891,6 +921,7 @@ struct DashboardView: View {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Label("Folder-size scans read metadata only. Duplicate verification reads selected candidate contents after confirmation.", systemImage: "hand.raised")
+                        Label("For a selected app bundle, Disker reads its declared bundle ID to label exact container-path matches; this does not verify its signature.", systemImage: "app.badge.checkmark")
                         Label("Scan locations are chosen by you. Saved permissions are read-only and scans stay manual.", systemImage: "folder.badge.plus")
                         Label("No cleanup or deletion actions are available.", systemImage: "lock.shield")
                         Label("History stays in this Mac's Application Support folder.", systemImage: "internaldrive")

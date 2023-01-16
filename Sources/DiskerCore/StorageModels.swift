@@ -81,6 +81,9 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     public let complete: Bool
     public let subdirectorySummaries: [DirectoryUsage]
     public let subdirectorySummariesTruncated: Bool
+    /// Identifier read from the Info.plist of an explicitly selected app bundle.
+    /// It is metadata evidence, not proof of signing identity or ownership.
+    public let applicationBundleIdentifier: String?
 
     public init(
         id: UUID = UUID(), path: String, displayName: String,
@@ -91,7 +94,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         gitMetadataEntryDetected: Bool = false,
         gitMetadataUsage: DirectoryUsage? = nil,
         subdirectorySummaries: [DirectoryUsage] = [],
-        subdirectorySummariesTruncated: Bool = false
+        subdirectorySummariesTruncated: Bool = false,
+        applicationBundleIdentifier: String? = nil
     ) {
         self.id = id
         self.path = path
@@ -108,6 +112,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         self.complete = complete
         self.subdirectorySummaries = subdirectorySummaries
         self.subdirectorySummariesTruncated = subdirectorySummariesTruncated
+        self.applicationBundleIdentifier = applicationBundleIdentifier
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -115,6 +120,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         case inaccessibleCount, excludedSymlinkCount, changedDuringScanCount, gitMetadataEntryDetected
         case finishedAt, complete
         case subdirectorySummaries, subdirectorySummariesTruncated, gitMetadataUsage
+        case applicationBundleIdentifier
     }
 
     public init(from decoder: Decoder) throws {
@@ -134,6 +140,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         complete = try values.decode(Bool.self, forKey: .complete)
         subdirectorySummaries = try values.decodeIfPresent([DirectoryUsage].self, forKey: .subdirectorySummaries) ?? []
         subdirectorySummariesTruncated = try values.decodeIfPresent(Bool.self, forKey: .subdirectorySummariesTruncated) ?? false
+        applicationBundleIdentifier = try values.decodeIfPresent(String.self, forKey: .applicationBundleIdentifier)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -153,6 +160,23 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         try values.encode(complete, forKey: .complete)
         try values.encode(subdirectorySummaries, forKey: .subdirectorySummaries)
         try values.encode(subdirectorySummariesTruncated, forKey: .subdirectorySummariesTruncated)
+        try values.encodeIfPresent(applicationBundleIdentifier, forKey: .applicationBundleIdentifier)
+    }
+
+    public func includingApplicationBundleIdentifier(_ identifier: String) -> FolderObservation {
+        FolderObservation(
+            id: id, path: path, displayName: displayName,
+            logicalBytes: logicalBytes, allocatedBytes: allocatedBytes,
+            fileCount: fileCount, inaccessibleCount: inaccessibleCount,
+            finishedAt: finishedAt, complete: complete,
+            excludedSymlinkCount: excludedSymlinkCount,
+            changedDuringScanCount: changedDuringScanCount,
+            gitMetadataEntryDetected: gitMetadataEntryDetected,
+            gitMetadataUsage: gitMetadataUsage,
+            subdirectorySummaries: subdirectorySummaries,
+            subdirectorySummariesTruncated: subdirectorySummariesTruncated,
+            applicationBundleIdentifier: identifier
+        )
     }
 }
 
@@ -224,6 +248,18 @@ public struct ScanObservation: Codable, Equatable, Identifiable, Sendable {
         self.finishedAt = finishedAt
         self.folders = folders
         self.cancelled = cancelled
+    }
+
+    public func includingApplicationBundleIdentifiers(_ identifiersByPath: [String: String]) -> ScanObservation {
+        guard !identifiersByPath.isEmpty else { return self }
+        let identifiedFolders = folders.map { folder in
+            guard let identifier = identifiersByPath[folder.path] else { return folder }
+            return folder.includingApplicationBundleIdentifier(identifier)
+        }
+        return ScanObservation(
+            id: id, startedAt: startedAt, finishedAt: finishedAt,
+            folders: identifiedFolders, cancelled: cancelled
+        )
     }
 }
 

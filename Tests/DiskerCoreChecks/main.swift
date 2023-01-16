@@ -25,6 +25,8 @@ private struct DiskerCoreChecks {
             ("capacity clamping", testCapacityClamping),
             ("comparable capacity history", testCapacityHistoryComparison),
             ("explicit application bundle history index", testApplicationBundleIndex),
+            ("explicitly selected app bundle identity read", testApplicationBundleMetadata),
+            ("evidence-scoped application container attribution", testApplicationPathAttribution),
             ("explicit app-folder associations", testApplicationFolderAssociations),
             ("bounded read-only selected-scope bookmarks", testSelectedScopeBookmarks),
             ("zero important-usage fallback", testImportantUsageFallback),
@@ -133,17 +135,29 @@ private struct DiskerCoreChecks {
     }
 
     private static func testApplicationBundleIndex() throws {
-        func folder(_ path: String, _ bytes: Int64, _ complete: Bool = true) -> FolderObservation {
+        func folder(
+            _ path: String, _ bytes: Int64, _ complete: Bool = true,
+            bundleIdentifier: String? = nil
+        ) -> FolderObservation {
             FolderObservation(
                 path: path, displayName: URL(fileURLWithPath: path).lastPathComponent,
                 logicalBytes: bytes, allocatedBytes: bytes, fileCount: 1,
-                inaccessibleCount: 0, complete: complete
+                inaccessibleCount: 0, complete: complete,
+                applicationBundleIdentifier: bundleIdentifier
             )
         }
-        let firstBundle = folder("/Applications/Example.app", 900)
-        let laterBundle = folder("/Applications/Example.app", 500, false)
+        let firstBundle = folder("/Applications/Example.app", 900, true, bundleIdentifier: "com.example.App")
+        let laterBundle = folder("/Applications/Example.app", 500, false, bundleIdentifier: "com.example.App")
         let otherBundle = folder("/Applications/Other.app", 700)
         let notBundle = folder("/Projects/Example.app-cache", 10)
+        let enriched = ScanObservation(
+            startedAt: Date(timeIntervalSince1970: 3),
+            folders: [firstBundle, notBundle], cancelled: false
+        ).includingApplicationBundleIdentifiers([firstBundle.path: "com.example.App"])
+        try expect(enriched.folders[0].applicationBundleIdentifier == "com.example.App",
+                   "explicit bundle identity should be attached to the matching selected root")
+        try expect(enriched.folders[1].applicationBundleIdentifier == nil,
+                   "bundle identity must not leak to other selected roots")
         let history = LocalHistory(observations: [
             ScanObservation(startedAt: Date(timeIntervalSince1970: 1), folders: [firstBundle, notBundle], cancelled: false),
             ScanObservation(startedAt: Date(timeIntervalSince1970: 2), folders: [laterBundle, otherBundle], cancelled: false)
@@ -154,6 +168,90 @@ private struct DiskerCoreChecks {
                    "latest bundle measurements should be sorted by allocated estimate")
         try expect(indexed.last?.complete == false && indexed.last?.allocatedBytes == 500,
                    "the latest partial observation should replace an older complete bundle measurement")
+        try expect(indexed.last?.applicationBundleIdentifier == "com.example.App",
+                   "the selected app identifier should travel with its measured bundle history")
+        let encodedBundle = try JSONEncoder().encode(laterBundle)
+        let decodedBundle = try JSONDecoder().decode(FolderObservation.self, from: encodedBundle)
+        try expect(decodedBundle.applicationBundleIdentifier == "com.example.App",
+                   "bundle identifiers should persist with application observations")
+    }
+
+    private static func testApplicationPathAttribution() throws {
+        let home = "/Users/synthetic"
+        let identifier = "com.example.Sample"
+        let container = "\(home)/Library/Containers/\(identifier)"
+        let exact = ApplicationPathAttribution.classify(
+            bundleIdentifier: identifier, associatedFolderPath: container,
+            homeDirectoryPath: home
+        )
+        try expect(exact.evidence == .probableContainerPathMatch,
+                   "the exact macOS app-container path should receive a probable identifier match")
+        try expect(exact.explanation.contains("signing identity") && exact.explanation.contains("exclusive use"),
+                   "container attribution must disclose unchecked signing identity and exclusivity")
+
+        let descendant = ApplicationPathAttribution.classify(
+            bundleIdentifier: identifier,
+            associatedFolderPath: container + "/Data/Library/Application Support",
+            homeDirectoryPath: home
+        )
+        try expect(descendant.evidence == .probableContainerPathMatch,
+                   "a selected descendant inside the exact app container should retain the path evidence")
+
+        for path in [
+            "\(home)/Library/Containers/\(identifier)-other",
+            "\(home)/Library/Group Containers/\(identifier)",
+            "/Volumes/Other/Library/Containers/\(identifier)",
+        ] {
+            let result = ApplicationPathAttribution.classify(
+                bundleIdentifier: identifier, associatedFolderPath: path,
+                homeDirectoryPath: home
+            )
+            try expect(result.evidence == .userSelectedOnly,
+                       "nearby, group-container, or out-of-home paths must not inherit app-container evidence")
+        }
+
+        let missingID = ApplicationPathAttribution.classify(
+            bundleIdentifier: nil, associatedFolderPath: container,
+            homeDirectoryPath: home
+        )
+        let invalidID = ApplicationPathAttribution.classify(
+            bundleIdentifier: "com.example/Other", associatedFolderPath: container,
+            homeDirectoryPath: home
+        )
+        let traversalID = ApplicationPathAttribution.classify(
+            bundleIdentifier: "..", associatedFolderPath: "\(home)/Library",
+            homeDirectoryPath: home
+        )
+        try expect(missingID.evidence == .userSelectedOnly
+                   && invalidID.evidence == .userSelectedOnly
+                   && traversalID.evidence == .userSelectedOnly,
+                   "missing or path-like bundle identifiers must not be treated as attribution evidence")
+    }
+
+    private static func testApplicationBundleMetadata() throws {
+        try withTemporaryDirectory { root in
+            let bundle = root.appendingPathComponent("Synthetic.app", isDirectory: true)
+            let contents = bundle.appendingPathComponent("Contents", isDirectory: true)
+            try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+            let info: [String: Any] = [
+                "CFBundleIdentifier": "com.synthetic.DiskerFixture",
+                "CFBundlePackageType": "APPL",
+            ]
+            let plist = try PropertyListSerialization.data(
+                fromPropertyList: info, format: .xml, options: 0
+            )
+            try plist.write(to: contents.appendingPathComponent("Info.plist"))
+
+            try expect(
+                ApplicationBundleMetadata.identifier(fromSelectedBundleAt: bundle)
+                    == "com.synthetic.DiskerFixture",
+                "an explicitly selected app bundle should expose only its declared identifier"
+            )
+            let ordinaryFolder = root.appendingPathComponent("ordinary-folder", isDirectory: true)
+            try FileManager.default.createDirectory(at: ordinaryFolder, withIntermediateDirectories: false)
+            try expect(ApplicationBundleMetadata.identifier(fromSelectedBundleAt: ordinaryFolder) == nil,
+                       "bundle identity lookup must not inspect non-app folders")
+        }
     }
 
     private static func testApplicationFolderAssociations() throws {
@@ -167,13 +265,16 @@ private struct DiskerCoreChecks {
             let bundlePath = "/Applications/Example.app"
 
             try ObservationStore.associateApplicationFolders(
-                [folder.path, folder.path], with: bundlePath, to: fileURL
+                [folder.path, folder.path], with: bundlePath,
+                bundleIdentifier: "com.example.App", to: fileURL
             )
             try ObservationStore.associateApplicationFolders(
                 ["/synthetic/second-support"], with: bundlePath, to: fileURL
             )
             var history = try ObservationStore.load(from: fileURL)
             try expect(history.applicationAssociations.count == 1, "folder links should be grouped under the explicitly selected bundle path")
+            try expect(history.applicationAssociations[0].bundleIdentifier == "com.example.App",
+                       "an explicitly selected app identifier should persist with its folder relationships")
             try expect(history.applicationAssociations[0].relatedFolderPaths == [folder.path, "/synthetic/second-support"],
                        "associations should deduplicate exact paths and preserve selection order")
 
@@ -578,7 +679,7 @@ private struct DiskerCoreChecks {
     }
 
     private static func testOldHistoryDecoding() throws {
-        let json = #"{"observations":[{"id":"00000000-0000-0000-0000-000000000001","startedAt":1,"finishedAt":2,"cancelled":false,"folders":[{"id":"00000000-0000-0000-0000-000000000002","path":"/synthetic","displayName":"synthetic","logicalBytes":50,"allocatedBytes":40,"fileCount":1,"inaccessibleCount":0,"finishedAt":2,"complete":true,"subdirectorySummaries":[{"rootRelativePath":"child","logicalBytes":1,"allocatedBytes":1,"fileCount":1,"incompleteCount":0,"excludedSymlinkCount":0,"complete":true}]}]}]}"#
+        let json = #"{"observations":[{"id":"00000000-0000-0000-0000-000000000001","startedAt":1,"finishedAt":2,"cancelled":false,"folders":[{"id":"00000000-0000-0000-0000-000000000002","path":"/synthetic","displayName":"synthetic","logicalBytes":50,"allocatedBytes":40,"fileCount":1,"inaccessibleCount":0,"finishedAt":2,"complete":true,"subdirectorySummaries":[{"rootRelativePath":"child","logicalBytes":1,"allocatedBytes":1,"fileCount":1,"incompleteCount":0,"excludedSymlinkCount":0,"complete":true}]}]}],"applicationAssociations":[{"bundlePath":"/Applications/Legacy.app","relatedFolderPaths":["/Users/synthetic/Library/Containers/com.legacy.App"],"updatedAt":3}]}"#
         let history = try JSONDecoder().decode(LocalHistory.self, from: Data(json.utf8))
         guard let folder = history.observations.first?.folders.first else {
             throw CheckFailure.assertion("old history JSON should decode one folder")
@@ -587,9 +688,14 @@ private struct DiskerCoreChecks {
         try expect(folder.changedDuringScanCount == 0, "old folder history should default mutation count to zero")
         try expect(!folder.gitMetadataEntryDetected, "old folder history should default Git marker state to false")
         try expect(folder.gitMetadataUsage == nil, "old folder history should default retained Git metrics to absent")
+        try expect(folder.applicationBundleIdentifier == nil,
+                   "legacy folder observations should remain without an inferred bundle identifier")
         try expect(history.ramObservations.isEmpty, "old folder history should default manual RAM history to empty")
         try expect(history.capacityObservations.isEmpty, "old history should default capacity observations to empty")
-        try expect(history.applicationAssociations.isEmpty, "old history should default application associations to empty")
+        try expect(history.applicationAssociations.count == 1,
+                   "old history should preserve application associations when decoding the added optional bundle identifier")
+        try expect(history.applicationAssociations.first?.bundleIdentifier == nil,
+                   "legacy app-folder associations without an identifier must remain unverified")
         try expect(folder.subdirectorySummaries.count == 1, "old folder history should preserve existing directory summaries")
         try expect(folder.subdirectorySummaries[0].changedDuringScanCount == 0, "old directory summaries should default mutation count to zero")
         try expect(!folder.subdirectorySummaries[0].gitMetadataEntryDetected, "old directory summaries should default Git marker state to false")

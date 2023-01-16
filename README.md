@@ -35,9 +35,9 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 - Scans only folders or application bundles selected in the native open panel.
 - Provides native **Scan → Choose Folders to Scan…** (`⌘O`) and **Choose an Application Bundle…** (`⌘⇧O`) commands.
 - Remembers up to 20 selected scan locations as read-only security-scoped bookmarks in `~/Library/Application Support/Disker/selected-scopes.json`. Users can rescan them manually or remove each saved permission; Disker does not access them on launch or monitor them in the background.
-- Provides a separate **Applications** view for explicitly selected `.app` bundles; it measures the bundle only and lets the user manually associate up to 50 separately selected folders. The association is not independently verified, does not establish exclusive ownership, and measurements are never summed into an app total.
+- Provides a separate **Applications** view for explicitly selected `.app` bundles; it measures the bundle only and lets the user manually associate up to 50 separately selected folders. Disker reads the selected bundle's declared `CFBundleIdentifier` and labels only an exact path under `~/Library/Containers/<bundle-id>` as a probable container match. Signing identity, shared use, and exclusive ownership are not verified; folder sizes are never summed into an app total.
 - Compares repeated complete bundle scans and app-associated folder scans of the same selected path using allocated-byte estimates; incomplete results stay explicitly partial.
-- Folder-size scans read filesystem metadata only and do not open file contents.
+- Folder-size scans read filesystem metadata only and do not open file contents. The separate, explicit app-selection flow reads that selected bundle's `CFBundleIdentifier` from `Info.plist` for the container-path hint.
 - Does not follow symbolic links; deduplicates hard links within each selected folder.
 - Detects changed/replaced directories where possible and marks their coverage partial; a scan is still not an atomic snapshot.
 - Flags a direct `.git` metadata entry as a project marker and separately measures a real `.git` directory even when it falls outside the largest-folder ranking. A `.git` file remains a marker only; Disker does not read its contents or claim project ownership.
