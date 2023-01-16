@@ -4,7 +4,7 @@ Updated: 2026-10-19.
 
 ## Product state
 
-Disker is a native SwiftUI macOS storage utility. It reports system volume capacity separately from selected-folder logical bytes and allocated-byte estimates. Folder traversal is metadata-only, descriptor-relative, and does not follow symlinks; hard links are counted once per selected root. Inaccessible, changing, cancelled, or symlink-containing scans remain partial. Same-path growth uses only complete observations. History is local and bounded.
+Disker is a native SwiftUI macOS storage utility with native `⌘O` folder-scan and `⌘⇧O` app-bundle selection commands. It reports system volume capacity separately from selected-folder logical bytes and allocated-byte estimates. Folder traversal is metadata-only, descriptor-relative, and does not follow symlinks; hard links are counted once per selected root. Inaccessible, changing, cancelled, or symlink-containing scans remain partial. Same-path growth uses only complete observations. History is local and bounded.
 
 The app measures explicitly selected `.app` bundles. Users may associate separate folders with an app, but Disker labels those links unverified and never sums their sizes as app ownership. Associated folders now show change only against the previous complete measurement of that exact path. Exact-name development-storage hints are descriptive, not safety or ownership claims. Duplicate review is a separate content-reading action after confirmation; its dry-run plan requires an exact keeper and reports risk/reclaimable bytes as unknown. There is no deletion action.
 

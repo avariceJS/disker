@@ -15,6 +15,10 @@ struct DiskerApp: App {
                     NotificationCenter.default.post(name: .chooseFoldersToScan, object: nil)
                 }
                 .keyboardShortcut("o", modifiers: .command)
+                Button("Choose an Application Bundle…") {
+                    NotificationCenter.default.post(name: .chooseApplicationBundleToScan, object: nil)
+                }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
             }
         }
     }
@@ -22,4 +26,5 @@ struct DiskerApp: App {
 
 extension Notification.Name {
     static let chooseFoldersToScan = Notification.Name("Disker.chooseFoldersToScan")
+    static let chooseApplicationBundleToScan = Notification.Name("Disker.chooseApplicationBundleToScan")
 }

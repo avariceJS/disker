@@ -94,6 +94,7 @@ final class DashboardModel {
     }
 
     func chooseFolders(startingAt directory: URL? = nil) {
+        guard !isScanning else { return }
         let panel = NSOpenPanel()
         panel.title = "Choose folders to measure"
         panel.prompt = "Scan Folders"
@@ -109,6 +110,7 @@ final class DashboardModel {
     }
 
     func chooseApplicationBundle(startingAt directory: URL? = nil) {
+        guard !isScanning else { return }
         let panel = NSOpenPanel()
         panel.title = "Choose an application bundle to measure"
         panel.prompt = "Measure Bundle"
@@ -125,6 +127,7 @@ final class DashboardModel {
     }
 
     func chooseRelatedFolders(for bundlePath: String) {
+        guard !isScanning else { return }
         let panel = NSOpenPanel()
         panel.title = "Choose folders associated with this app"
         panel.prompt = "Associate and Scan"
@@ -334,6 +337,9 @@ struct DashboardView: View {
         .onAppear { model.refreshCapacity() }
         .onReceive(NotificationCenter.default.publisher(for: .chooseFoldersToScan)) { _ in
             model.chooseFolders()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .chooseApplicationBundleToScan)) { _ in
+            model.chooseApplicationBundle()
         }
         .alert("Disker", isPresented: Binding(
             get: { model.errorMessage != nil },

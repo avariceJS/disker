@@ -33,6 +33,7 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 
 - Reads total and available capacity reported by macOS for `/`.
 - Scans only folders or application bundles selected in the native open panel.
+- Provides native **Scan → Choose Folders to Scan…** (`⌘O`) and **Choose an Application Bundle…** (`⌘⇧O`) commands.
 - Remembers up to 20 selected scan locations as read-only security-scoped bookmarks in `~/Library/Application Support/Disker/selected-scopes.json`. Users can rescan them manually or remove each saved permission; Disker does not access them on launch or monitor them in the background.
 - Provides a separate **Applications** view for explicitly selected `.app` bundles; it measures the bundle only and lets the user manually associate up to 50 separately selected folders. The association is not independently verified, does not establish exclusive ownership, and measurements are never summed into an app total.
 - Compares repeated complete bundle scans and app-associated folder scans of the same selected path using allocated-byte estimates; incomplete results stay explicitly partial.
