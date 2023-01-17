@@ -708,6 +708,7 @@ struct DashboardView: View {
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
+                            applicationIdentityRow(for: bundle)
                             HStack(spacing: 12) {
                                 Text("Logical \(format(bundle.logicalBytes))")
                                 Text("Allocated estimate \(format(bundle.allocatedBytes))")
@@ -1139,6 +1140,33 @@ struct DashboardView: View {
             ToolbarItem(placement: .primaryAction) {
                 Button("Verify Folders…", action: chooseDuplicateFolders)
                     .disabled(model.isVerifyingDuplicates)
+            }
+        }
+    }
+
+    private func applicationIdentityRow(for bundle: FolderObservation) -> some View {
+        let identifierMatches = bundle.applicationSignatureValidated
+            && bundle.applicationBundleIdentifier != nil
+            && bundle.applicationSignedBundleIdentifier == bundle.applicationBundleIdentifier
+        return VStack(alignment: .leading, spacing: 4) {
+            if let identifier = bundle.applicationBundleIdentifier {
+                Text("Declared bundle ID · \(identifier)")
+                    .font(.caption2.monospaced())
+                    .textSelection(.enabled)
+            }
+            Label(
+                identifierMatches ? "Static signature valid · ID matches" : "Signed ID not verified",
+                systemImage: identifierMatches ? "checkmark.seal" : "questionmark.circle"
+            )
+            .font(.caption2)
+            .foregroundStyle(identifierMatches ? Color.green : Color.secondary)
+            .help("Local static signature integrity only; this does not verify notarization, publisher trust, or current use.")
+            if let signedIdentifier = bundle.applicationSignedBundleIdentifier,
+               signedIdentifier != bundle.applicationBundleIdentifier {
+                Text("Signed ID differs · \(signedIdentifier)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.orange)
+                    .textSelection(.enabled)
             }
         }
     }
