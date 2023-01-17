@@ -157,13 +157,18 @@ private struct DiskerCoreChecks {
         ).includingApplicationBundleIdentities([
             firstBundle.path: ApplicationBundleIdentity(
                 bundleIdentifier: "com.example.App",
-                claimedGroupIdentifiers: ["TEAMID.group.example.shared"]
+                claimedGroupIdentifiers: ["TEAMID.group.example.shared"],
+                signatureValidated: true,
+                signedBundleIdentifier: "com.example.App"
             )
         ])
         try expect(enriched.folders[0].applicationBundleIdentifier == "com.example.App",
                    "explicit bundle identity should be attached to the matching selected root")
         try expect(enriched.folders[0].applicationGroupIdentifiers == ["TEAMID.group.example.shared"],
                    "embedded group claims should persist with that selected app root")
+        try expect(enriched.folders[0].applicationSignatureValidated
+                   && enriched.folders[0].applicationSignedBundleIdentifier == "com.example.App",
+                   "signature validation and its signed bundle ID should persist with the selected app root")
         try expect(enriched.folders[1].applicationBundleIdentifier == nil,
                    "bundle identity must not leak to other selected roots")
         let history = LocalHistory(observations: [
@@ -178,10 +183,13 @@ private struct DiskerCoreChecks {
                    "the latest partial observation should replace an older complete bundle measurement")
         try expect(indexed.last?.applicationBundleIdentifier == "com.example.App",
                    "the selected app identifier should travel with its measured bundle history")
-        let encodedBundle = try JSONEncoder().encode(laterBundle)
+        let encodedBundle = try JSONEncoder().encode(enriched.folders[0])
         let decodedBundle = try JSONDecoder().decode(FolderObservation.self, from: encodedBundle)
         try expect(decodedBundle.applicationBundleIdentifier == "com.example.App",
                    "bundle identifiers should persist with application observations")
+        try expect(decodedBundle.applicationSignatureValidated
+                   && decodedBundle.applicationSignedBundleIdentifier == "com.example.App",
+                   "validated signature identity should survive observation encoding")
     }
 
     private static func testApplicationPathAttribution() throws {
@@ -196,6 +204,20 @@ private struct DiskerCoreChecks {
                    "the exact macOS app-container path should receive a probable identifier match")
         try expect(exact.explanation.contains("signing identity") && exact.explanation.contains("exclusive use"),
                    "container attribution must disclose unchecked signing identity and exclusivity")
+        let validatedContainer = ApplicationPathAttribution.classify(
+            bundleIdentifier: identifier, associatedFolderPath: container,
+            homeDirectoryPath: home, signatureValidated: true,
+            signedBundleIdentifier: identifier
+        )
+        try expect(validatedContainer.evidence == .validatedBundleIdentifierPathMatch,
+                   "a locally validated signed bundle ID should receive stronger exact-container evidence")
+        let mismatchedSignatureID = ApplicationPathAttribution.classify(
+            bundleIdentifier: identifier, associatedFolderPath: container,
+            homeDirectoryPath: home, signatureValidated: true,
+            signedBundleIdentifier: "com.example.Other"
+        )
+        try expect(mismatchedSignatureID.evidence == .probableContainerPathMatch,
+                   "a signed identifier that differs from the declared ID must remain only probable")
 
         let descendant = ApplicationPathAttribution.classify(
             bundleIdentifier: identifier,
@@ -227,6 +249,18 @@ private struct DiskerCoreChecks {
         try expect(sharedGroup.explanation.contains("shared with other group members")
                    && sharedGroup.explanation.contains("not validated"),
                    "shared-container attribution must disclose shared use and unvalidated signature")
+        let validatedSharedGroup = ApplicationPathAttribution.classify(
+            bundleIdentifier: identifier,
+            associatedFolderPath: groupContainer + "/Documents",
+            homeDirectoryPath: home,
+            claimedGroupIdentifiers: [groupIdentifier],
+            signatureValidated: true,
+            signedBundleIdentifier: identifier
+        )
+        try expect(validatedSharedGroup.evidence == .validatedSharedGroupEntitlement
+                   && validatedSharedGroup.explanation.contains("shared")
+                   && validatedSharedGroup.explanation.contains("not established"),
+                   "a validated signed group claim should strengthen evidence while preserving shared-use caveats")
 
         for path in [
             "\(home)/Library/Containers/\(identifier)-other",
@@ -291,6 +325,8 @@ private struct DiskerCoreChecks {
                        "an explicitly selected app bundle should expose its declared identifier")
             try expect(unsignedIdentity.claimedGroupIdentifiers.isEmpty,
                        "an unsigned selected app must not receive invented App Groups claims")
+            try expect(!unsignedIdentity.signatureValidated && unsignedIdentity.signedBundleIdentifier == nil,
+                       "an unsigned selected app must not be labeled with validated signing identity")
 
             let executableDirectory = contents.appendingPathComponent("MacOS", isDirectory: true)
             try FileManager.default.createDirectory(at: executableDirectory, withIntermediateDirectories: false)
@@ -320,6 +356,9 @@ private struct DiskerCoreChecks {
             try expect(signer.terminationStatus == 0,
                        "the synthetic app should accept an ad-hoc fixture signature")
             let signedIdentity = try requireApplicationIdentity(at: bundle)
+            try expect(signedIdentity.signatureValidated
+                       && signedIdentity.signedBundleIdentifier == "com.synthetic.DiskerFixture",
+                       "a valid ad-hoc signature should expose its signed bundle identifier")
             try expect(signedIdentity.claimedGroupIdentifiers == ["TEAMID.group.synthetic.shared"],
                        "only unique, path-safe App Groups claims should be read from the embedded signature")
 
@@ -346,6 +385,14 @@ private struct DiskerCoreChecks {
             let oversizedIdentity = try requireApplicationIdentity(at: bundle)
             try expect(oversizedIdentity.claimedGroupIdentifiers.isEmpty,
                        "oversized App Groups claims should be ignored instead of persisted without a bound")
+
+            try Data("tampered synthetic executable".utf8).write(
+                to: executableDirectory.appendingPathComponent("Synthetic")
+            )
+            let tamperedIdentity = try requireApplicationIdentity(at: bundle)
+            try expect(!tamperedIdentity.signatureValidated
+                       && tamperedIdentity.signedBundleIdentifier == nil,
+                       "a modified executable must not retain validated signature evidence")
 
             let ordinaryFolder = root.appendingPathComponent("ordinary-folder", isDirectory: true)
             try FileManager.default.createDirectory(at: ordinaryFolder, withIntermediateDirectories: false)
@@ -799,6 +846,8 @@ private struct DiskerCoreChecks {
                    "legacy folder observations should remain without an inferred bundle identifier")
         try expect(folder.applicationGroupIdentifiers.isEmpty,
                    "legacy folder observations should not gain inferred App Groups claims")
+        try expect(!folder.applicationSignatureValidated && folder.applicationSignedBundleIdentifier == nil,
+                   "legacy folder history should default to unvalidated signature metadata")
         try expect(history.ramObservations.isEmpty, "old folder history should default manual RAM history to empty")
         try expect(history.capacityObservations.isEmpty, "old history should default capacity observations to empty")
         try expect(history.applicationAssociations.count == 1,

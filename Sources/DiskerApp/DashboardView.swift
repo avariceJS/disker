@@ -125,7 +125,7 @@ final class DashboardModel {
         let panel = NSOpenPanel()
         panel.title = "Choose an application bundle to measure"
         panel.prompt = "Measure Bundle"
-        panel.message = "Disker measures only the selected .app bundle. It reads the declared bundle ID and embedded App Groups claim for path hints; signature validity is not checked, and group data is shared. Other support data is not included."
+        panel.message = "Disker measures only the selected .app bundle. Signature validation reads its signed executable and resources locally, in addition to the declared bundle ID and App Groups claim. It does not verify notarization or current use; group data is shared. No file contents are uploaded."
         panel.directoryURL = directory
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -142,7 +142,7 @@ final class DashboardModel {
         let panel = NSOpenPanel()
         panel.title = "Choose folders associated with this app"
         panel.prompt = "Associate and Scan"
-        panel.message = "Choose up to 50 folders to associate. An exact ~/Library/Containers/<bundle-id> path may receive a probable match. An exact ~/Library/Group Containers/<group-id> path may match an embedded App Groups claim and is marked shared. Signature validity, signing identity, and exclusive ownership are not verified; measurements stay separate."
+        panel.message = "Choose up to 50 folders to associate. Exact container paths may match the selected app's bundle ID or App Groups claim. Disker checks the app's local code signature but does not verify notarization, current use, or exclusive ownership; group data is shared and measurements stay separate."
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
@@ -747,7 +747,7 @@ struct DashboardView: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Label("Folders you associated", systemImage: "link")
                                         .font(.subheadline.weight(.semibold))
-                                    Text("Disker never sums these folders into an app total or claims exclusive ownership. Exact user Containers paths may receive a probable bundle-ID match; App Group paths are marked shared only when an embedded entitlement claim matches. Signature validity is not checked.")
+                                    Text("Disker never sums these folders into an app total or claims exclusive ownership. Container hints use the selected app's declared bundle ID and App Groups claim; a matching bundle ID and claim covered by a locally valid code signature receive stronger labels. Notarization, current use, and exclusive ownership are not established; App Group data is shared.")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                         .fixedSize(horizontal: false, vertical: true)
@@ -904,8 +904,8 @@ struct DashboardView: View {
                 header("About Disker", subtitle: "Understand storage without guessing what is safe to remove.")
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        Label("Folder-size scans read metadata only. Duplicate verification reads selected candidate contents after confirmation.", systemImage: "hand.raised")
-                        Label("For a selected app bundle, Disker reads its declared bundle ID and embedded App Groups claim to label exact container-path matches. Claims are not signature-validated; group data is shared.", systemImage: "app.badge.checkmark")
+                        Label("Folder-size scans read metadata only. Explicit app signature checks read signed executable and resource contents locally; duplicate verification reads selected candidates after confirmation. Nothing is uploaded.", systemImage: "hand.raised")
+                        Label("For a selected app bundle, Disker reads its declared bundle ID and embedded App Groups claim, then reads signed executable and resource contents to check local signature integrity. It does not verify notarization or publisher trust, current use, or exclusive ownership; App Group data is shared.", systemImage: "app.badge.checkmark")
                         Label("Scan locations are chosen by you. Saved permissions are read-only and scans stay manual.", systemImage: "folder.badge.plus")
                         Label("No cleanup or deletion actions are available.", systemImage: "lock.shield")
                         Label("History stays in this Mac's Application Support folder.", systemImage: "internaldrive")
@@ -1149,12 +1149,18 @@ struct DashboardView: View {
             bundleIdentifier: bundle.applicationBundleIdentifier,
             associatedFolderPath: path,
             homeDirectoryPath: NSHomeDirectory(),
-            claimedGroupIdentifiers: bundle.applicationGroupIdentifiers
+            claimedGroupIdentifiers: bundle.applicationGroupIdentifiers,
+            signatureValidated: bundle.applicationSignatureValidated,
+            signedBundleIdentifier: bundle.applicationSignedBundleIdentifier
         )
         let attributionSymbol: String
         switch attribution.evidence {
+        case .validatedSharedGroupEntitlement:
+            attributionSymbol = "person.2.badge.gearshape.fill"
         case .declaredSharedGroupContainerClaim:
             attributionSymbol = "person.2.badge.gearshape"
+        case .validatedBundleIdentifierPathMatch:
+            attributionSymbol = "folder.badge.checkmark"
         case .probableContainerPathMatch:
             attributionSymbol = "folder.badge.questionmark"
         case .userSelectedOnly:

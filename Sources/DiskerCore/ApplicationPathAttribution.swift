@@ -6,10 +6,19 @@ public struct ApplicationBundleIdentity: Equatable, Sendable {
     /// Embedded App Groups entitlement claims. Security's signing-information
     /// lookup does not validate the signature; consumers must label this claim.
     public let claimedGroupIdentifiers: [String]
+    /// The static signature passed strict validation when the bundle was read.
+    public let signatureValidated: Bool
+    /// The identifier covered by the signature, when Security provided one.
+    public let signedBundleIdentifier: String?
 
-    public init(bundleIdentifier: String, claimedGroupIdentifiers: [String] = []) {
+    public init(
+        bundleIdentifier: String, claimedGroupIdentifiers: [String] = [],
+        signatureValidated: Bool = false, signedBundleIdentifier: String? = nil
+    ) {
         self.bundleIdentifier = bundleIdentifier
         self.claimedGroupIdentifiers = claimedGroupIdentifiers
+        self.signatureValidated = signatureValidated
+        self.signedBundleIdentifier = signedBundleIdentifier
     }
 }
 
@@ -25,6 +34,8 @@ public enum ApplicationBundleMetadata {
         guard let bundleIdentifier = Bundle(url: url)?.bundleIdentifier else { return nil }
 
         var claimedGroups: [String] = []
+        var signatureValidated = false
+        var signedBundleIdentifier: String?
         var staticCode: SecStaticCode?
         let createStatus = SecStaticCodeCreateWithPath(url as CFURL, [], &staticCode)
         if createStatus == errSecSuccess, let staticCode {
@@ -41,11 +52,21 @@ public enum ApplicationBundleMetadata {
                     entitlements["com.apple.security.application-groups"]
                 )
             }
+            let validationStatus = SecStaticCodeCheckValidity(
+                staticCode, SecCSFlags(rawValue: kSecCSStrictValidate), nil
+            )
+            signatureValidated = validationStatus == errSecSuccess
+            if signatureValidated,
+               let dictionary = signingInformation as? [String: Any] {
+                signedBundleIdentifier = dictionary[kSecCodeInfoIdentifier as String] as? String
+            }
         }
 
         return ApplicationBundleIdentity(
             bundleIdentifier: bundleIdentifier,
-            claimedGroupIdentifiers: claimedGroups
+            claimedGroupIdentifiers: claimedGroups,
+            signatureValidated: signatureValidated,
+            signedBundleIdentifier: signedBundleIdentifier
         )
     }
 
@@ -79,9 +100,15 @@ public enum ApplicationBundleMetadata {
 
 public struct ApplicationPathAttribution: Equatable, Sendable {
     public enum Evidence: Equatable, Sendable {
+        /// The validated signature's signed identifier matches the declared
+        /// bundle ID, whose entitlement claims this shared group.
+        case validatedSharedGroupEntitlement
         /// The selected bundle's embedded entitlement claims this shared group.
         /// Signature validity and membership are not verified.
         case declaredSharedGroupContainerClaim
+        /// A locally validated signature carries the identifier matching the
+        /// selected user's per-app container path.
+        case validatedBundleIdentifierPathMatch
         /// The exact selected bundle ID matches macOS's per-app container path.
         /// Code-signing identity and exclusive use have not been checked.
         case probableContainerPathMatch
@@ -95,7 +122,9 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
 
     public var title: String {
         switch evidence {
+        case .validatedSharedGroupEntitlement: "Signed shared App Group claim"
         case .declaredSharedGroupContainerClaim: "Declared shared App Group path"
+        case .validatedBundleIdentifierPathMatch: "Signed bundle identifier matches path"
         case .probableContainerPathMatch: "Probable app container path"
         case .userSelectedOnly: "User-selected association"
         }
@@ -103,8 +132,12 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
 
     public var explanation: String {
         switch evidence {
+        case .validatedSharedGroupEntitlement:
+            "The selected app's locally validated signature covers its bundle ID and App Groups claim for this exact path. The container is shared; current use and exclusive ownership are not established."
         case .declaredSharedGroupContainerClaim:
             "The selected app's embedded App Groups claim names this exact path. Disker has not validated the signature or access, and this container is shared with other group members."
+        case .validatedBundleIdentifierPathMatch:
+            "The selected app's locally validated signature carries this bundle identifier, which matches this exact per-app container path. Current use and exclusive ownership are not established."
         case .probableContainerPathMatch:
             "This path matches the selected app's CFBundleIdentifier under ~/Library/Containers. Disker has not verified the app's signing identity or exclusive use of the data."
         case .userSelectedOnly:
@@ -114,8 +147,12 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
 
     public static func classify(
         bundleIdentifier: String?, associatedFolderPath: String,
-        homeDirectoryPath: String, claimedGroupIdentifiers: [String] = []
+        homeDirectoryPath: String, claimedGroupIdentifiers: [String] = [],
+        signatureValidated: Bool = false, signedBundleIdentifier: String? = nil
     ) -> ApplicationPathAttribution {
+        let validatedBundleIdentity = signatureValidated
+            && bundleIdentifier != nil
+            && signedBundleIdentifier == bundleIdentifier
         let candidate = URL(fileURLWithPath: associatedFolderPath).standardizedFileURL.path
         let libraryRoot = URL(fileURLWithPath: homeDirectoryPath, isDirectory: true)
             .appendingPathComponent("Library", isDirectory: true)
@@ -128,7 +165,8 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
                 .standardizedFileURL.path
             if isWithin(candidate, root: groupRoot) {
                 return ApplicationPathAttribution(
-                    evidence: .declaredSharedGroupContainerClaim,
+                    evidence: validatedBundleIdentity
+                        ? .validatedSharedGroupEntitlement : .declaredSharedGroupContainerClaim,
                     bundleIdentifier: bundleIdentifier,
                     groupIdentifier: groupIdentifier
                 )
@@ -142,7 +180,8 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
                 .standardizedFileURL.path
             if isWithin(candidate, root: containerRoot) {
                 return ApplicationPathAttribution(
-                    evidence: .probableContainerPathMatch,
+                    evidence: validatedBundleIdentity
+                        ? .validatedBundleIdentifierPathMatch : .probableContainerPathMatch,
                     bundleIdentifier: bundleIdentifier,
                     groupIdentifier: nil
                 )

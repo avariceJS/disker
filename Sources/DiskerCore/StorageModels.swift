@@ -84,9 +84,11 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     /// Identifier read from the Info.plist of an explicitly selected app bundle.
     /// It is metadata evidence, not proof of signing identity or ownership.
     public let applicationBundleIdentifier: String?
-    /// Embedded group-entitlement claims from the selected app. These are not
-    /// signature-validated and must not be displayed as exclusive ownership.
+    /// Embedded group-entitlement claims from the selected app. The separate
+    /// validation fields indicate whether these claims passed local validation.
     public let applicationGroupIdentifiers: [String]
+    public let applicationSignatureValidated: Bool
+    public let applicationSignedBundleIdentifier: String?
 
     public init(
         id: UUID = UUID(), path: String, displayName: String,
@@ -99,7 +101,9 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         subdirectorySummaries: [DirectoryUsage] = [],
         subdirectorySummariesTruncated: Bool = false,
         applicationBundleIdentifier: String? = nil,
-        applicationGroupIdentifiers: [String] = []
+        applicationGroupIdentifiers: [String] = [],
+        applicationSignatureValidated: Bool = false,
+        applicationSignedBundleIdentifier: String? = nil
     ) {
         self.id = id
         self.path = path
@@ -118,6 +122,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         self.subdirectorySummariesTruncated = subdirectorySummariesTruncated
         self.applicationBundleIdentifier = applicationBundleIdentifier
         self.applicationGroupIdentifiers = applicationGroupIdentifiers
+        self.applicationSignatureValidated = applicationSignatureValidated
+        self.applicationSignedBundleIdentifier = applicationSignedBundleIdentifier
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -127,6 +133,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         case subdirectorySummaries, subdirectorySummariesTruncated, gitMetadataUsage
         case applicationBundleIdentifier
         case applicationGroupIdentifiers
+        case applicationSignatureValidated, applicationSignedBundleIdentifier
     }
 
     public init(from decoder: Decoder) throws {
@@ -148,6 +155,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         subdirectorySummariesTruncated = try values.decodeIfPresent(Bool.self, forKey: .subdirectorySummariesTruncated) ?? false
         applicationBundleIdentifier = try values.decodeIfPresent(String.self, forKey: .applicationBundleIdentifier)
         applicationGroupIdentifiers = try values.decodeIfPresent([String].self, forKey: .applicationGroupIdentifiers) ?? []
+        applicationSignatureValidated = try values.decodeIfPresent(Bool.self, forKey: .applicationSignatureValidated) ?? false
+        applicationSignedBundleIdentifier = try values.decodeIfPresent(String.self, forKey: .applicationSignedBundleIdentifier)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -169,6 +178,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         try values.encode(subdirectorySummariesTruncated, forKey: .subdirectorySummariesTruncated)
         try values.encodeIfPresent(applicationBundleIdentifier, forKey: .applicationBundleIdentifier)
         try values.encode(applicationGroupIdentifiers, forKey: .applicationGroupIdentifiers)
+        try values.encode(applicationSignatureValidated, forKey: .applicationSignatureValidated)
+        try values.encodeIfPresent(applicationSignedBundleIdentifier, forKey: .applicationSignedBundleIdentifier)
     }
 
     public func includingApplicationBundleIdentity(_ identity: ApplicationBundleIdentity) -> FolderObservation {
@@ -184,7 +195,9 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
             subdirectorySummaries: subdirectorySummaries,
             subdirectorySummariesTruncated: subdirectorySummariesTruncated,
             applicationBundleIdentifier: identity.bundleIdentifier,
-            applicationGroupIdentifiers: identity.claimedGroupIdentifiers
+            applicationGroupIdentifiers: identity.claimedGroupIdentifiers,
+            applicationSignatureValidated: identity.signatureValidated,
+            applicationSignedBundleIdentifier: identity.signedBundleIdentifier
         )
     }
 }
