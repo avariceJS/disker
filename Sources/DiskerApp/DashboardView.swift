@@ -105,13 +105,17 @@ final class DashboardModel {
         let panel = NSOpenPanel()
         panel.title = "Choose folders to measure"
         panel.prompt = "Scan Folders"
-        panel.message = "Disker reads file metadata in the folders you select. File contents are not opened."
+        panel.message = "Choose up to 50 folders. Disker reads file metadata in the folders you select; file contents are not opened."
         panel.directoryURL = directory
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
         panel.canCreateDirectories = false
         guard panel.runModal() == .OK else { return }
+        guard panel.urls.count <= ApplicationFolderAssociation.maximumRelatedFolderCount else {
+            errorMessage = "A scan can include at most 50 selected folders. Reduce the selection and try again."
+            return
+        }
         rememberFolders(panel.urls)
         scan(panel.urls)
     }
@@ -201,6 +205,10 @@ final class DashboardModel {
         inspectSelectedAppBundles: Bool = false
     ) {
         guard !urls.isEmpty, !isScanning else { return }
+        guard urls.count <= ApplicationFolderAssociation.maximumRelatedFolderCount else {
+            errorMessage = "A scan can include at most 50 selected folders. Reduce the selection and try again."
+            return
+        }
         isScanning = true
         currentPath = ""
         visitedFiles = 0
