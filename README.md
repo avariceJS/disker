@@ -46,7 +46,7 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 - Saves up to 180 capacity, folder-scan, and RAM observations under `~/Library/Application Support/Disker/observations.json`. Capacity history is sampled when Disker opens, after a folder scan, or when the user presses Refresh; it is not a background monitor.
 - Plots up to 24 comparable root-capacity observations, separating series when reported capacity or the macOS availability method changes. The chart reports system availability and does not explain which folders changed.
 - Compares complete folder scans to earlier complete scans for the same path; incomplete scans never produce growth deltas.
-- Highlights up to three selected folders with the largest positive allocated-byte changes between complete observations of the same path; a newer partial observation suppresses that path's stale growth signal.
+- Highlights up to three selected folders with the largest positive allocated-byte changes between complete observations of the same path, showing both scan times and Finder reveal; a newer partial observation suppresses that path's stale growth signal.
 - Plots up to 24 complete allocated-estimate observations for a selected path, including chosen application bundles; partial and future scans are excluded.
 - Reports complete-only allocated-estimate deltas for matching descendant paths under the same selected root.
 - Provides Finder reveal for selected folder roots.

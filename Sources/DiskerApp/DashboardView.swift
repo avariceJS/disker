@@ -590,7 +590,7 @@ struct DashboardView: View {
                                     .lineLimit(1)
                                     .truncationMode(.middle)
                                     .textSelection(.enabled)
-                                Text("Since previous complete scan · \(signal.previous.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                                Text("Complete scans: \(signal.previous.finishedAt.formatted(date: .abbreviated, time: .shortened)) → \(signal.folder.finishedAt.formatted(date: .abbreviated, time: .shortened))")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }
@@ -598,6 +598,16 @@ struct DashboardView: View {
                             Text(formattedDelta(signal.growthBytes))
                                 .font(.subheadline.weight(.semibold).monospacedDigit())
                                 .foregroundStyle(.orange)
+                            Button {
+                                NSWorkspace.shared.activateFileViewerSelecting([
+                                    URL(fileURLWithPath: signal.folder.path)
+                                ])
+                            } label: {
+                                Image(systemName: "arrow.up.right.square")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Reveal selected folder in Finder")
+                            .accessibilityLabel("Reveal \(signal.folder.displayName) in Finder")
                         }
                         if signal.id != signals.last?.id { Divider() }
                     }
