@@ -1137,6 +1137,60 @@ private struct DiskerCoreChecks {
         try expect(!ObservationComparison.growingFolders(in: partialLatest).contains {
             $0.folder.path == "/selected/growing"
         }, "a newer partial result should suppress stale growth for that selected path")
+
+        let extensionPath = "/selected/extension-growth"
+        let extensionPrevious = FolderObservation(
+            id: UUID(), path: extensionPath, displayName: "extension-growth",
+            logicalBytes: 1_000, allocatedBytes: 1_000, fileCount: 2,
+            fileExtensionSummaries: [
+                FileExtensionUsage(extensionName: "db", logicalBytes: 800, allocatedBytes: 800, fileCount: 1),
+                FileExtensionUsage(extensionName: "log", logicalBytes: 200, allocatedBytes: 200, fileCount: 1),
+            ],
+            inaccessibleCount: 0, finishedAt: Date(timeIntervalSince1970: 100), complete: true
+        )
+        let extensionCurrent = FolderObservation(
+            id: UUID(), path: extensionPath, displayName: "extension-growth",
+            logicalBytes: 1_160, allocatedBytes: 1_160, fileCount: 3,
+            fileExtensionSummaries: [
+                FileExtensionUsage(extensionName: "db", logicalBytes: 800, allocatedBytes: 800, fileCount: 1),
+                FileExtensionUsage(extensionName: "log", logicalBytes: 300, allocatedBytes: 300, fileCount: 1),
+                FileExtensionUsage(extensionName: "sqlite", logicalBytes: 60, allocatedBytes: 60, fileCount: 1),
+            ],
+            inaccessibleCount: 0, finishedAt: Date(timeIntervalSince1970: 200), complete: true
+        )
+        let extensionHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: .now, folders: [extensionPrevious], cancelled: false),
+            ScanObservation(startedAt: .now, folders: [extensionCurrent], cancelled: false),
+        ])
+        let extensionGrowth = ObservationComparison.growingFileExtensions(
+            for: extensionCurrent, in: extensionHistory
+        )
+        try expect(extensionGrowth?.map(\.extensionName) == ["log", "sqlite"]
+                   && extensionGrowth?.map(\.growthBytes) == [100, 60],
+                   "filename-category growth should rank positive allocated estimates across the same complete root")
+        let cappedCurrent = FolderObservation(
+            id: UUID(), path: extensionPath, displayName: "extension-growth",
+            logicalBytes: 1_200, allocatedBytes: 1_200, fileCount: 4,
+            fileExtensionSummaries: extensionCurrent.fileExtensionSummaries,
+            fileExtensionSummariesTruncated: true,
+            inaccessibleCount: 0, finishedAt: Date(timeIntervalSince1970: 300), complete: true
+        )
+        let cappedHistory = LocalHistory(observations: extensionHistory.observations + [
+            ScanObservation(startedAt: .now, folders: [cappedCurrent], cancelled: false)
+        ])
+        try expect(ObservationComparison.growingFileExtensions(for: cappedCurrent, in: cappedHistory) == nil,
+                   "truncated filename categories must not produce incomplete growth claims")
+        let partialExtension = FolderObservation(
+            id: UUID(), path: extensionPath, displayName: "extension-growth",
+            logicalBytes: 1_300, allocatedBytes: 1_300, fileCount: 4,
+            fileExtensionSummaries: extensionCurrent.fileExtensionSummaries,
+            inaccessibleCount: 1, finishedAt: Date(timeIntervalSince1970: 400), complete: false
+        )
+        let partialExtensionHistory = LocalHistory(observations: extensionHistory.observations + [
+            ScanObservation(startedAt: .now, folders: [partialExtension], cancelled: true)
+        ])
+        try expect(ObservationComparison.growingFileExtensions(for: extensionCurrent, in: partialExtensionHistory) == nil,
+                   "a newer partial scan must suppress filename-category growth from an older complete observation")
     }
 
     private static func testDirectoryGrowthComparison() throws {

@@ -1649,6 +1649,7 @@ struct DashboardView: View {
 
     private func fileExtensionSummary(for folder: FolderObservation) -> some View {
         let summaries = Array(folder.fileExtensionSummaries.prefix(5))
+        let growth = ObservationComparison.growingFileExtensions(for: folder, in: model.history)
         return VStack(alignment: .leading, spacing: 4) {
             Text("Largest filename extensions")
                 .font(.caption2.weight(.semibold))
@@ -1671,6 +1672,23 @@ struct DashboardView: View {
                      : "Showing the five largest filename categories.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+            }
+            if let growth, !growth.isEmpty,
+               let previous = model.previousCompleteObservation(for: folder) {
+                Text("Growing categories since \(previous.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption2.weight(.semibold))
+                    .padding(.top, 2)
+                ForEach(growth) { item in
+                    HStack(spacing: 8) {
+                        Text(item.extensionName == "no extension" ? "No extension" : ".\(item.extensionName)")
+                            .font(.caption2.monospaced())
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(formattedDelta(item.growthBytes))
+                            .font(.caption2.monospacedDigit().weight(.medium))
+                            .foregroundStyle(.orange)
+                    }
+                }
             }
             Text("Grouped by filename only; content and purpose are not verified. Estimates share this scan's coverage.")
                 .font(.caption2)

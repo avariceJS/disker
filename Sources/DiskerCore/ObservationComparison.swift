@@ -8,6 +8,12 @@ public enum ObservationComparison {
         public let growthBytes: Int64
     }
 
+    public struct FileExtensionGrowthSignal: Equatable, Identifiable, Sendable {
+        public var id: String { extensionName }
+        public let extensionName: String
+        public let growthBytes: Int64
+    }
+
     public struct ProcessGrowthSignal: Equatable, Identifiable, Sendable {
         public var id: Int32 { processID }
         public let processID: Int32
@@ -170,6 +176,67 @@ public enum ObservationComparison {
         }
         .prefix(limit)
         .map { $0 }
+    }
+
+    /// Positive allocated-byte changes for filename categories across the
+    /// latest complete observations of one exact selected path. Returns nil
+    /// when either observation is partial, legacy data lacks summaries, or a
+    /// category cap prevents a complete comparison.
+    public static func growingFileExtensions(
+        for current: FolderObservation,
+        in history: LocalHistory,
+        limit: Int = 5
+    ) -> [FileExtensionGrowthSignal]? {
+        guard limit > 0, current.complete,
+              let latest = history.observations.reversed().lazy.compactMap({ observation in
+                  observation.folders.first(where: { $0.path == current.path })
+              }).first,
+              latest.id == current.id,
+              let previous = previousCompleteFolder(for: current, in: history),
+              previous.complete,
+              !current.fileExtensionSummariesTruncated,
+              !previous.fileExtensionSummariesTruncated,
+              let currentCategories = completeCategoryMetrics(for: current),
+              let previousCategories = completeCategoryMetrics(for: previous)
+        else { return nil }
+
+        let names = Set(currentCategories.keys).union(previousCategories.keys)
+        return names.compactMap { name -> FileExtensionGrowthSignal? in
+            let now = currentCategories[name, default: 0]
+            let before = previousCategories[name, default: 0]
+            let (delta, overflow) = now.subtractingReportingOverflow(before)
+            guard !overflow, delta > 0 else { return nil }
+            return FileExtensionGrowthSignal(extensionName: name, growthBytes: delta)
+        }
+        .sorted {
+            if $0.growthBytes != $1.growthBytes { return $0.growthBytes > $1.growthBytes }
+            return $0.extensionName < $1.extensionName
+        }
+        .prefix(limit)
+        .map { $0 }
+    }
+
+    private static func completeCategoryMetrics(
+        for folder: FolderObservation
+    ) -> [String: Int64]? {
+        guard folder.fileCount >= 0, folder.allocatedBytes >= 0 else { return nil }
+        var result: [String: Int64] = [:]
+        var totalFileCount = 0
+        var totalAllocatedBytes: Int64 = 0
+        for item in folder.fileExtensionSummaries {
+            guard result[item.extensionName] == nil,
+                  item.fileCount >= 0, item.allocatedBytes >= 0,
+                  item.logicalBytes >= 0 else { return nil }
+            let (count, countOverflow) = totalFileCount.addingReportingOverflow(item.fileCount)
+            let (bytes, bytesOverflow) = totalAllocatedBytes.addingReportingOverflow(item.allocatedBytes)
+            guard !countOverflow, !bytesOverflow else { return nil }
+            totalFileCount = count
+            totalAllocatedBytes = bytes
+            result[item.extensionName] = item.allocatedBytes
+        }
+        guard totalFileCount == folder.fileCount,
+              totalAllocatedBytes == folder.allocatedBytes else { return nil }
+        return result
     }
 
     public static func allocatedByteDelta(
