@@ -249,7 +249,7 @@ private struct DiskerCoreChecks {
         try expect(sharedGroup.explanation.contains("shared with other group members")
                    && sharedGroup.explanation.contains("not validated"),
                    "shared-container attribution must disclose shared use and unvalidated signature")
-        let validatedSharedGroup = ApplicationPathAttribution.classify(
+        let signatureCoveredSharedGroup = ApplicationPathAttribution.classify(
             bundleIdentifier: identifier,
             associatedFolderPath: groupContainer + "/Documents",
             homeDirectoryPath: home,
@@ -257,10 +257,10 @@ private struct DiskerCoreChecks {
             signatureValidated: true,
             signedBundleIdentifier: identifier
         )
-        try expect(validatedSharedGroup.evidence == .validatedSharedGroupEntitlement
-                   && validatedSharedGroup.explanation.contains("shared")
-                   && validatedSharedGroup.explanation.contains("not established"),
-                   "a validated signed group claim should strengthen evidence while preserving shared-use caveats")
+        try expect(signatureCoveredSharedGroup.evidence == .signatureCoveredSharedGroupClaim
+                   && signatureCoveredSharedGroup.explanation.contains("does not establish developer trust")
+                   && signatureCoveredSharedGroup.explanation.contains("container is shared"),
+                   "signature-covered group claims should disclose that access and developer trust remain unverified")
 
         for path in [
             "\(home)/Library/Containers/\(identifier)-other",

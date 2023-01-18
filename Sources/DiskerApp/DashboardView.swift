@@ -1183,7 +1183,7 @@ struct DashboardView: View {
         )
         let attributionSymbol: String
         switch attribution.evidence {
-        case .validatedSharedGroupEntitlement:
+        case .signatureCoveredSharedGroupClaim:
             attributionSymbol = "person.2.badge.gearshape.fill"
         case .declaredSharedGroupContainerClaim:
             attributionSymbol = "person.2.badge.gearshape"

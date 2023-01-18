@@ -102,7 +102,7 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
     public enum Evidence: Equatable, Sendable {
         /// The validated signature's signed identifier matches the declared
         /// bundle ID, whose entitlement claims this shared group.
-        case validatedSharedGroupEntitlement
+        case signatureCoveredSharedGroupClaim
         /// The selected bundle's embedded entitlement claims this shared group.
         /// Signature validity and membership are not verified.
         case declaredSharedGroupContainerClaim
@@ -122,7 +122,7 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
 
     public var title: String {
         switch evidence {
-        case .validatedSharedGroupEntitlement: "Signed shared App Group claim"
+        case .signatureCoveredSharedGroupClaim: "Signature-covered shared App Group claim"
         case .declaredSharedGroupContainerClaim: "Declared shared App Group path"
         case .validatedBundleIdentifierPathMatch: "Signed bundle identifier matches path"
         case .probableContainerPathMatch: "Probable app container path"
@@ -132,8 +132,8 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
 
     public var explanation: String {
         switch evidence {
-        case .validatedSharedGroupEntitlement:
-            "The selected app's locally validated signature covers its bundle ID and App Groups claim for this exact path. The container is shared; current use and exclusive ownership are not established."
+        case .signatureCoveredSharedGroupClaim:
+            "A locally valid static signature covers the selected app's bundle ID and embedded App Groups claim for this exact path. This does not establish developer trust or OS-granted access. The container is shared; current use and exclusive ownership are not established."
         case .declaredSharedGroupContainerClaim:
             "The selected app's embedded App Groups claim names this exact path. Disker has not validated the signature or access, and this container is shared with other group members."
         case .validatedBundleIdentifierPathMatch:
@@ -166,7 +166,7 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
             if isWithin(candidate, root: groupRoot) {
                 return ApplicationPathAttribution(
                     evidence: validatedBundleIdentity
-                        ? .validatedSharedGroupEntitlement : .declaredSharedGroupContainerClaim,
+                        ? .signatureCoveredSharedGroupClaim : .declaredSharedGroupContainerClaim,
                     bundleIdentifier: bundleIdentifier,
                     groupIdentifier: groupIdentifier
                 )
