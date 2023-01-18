@@ -34,6 +34,7 @@ private struct DiskerCoreChecks {
             ("live RAM and process sample", testLiveRAMSample),
             ("cautious sustained process growth signal", testPossibleProcessGrowth),
             ("metadata scan and symlink exclusion", testMetadataScanAndSymlinkExclusion),
+            ("metadata-only filename extension summaries", testFileExtensionSummaries),
             ("selected-scope duplicate verification", testDuplicateVerification),
             ("duplicate verification cancellation", testDuplicateVerificationCancellation),
             ("duplicate directory mutation coverage", testDuplicateDirectoryMutationCoverage),
@@ -606,6 +607,62 @@ private struct DiskerCoreChecks {
         }
     }
 
+    private static func testFileExtensionSummaries() throws {
+        try withTemporaryDirectory { root in
+            let database = root.appendingPathComponent("events.sqlite")
+            let databaseBytes = Data(repeating: 0x31, count: 8_300)
+            try databaseBytes.write(to: database)
+            try FileManager.default.linkItem(
+                at: database, to: root.appendingPathComponent("events.db")
+            )
+            try Data(repeating: 0x52, count: 12_500)
+                .write(to: root.appendingPathComponent("weights.safetensors"))
+            try Data(repeating: 0x73, count: 2_600)
+                .write(to: root.appendingPathComponent("server.log"))
+            try Data(repeating: 0x14, count: 1_300)
+                .write(to: root.appendingPathComponent("README"))
+
+            let folder = FolderScanner.scan(roots: [root]).folders[0]
+            let summaries = Dictionary(uniqueKeysWithValues: folder.fileExtensionSummaries.map {
+                ($0.extensionName, $0)
+            })
+            try expect(folder.complete && folder.fileCount == 4,
+                       "extension summaries should describe the same complete deduplicated file scan")
+            try expect(summaries["db"]?.fileCount == 1 && summaries["sqlite"] == nil,
+                       "a hard link should contribute once under its deterministic retained filename")
+            try expect(summaries["safetensors"]?.fileCount == 1
+                       && summaries["log"]?.fileCount == 1
+                       && summaries["no extension"]?.fileCount == 1,
+                       "metadata summaries should classify safe filename extensions and extensionless files")
+            try expect(folder.fileExtensionSummaries.reduce(Int64(0)) { $0 + $1.logicalBytes }
+                       == folder.logicalBytes
+                       && folder.fileExtensionSummaries.reduce(Int64(0)) { $0 + $1.allocatedBytes }
+                       == folder.allocatedBytes,
+                       "untruncated file-extension metrics should account for each measured file object once")
+            let databaseAfterScan = try Data(contentsOf: database)
+            try expect(databaseAfterScan == databaseBytes,
+                       "metadata-only extension classification must leave file contents unchanged")
+
+            let encoded = try JSONEncoder().encode(folder)
+            let decoded = try JSONDecoder().decode(FolderObservation.self, from: encoded)
+            try expect(decoded.fileExtensionSummaries == folder.fileExtensionSummaries
+                       && !decoded.fileExtensionSummariesTruncated,
+                       "bounded extension summaries should persist with the folder observation")
+
+            let manyRoot = root.appendingPathComponent("many-extensions", isDirectory: true)
+            try FileManager.default.createDirectory(at: manyRoot, withIntermediateDirectories: false)
+            for index in 0..<35 {
+                let ext = String(format: "e%02d", index)
+                try Data(repeating: UInt8(index), count: 100)
+                    .write(to: manyRoot.appendingPathComponent("sample.\(ext)"))
+            }
+            let capped = FolderScanner.scan(roots: [manyRoot]).folders[0]
+            try expect(capped.fileExtensionSummaries.count == 30
+                       && capped.fileExtensionSummariesTruncated,
+                       "extension metadata should have a stable cap and disclose omitted categories")
+        }
+    }
+
     private static func testDuplicateVerification() throws {
         try withTemporaryDirectory { root in
             let first = root.appendingPathComponent("first.bin")
@@ -858,6 +915,8 @@ private struct DiskerCoreChecks {
         try expect(folder.subdirectorySummaries[0].changedDuringScanCount == 0, "old directory summaries should default mutation count to zero")
         try expect(!folder.subdirectorySummaries[0].gitMetadataEntryDetected, "old directory summaries should default Git marker state to false")
         try expect(!folder.subdirectorySummariesTruncated, "old folder history should default truncation to false")
+        try expect(folder.fileExtensionSummaries.isEmpty && !folder.fileExtensionSummariesTruncated,
+                   "old folder history should default filename-extension summaries to empty and untruncated")
 
         let oldProcessJSON = #"{"processID":123,"name":"OldSample","residentBytes":4096}"#
         let oldProcess = try JSONDecoder().decode(ProcessRAMSample.self, from: Data(oldProcessJSON.utf8))

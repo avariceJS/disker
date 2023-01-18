@@ -62,6 +62,24 @@ public struct CapacityObservation: Codable, Equatable, Sendable {
     }
 }
 
+/// A bounded, metadata-only aggregate grouped by a file name's extension.
+/// The extension does not verify the file's content or purpose.
+public struct FileExtensionUsage: Codable, Equatable, Identifiable, Sendable {
+    public let extensionName: String
+    public let logicalBytes: Int64
+    public let allocatedBytes: Int64
+    public let fileCount: Int
+
+    public var id: String { extensionName }
+
+    public init(extensionName: String, logicalBytes: Int64, allocatedBytes: Int64, fileCount: Int) {
+        self.extensionName = extensionName
+        self.logicalBytes = logicalBytes
+        self.allocatedBytes = allocatedBytes
+        self.fileCount = fileCount
+    }
+}
+
 public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     public let id: UUID
     public let path: String
@@ -69,6 +87,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     public let logicalBytes: Int64
     public let allocatedBytes: Int64
     public let fileCount: Int
+    public let fileExtensionSummaries: [FileExtensionUsage]
+    public let fileExtensionSummariesTruncated: Bool
     public let inaccessibleCount: Int
     public let excludedSymlinkCount: Int
     public let changedDuringScanCount: Int
@@ -93,6 +113,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     public init(
         id: UUID = UUID(), path: String, displayName: String,
         logicalBytes: Int64, allocatedBytes: Int64, fileCount: Int,
+        fileExtensionSummaries: [FileExtensionUsage] = [],
+        fileExtensionSummariesTruncated: Bool = false,
         inaccessibleCount: Int, finishedAt: Date = .now, complete: Bool,
         excludedSymlinkCount: Int = 0,
         changedDuringScanCount: Int = 0,
@@ -111,6 +133,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         self.logicalBytes = logicalBytes
         self.allocatedBytes = allocatedBytes
         self.fileCount = fileCount
+        self.fileExtensionSummaries = fileExtensionSummaries
+        self.fileExtensionSummariesTruncated = fileExtensionSummariesTruncated
         self.inaccessibleCount = inaccessibleCount
         self.excludedSymlinkCount = excludedSymlinkCount
         self.changedDuringScanCount = changedDuringScanCount
@@ -128,6 +152,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, path, displayName, logicalBytes, allocatedBytes, fileCount
+        case fileExtensionSummaries, fileExtensionSummariesTruncated
         case inaccessibleCount, excludedSymlinkCount, changedDuringScanCount, gitMetadataEntryDetected
         case finishedAt, complete
         case subdirectorySummaries, subdirectorySummariesTruncated, gitMetadataUsage
@@ -144,6 +169,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         logicalBytes = try values.decode(Int64.self, forKey: .logicalBytes)
         allocatedBytes = try values.decode(Int64.self, forKey: .allocatedBytes)
         fileCount = try values.decode(Int.self, forKey: .fileCount)
+        fileExtensionSummaries = try values.decodeIfPresent([FileExtensionUsage].self, forKey: .fileExtensionSummaries) ?? []
+        fileExtensionSummariesTruncated = try values.decodeIfPresent(Bool.self, forKey: .fileExtensionSummariesTruncated) ?? false
         inaccessibleCount = try values.decode(Int.self, forKey: .inaccessibleCount)
         excludedSymlinkCount = try values.decodeIfPresent(Int.self, forKey: .excludedSymlinkCount) ?? 0
         changedDuringScanCount = try values.decodeIfPresent(Int.self, forKey: .changedDuringScanCount) ?? 0
@@ -167,6 +194,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         try values.encode(logicalBytes, forKey: .logicalBytes)
         try values.encode(allocatedBytes, forKey: .allocatedBytes)
         try values.encode(fileCount, forKey: .fileCount)
+        try values.encode(fileExtensionSummaries, forKey: .fileExtensionSummaries)
+        try values.encode(fileExtensionSummariesTruncated, forKey: .fileExtensionSummariesTruncated)
         try values.encode(inaccessibleCount, forKey: .inaccessibleCount)
         try values.encode(excludedSymlinkCount, forKey: .excludedSymlinkCount)
         try values.encode(changedDuringScanCount, forKey: .changedDuringScanCount)
@@ -186,7 +215,9 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         FolderObservation(
             id: id, path: path, displayName: displayName,
             logicalBytes: logicalBytes, allocatedBytes: allocatedBytes,
-            fileCount: fileCount, inaccessibleCount: inaccessibleCount,
+            fileCount: fileCount, fileExtensionSummaries: fileExtensionSummaries,
+            fileExtensionSummariesTruncated: fileExtensionSummariesTruncated,
+            inaccessibleCount: inaccessibleCount,
             finishedAt: finishedAt, complete: complete,
             excludedSymlinkCount: excludedSymlinkCount,
             changedDuringScanCount: changedDuringScanCount,

@@ -8,6 +8,7 @@ public struct ScanProgress: Sendable {
 
 public enum FolderScanner {
     private static let maximumDirectorySummaries = 100
+    private static let maximumFileExtensionSummaries = 30
 
     private struct FileIdentity: Hashable {
         let device: UInt64
@@ -20,6 +21,13 @@ public enum FolderScanner {
         let identity: FileIdentity
         let logicalBytes: Int64
         let allocatedBytes: Int64
+        let extensionName: String
+    }
+
+    private struct FileExtensionMetrics {
+        var logicalBytes: Int64 = 0
+        var allocatedBytes: Int64 = 0
+        var fileCount = 0
     }
 
     private struct PendingDirectory {
@@ -91,6 +99,7 @@ public enum FolderScanner {
             var rootLogicalBytes: Int64 = 0
             var rootAllocatedBytes: Int64 = 0
             var rootFileCount = 0
+            var extensionMetrics: [String: FileExtensionMetrics] = [:]
 
             if rootType != S_IFDIR {
                 let file = fileRecord(metadata: rootMetadata, relativePath: root.lastPathComponent, parentPath: "")
@@ -102,6 +111,7 @@ public enum FolderScanner {
                     rootLogicalBytes += file.logicalBytes
                     rootAllocatedBytes += file.allocatedBytes
                     rootFileCount += 1
+                    addFileExtension(file, to: &extensionMetrics)
                 }
             } else {
                 let rootFD = root.path.withCString {
@@ -249,6 +259,7 @@ public enum FolderScanner {
                                 rootLogicalBytes += file.logicalBytes
                                 rootAllocatedBytes += file.allocatedBytes
                                 rootFileCount += 1
+                                addFileExtension(file, to: &extensionMetrics)
                                 isNewFileObject = true
                             }
                             if isNewFileObject {
@@ -287,6 +298,7 @@ public enum FolderScanner {
                 rootLogicalBytes += file.logicalBytes
                 rootAllocatedBytes += file.allocatedBytes
                 rootFileCount += 1
+                addFileExtension(file, to: &extensionMetrics)
             }
 
             // Aggregate each directory into its parent once, deepest first.
@@ -323,6 +335,19 @@ public enum FolderScanner {
             let gitMetadataUsage = metrics[".git"].map {
                 directoryUsage(path: ".git", metrics: $0)
             }
+            let rankedExtensions = extensionMetrics.map { name, value in
+                FileExtensionUsage(
+                    extensionName: name,
+                    logicalBytes: value.logicalBytes,
+                    allocatedBytes: value.allocatedBytes,
+                    fileCount: value.fileCount
+                )
+            }.sorted {
+                if $0.allocatedBytes != $1.allocatedBytes {
+                    return $0.allocatedBytes > $1.allocatedBytes
+                }
+                return $0.extensionName < $1.extensionName
+            }
 
             results.append(FolderObservation(
                 path: root.path,
@@ -330,6 +355,8 @@ public enum FolderScanner {
                 logicalBytes: rootLogicalBytes,
                 allocatedBytes: rootAllocatedBytes,
                 fileCount: rootFileCount,
+                fileExtensionSummaries: Array(rankedExtensions.prefix(maximumFileExtensionSummaries)),
+                fileExtensionSummariesTruncated: rankedExtensions.count > maximumFileExtensionSummaries,
                 inaccessibleCount: inaccessibleCount,
                 complete: scanComplete && inaccessibleCount == 0 && excludedSymlinkCount == 0
                     && metrics[""]?.changedDuringScanCount == 0,
@@ -385,8 +412,32 @@ public enum FolderScanner {
             parentPath: parentPath,
             identity: FileIdentity(device: UInt64(metadata.st_dev), inode: UInt64(metadata.st_ino)),
             logicalBytes: Int64(max(0, metadata.st_size)),
-            allocatedBytes: Int64(max(0, metadata.st_blocks)) * 512
+            allocatedBytes: Int64(max(0, metadata.st_blocks)) * 512,
+            extensionName: fileExtensionName(relativePath: relativePath)
         )
+    }
+
+    private static func fileExtensionName(relativePath: String) -> String {
+        let fileName = relativePath.split(separator: "/").last.map(String.init) ?? relativePath
+        let pathExtension = (fileName as NSString).pathExtension.lowercased()
+        guard !pathExtension.isEmpty else { return "no extension" }
+        guard pathExtension.utf8.count <= 32,
+              pathExtension.unicodeScalars.allSatisfy({ scalar in
+                  (48...57).contains(scalar.value)
+                    || (97...122).contains(scalar.value)
+                    || scalar == "-" || scalar == "_" || scalar == "+"
+              }) else { return "other" }
+        return pathExtension
+    }
+
+    private static func addFileExtension(
+        _ file: FileRecord, to summaries: inout [String: FileExtensionMetrics]
+    ) {
+        var value = summaries[file.extensionName, default: FileExtensionMetrics()]
+        value.logicalBytes += file.logicalBytes
+        value.allocatedBytes += file.allocatedBytes
+        value.fileCount += 1
+        summaries[file.extensionName] = value
     }
 
     private static func addFile(

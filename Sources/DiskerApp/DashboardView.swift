@@ -1489,6 +1489,9 @@ struct DashboardView: View {
                         }
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                        if !folder.fileExtensionSummaries.isEmpty {
+                            fileExtensionSummary(for: folder)
+                        }
                     }
                     Spacer(minLength: 8)
                     Text(format(folder.allocatedBytes))
@@ -1642,6 +1645,39 @@ struct DashboardView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private func fileExtensionSummary(for folder: FolderObservation) -> some View {
+        let summaries = Array(folder.fileExtensionSummaries.prefix(5))
+        return VStack(alignment: .leading, spacing: 4) {
+            Text("Largest filename extensions")
+                .font(.caption2.weight(.semibold))
+            ForEach(summaries) { item in
+                HStack(spacing: 8) {
+                    Text(item.extensionName == "no extension" ? "No extension" : ".\(item.extensionName)")
+                        .font(.caption2.monospaced())
+                        .lineLimit(1)
+                    Text("\(item.fileCount) files")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    Text(format(item.allocatedBytes))
+                        .font(.caption2.monospacedDigit())
+                }
+            }
+            if folder.fileExtensionSummariesTruncated || folder.fileExtensionSummaries.count > summaries.count {
+                Text(folder.fileExtensionSummariesTruncated
+                     ? "Showing the five largest of the 30 retained filename categories."
+                     : "Showing the five largest filename categories.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Text("Grouped by filename only; content and purpose are not verified. Estimates share this scan's coverage.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 4)
     }
 
     private func header(_ title: String, subtitle: String) -> some View {
