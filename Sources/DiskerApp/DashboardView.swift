@@ -444,6 +444,9 @@ struct DashboardView: View {
                     Text("available")
                         .foregroundStyle(.secondary)
                 }
+                Text("\(capacity.volumeName ?? "System volume") · \(capacity.volumeIsLocal.map { $0 ? "local volume" : "network volume" } ?? "volume location unknown")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 ProgressView(value: Double(capacity.availableBytes), total: Double(max(1, capacity.totalBytes)))
                     .tint(.blue)
                     .accessibilityLabel("Available capacity")
@@ -485,7 +488,7 @@ struct DashboardView: View {
                     .foregroundStyle(delta >= 0 ? .green : .orange)
                     .accessibilityElement(children: .combine)
                 } else {
-                    Text("No earlier capacity measurement with this volume size and availability method is available for comparison.")
+                        Text("No earlier comparable measurement for this volume and availability method is available.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

@@ -79,23 +79,25 @@ public enum ObservationComparison {
                 && $0.totalBytes == current.totalBytes
                 && $0.availableBytes == current.availableBytes
                 && $0.availabilityBasis == current.availabilityBasis
+                && $0.volumeUUID == current.volumeUUID
         }) else { return nil }
 
         return history.capacityObservations[..<currentIndex].reversed().first(where: {
-            $0.totalBytes == current.totalBytes
-                && $0.availabilityBasis == current.availabilityBasis
+            sameCapacityVolume($0, current)
                 && $0.observedAt <= current.observedAt
         })
     }
 
-    /// The trailing run of samples for the same reported volume size and
-    /// availability API basis. A capacity or method change starts a new run.
+    /// The trailing run for the same volume identity, reported capacity, and
+    /// availability API basis. A volume, capacity, or method change starts a
+    /// new run.
     public static func comparableCapacitySeries(in history: LocalHistory) -> [CapacityObservation] {
         guard let latest = history.capacityObservations.last else { return [] }
         var series: [CapacityObservation] = []
         for sample in history.capacityObservations.reversed() {
             guard sample.totalBytes == latest.totalBytes,
-                  sample.availabilityBasis == latest.availabilityBasis else { break }
+                  sample.availabilityBasis == latest.availabilityBasis,
+                  sameVolumeIdentity(sample, latest) else { break }
             series.append(sample)
         }
         return series.reversed()
@@ -108,10 +110,29 @@ public enum ObservationComparison {
     ) -> Int64? {
         guard current.totalBytes == previous.totalBytes,
               current.availabilityBasis == previous.availabilityBasis,
+              sameVolumeIdentity(current, previous),
               current.observedAt >= previous.observedAt
         else { return nil }
         let (delta, overflow) = current.availableBytes.subtractingReportingOverflow(previous.availableBytes)
         return overflow ? nil : delta
+    }
+
+    private static func sameCapacityVolume(
+        _ lhs: CapacityObservation, _ rhs: CapacityObservation
+    ) -> Bool {
+        lhs.totalBytes == rhs.totalBytes
+            && lhs.availabilityBasis == rhs.availabilityBasis
+            && sameVolumeIdentity(lhs, rhs)
+    }
+
+    private static func sameVolumeIdentity(
+        _ lhs: CapacityObservation, _ rhs: CapacityObservation
+    ) -> Bool {
+        switch (lhs.volumeUUID, rhs.volumeUUID) {
+        case let (left?, right?): return left == right
+        case (nil, nil): return true
+        default: return false
+        }
     }
 
     /// Complete observations of the same selected root through the specified

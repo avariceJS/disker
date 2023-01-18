@@ -32,6 +32,7 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 ## Current behavior
 
 - Reads total and available capacity reported by macOS for `/`.
+- Labels the macOS-reported system volume by name and local/network status when available; capacity history comparisons require a matching volume UUID when both observations contain one.
 - Scans only folders or application bundles selected in the native open panel, with at most 50 folder roots per scan.
 - Provides native **Scan → Choose Folders to Scan…** (`⌘O`) and **Choose an Application Bundle…** (`⌘⇧O`) commands.
 - Remembers up to 20 selected scan locations as read-only security-scoped bookmarks in `~/Library/Application Support/Disker/selected-scopes.json`. Users can rescan them manually or remove each saved permission; Disker does not access them on launch or monitor them in the background.
@@ -45,7 +46,7 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 - Groups selected-folder file metadata by safe filename extension, showing the five largest categories and explicitly noting that names do not verify content or purpose; up to 30 categories are retained.
 - Adds cautious, exact-name hints for common development storage locations such as SwiftPM build output, Xcode DerivedData, `node_modules`, and Python environments. These hints do not determine ownership or safety to remove.
 - Saves up to 180 capacity, folder-scan, and RAM observations under `~/Library/Application Support/Disker/observations.json`. Capacity history is sampled when Disker opens, after a folder scan, or when the user presses Refresh; it is not a background monitor.
-- Plots up to 24 comparable root-capacity observations, separating series when reported capacity or the macOS availability method changes. The chart reports system availability and does not explain which folders changed.
+- Plots up to 24 comparable root-volume capacity observations, separating series when volume UUID, reported capacity, or the macOS availability method changes. The chart reports system availability and does not explain which folders changed.
 - Compares complete folder scans to earlier complete scans for the same path; incomplete scans never produce growth deltas.
 - Shows positive filename-category growth only across complete observations of the same selected path; partial scans, legacy summaries, and truncated category sets suppress the comparison.
 - Highlights up to three selected folders with the largest positive allocated-byte changes between complete observations of the same path, showing both scan times and Finder reveal; a newer partial observation suppresses that path's stale growth signal.

@@ -134,6 +134,43 @@ private struct DiskerCoreChecks {
         let methodChangedHistory = LocalHistory(capacityObservations: [previous, current, changedMethod])
         try expect(ObservationComparison.comparableCapacitySeries(in: methodChangedHistory) == [changedMethod],
                    "capacity history chart data must start a new series after the API basis changes")
+
+        let identifiedPrevious = CapacityObservation(
+            observedAt: Date(timeIntervalSince1970: 300), totalBytes: 1_000,
+            availableBytes: 700, availabilityBasis: .importantUsage, volumeUUID: "volume-a"
+        )
+        let identifiedCurrent = CapacityObservation(
+            observedAt: Date(timeIntervalSince1970: 400), totalBytes: 1_000,
+            availableBytes: 650, availabilityBasis: .importantUsage, volumeUUID: "volume-a"
+        )
+        let replacementVolume = CapacityObservation(
+            observedAt: Date(timeIntervalSince1970: 500), totalBytes: 1_000,
+            availableBytes: 620, availabilityBasis: .importantUsage, volumeUUID: "volume-b"
+        )
+        let volumeHistory = LocalHistory(capacityObservations: [
+            identifiedPrevious, identifiedCurrent, replacementVolume,
+        ])
+        try expect(ObservationComparison.previousComparableCapacity(
+            for: replacementVolume, in: volumeHistory
+        ) == nil, "a replacement volume with the same size and API must not inherit another volume's history")
+        try expect(ObservationComparison.availableCapacityDelta(
+            current: replacementVolume, previous: identifiedCurrent
+        ) == nil, "capacity deltas must not cross volume UUIDs")
+        try expect(ObservationComparison.comparableCapacitySeries(in: volumeHistory) == [replacementVolume],
+                   "volume UUID changes must begin a new capacity-history series")
+        let transitionHistory = LocalHistory(capacityObservations: [previous, identifiedCurrent])
+        try expect(ObservationComparison.previousComparableCapacity(
+            for: identifiedCurrent, in: transitionHistory
+        ) == nil, "legacy capacity without a volume UUID must not be compared with an identified volume")
+        try expect(ObservationComparison.comparableCapacitySeries(in: transitionHistory) == [identifiedCurrent],
+                   "capacity history should begin a fresh run when volume identity first becomes available")
+
+        let legacyCapacityJSON = #"{"observedAt":1,"totalBytes":1000,"availableBytes":500,"availabilityBasis":"importantUsage"}"#
+        let legacyCapacity = try JSONDecoder().decode(
+            CapacityObservation.self, from: Data(legacyCapacityJSON.utf8)
+        )
+        try expect(legacyCapacity.volumeUUID == nil && legacyCapacity.volumeName == nil,
+                   "older capacity observations should decode without volume identity fields")
     }
 
     private static func testApplicationBundleIndex() throws {
@@ -525,7 +562,7 @@ private struct DiskerCoreChecks {
         let sample = try CapacityObservation.current()
         try expect(sample.totalBytes > 0, "macOS should report nonzero root volume capacity")
         try expect(sample.availableBytes <= sample.totalBytes, "available capacity cannot exceed total")
-        print("  / volume: total \(sample.totalBytes) bytes; available \(sample.availableBytes) bytes")
+        print("  / volume: \(sample.volumeName ?? "unknown") · UUID \(sample.volumeUUID ?? "unavailable") · total \(sample.totalBytes) bytes; available \(sample.availableBytes) bytes")
     }
 
     private static func testLiveRAMSample() throws {

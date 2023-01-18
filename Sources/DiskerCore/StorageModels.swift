@@ -10,6 +10,9 @@ public struct CapacityObservation: Codable, Equatable, Sendable {
     public let totalBytes: Int64
     public let availableBytes: Int64
     public let availabilityBasis: CapacityAvailabilityBasis
+    public let volumeName: String?
+    public let volumeUUID: String?
+    public let volumeIsLocal: Bool?
 
     public var notAvailableBytes: Int64 {
         max(0, totalBytes - availableBytes)
@@ -17,12 +20,16 @@ public struct CapacityObservation: Codable, Equatable, Sendable {
 
     public init(
         observedAt: Date = .now, totalBytes: Int64, availableBytes: Int64,
-        availabilityBasis: CapacityAvailabilityBasis = .importantUsage
+        availabilityBasis: CapacityAvailabilityBasis = .importantUsage,
+        volumeName: String? = nil, volumeUUID: String? = nil, volumeIsLocal: Bool? = nil
     ) {
         self.observedAt = observedAt
         self.totalBytes = max(0, totalBytes)
         self.availableBytes = min(max(0, availableBytes), max(0, totalBytes))
         self.availabilityBasis = availabilityBasis
+        self.volumeName = volumeName
+        self.volumeUUID = volumeUUID
+        self.volumeIsLocal = volumeIsLocal
     }
 
     public static func current(at url: URL = URL(fileURLWithPath: "/")) throws -> CapacityObservation {
@@ -30,6 +37,9 @@ public struct CapacityObservation: Codable, Equatable, Sendable {
             .volumeTotalCapacityKey,
             .volumeAvailableCapacityForImportantUsageKey,
             .volumeAvailableCapacityKey,
+            .volumeNameKey,
+            .volumeUUIDStringKey,
+            .volumeIsLocalKey,
         ])
         guard let total = values.volumeTotalCapacity else {
             throw StorageReadError.capacityUnavailable
@@ -42,7 +52,10 @@ public struct CapacityObservation: Codable, Equatable, Sendable {
         }
         return CapacityObservation(
             totalBytes: Int64(total), availableBytes: availability.bytes,
-            availabilityBasis: availability.basis
+            availabilityBasis: availability.basis,
+            volumeName: values.volumeName,
+            volumeUUID: values.volumeUUIDString,
+            volumeIsLocal: values.volumeIsLocal
         )
     }
 
