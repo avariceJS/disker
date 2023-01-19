@@ -1154,6 +1154,22 @@ struct DashboardView: View {
                                     Text(entry.targetPath)
                                         .font(.caption.monospaced())
                                         .textSelection(.enabled)
+                                    HStack(spacing: 10) {
+                                        Button("Reveal candidate in Finder") {
+                                            NSWorkspace.shared.activateFileViewerSelecting([
+                                                URL(fileURLWithPath: entry.targetPath)
+                                            ])
+                                        }
+                                        .controlSize(.small)
+                                        .accessibilityLabel("Reveal proposed candidate in Finder")
+                                        Button("Reveal kept copy") {
+                                            NSWorkspace.shared.activateFileViewerSelecting([
+                                                URL(fileURLWithPath: entry.preservedPath)
+                                            ])
+                                        }
+                                        .controlSize(.small)
+                                        .accessibilityLabel("Reveal preserved duplicate in Finder")
+                                    }
                                     Text("Keep: \(entry.preservedPath)")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
