@@ -398,7 +398,17 @@ struct DashboardView: View {
                 folderGrowthCard
                 directoryGrowthCard
                 if let latest = model.latestScan, !latest.folders.isEmpty {
-                    folderList(latest.folders, title: "Largest selected folders", scanCancelled: latest.cancelled)
+                    let largestFolders = Array(latest.folders.sorted {
+                        $0.allocatedBytes > $1.allocatedBytes
+                    }.prefix(3))
+                    folderList(
+                        largestFolders, title: "Largest selected folders",
+                        scanCancelled: latest.cancelled, includeDetails: false
+                    )
+                    Button("Open Folders for the full breakdown") {
+                        selectedSection = "Folders"
+                    }
+                    .buttonStyle(.link)
                 } else {
                     emptyHistoryCard
                 }
@@ -1520,7 +1530,8 @@ struct DashboardView: View {
     }
 
     private func folderList(
-        _ folders: [FolderObservation], title: String, scanCancelled: Bool
+        _ folders: [FolderObservation], title: String, scanCancelled: Bool,
+        includeDetails: Bool = true
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title).font(.title3.weight(.semibold))
@@ -1562,7 +1573,7 @@ struct DashboardView: View {
                         }
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                        if !folder.fileExtensionSummaries.isEmpty {
+                        if includeDetails && !folder.fileExtensionSummaries.isEmpty {
                             fileExtensionSummary(for: folder)
                         }
                     }
@@ -1582,9 +1593,11 @@ struct DashboardView: View {
                 .background(.background, in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
 
-                folderHistoryChart(for: folder)
+                if includeDetails {
+                    folderHistoryChart(for: folder)
+                }
 
-                if let gitUsage = folder.gitMetadataUsage {
+                if includeDetails, let gitUsage = folder.gitMetadataUsage {
                     VStack(alignment: .leading, spacing: 7) {
                         Label("Git metadata in this selected folder", systemImage: "chevron.left.forwardslash.chevron.right")
                             .font(.subheadline.weight(.semibold))
@@ -1621,7 +1634,7 @@ struct DashboardView: View {
                     .background(.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
                 }
 
-                if !folder.subdirectorySummaries.isEmpty {
+                if includeDetails && !folder.subdirectorySummaries.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Largest subfolders")
                             .font(.subheadline.weight(.semibold))

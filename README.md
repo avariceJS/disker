@@ -51,6 +51,7 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 - Shows positive filename-category growth only across complete observations of the same selected path; partial scans, legacy summaries, and truncated category sets suppress the comparison.
 - Highlights up to three selected folders with the largest positive allocated-byte changes between complete observations of the same path, showing both scan times and Finder reveal; a newer partial observation suppresses that path's stale growth signal.
 - Highlights up to three growing subfolders across complete observations of the same selected root and exact relative path. Only paths present in both retained summaries are compared; a newer partial root scan suppresses old signals.
+- Keeps the Overview focused on the three largest selected roots and the strongest growth signals, with a direct route to the full Folders breakdown.
 - Plots up to 24 complete allocated-estimate observations for a selected path, including chosen application bundles; partial and future scans are excluded.
 - Reports complete-only allocated-estimate deltas for matching descendant paths under the same selected root.
 - Provides Finder reveal for selected folder roots.
