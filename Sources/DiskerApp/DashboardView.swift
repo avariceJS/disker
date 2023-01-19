@@ -396,6 +396,7 @@ struct DashboardView: View {
                 capacityCard
                 scanCard
                 folderGrowthCard
+                directoryGrowthCard
                 if let latest = model.latestScan, !latest.folders.isEmpty {
                     folderList(latest.folders, title: "Largest selected folders", scanCancelled: latest.cancelled)
                 } else {
@@ -619,6 +620,59 @@ struct DashboardView: View {
                             .buttonStyle(.borderless)
                             .help("Reveal selected folder in Finder")
                             .accessibilityLabel("Reveal \(signal.folder.displayName) in Finder")
+                        }
+                        if signal.id != signals.last?.id { Divider() }
+                    }
+                }
+                .padding(18)
+                .background(.background, in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
+            }
+        }
+    }
+
+    private var directoryGrowthCard: some View {
+        let signals = ObservationComparison.growingDirectories(in: model.history)
+        return Group {
+            if !signals.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Growing subfolders", systemImage: "folder.badge.plus")
+                        .font(.headline)
+                    Text("Largest positive allocated-estimate changes for the same subfolder within the same selected root. Paths missing from a retained summary are not treated as zero.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(signals) { signal in
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(signal.directory.rootRelativePath)
+                                    .font(.caption.weight(.medium))
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .textSelection(.enabled)
+                                Text("In \(signal.folder.path)")
+                                    .font(.caption2)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .textSelection(.enabled)
+                                Text("Complete scans: \(signal.previousFolder.finishedAt.formatted(date: .abbreviated, time: .shortened)) → \(signal.folder.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 4)
+                            Text(formattedDelta(signal.growthBytes))
+                                .font(.subheadline.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(.orange)
+                            Button {
+                                let directoryURL = URL(fileURLWithPath: signal.folder.path)
+                                    .appendingPathComponent(signal.directory.rootRelativePath)
+                                NSWorkspace.shared.activateFileViewerSelecting([directoryURL])
+                            } label: {
+                                Image(systemName: "arrow.up.right.square")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Reveal subfolder in Finder")
+                            .accessibilityLabel("Reveal \(signal.directory.rootRelativePath) in Finder")
                         }
                         if signal.id != signals.last?.id { Divider() }
                     }

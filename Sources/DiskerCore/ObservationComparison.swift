@@ -14,6 +14,15 @@ public enum ObservationComparison {
         public let growthBytes: Int64
     }
 
+    public struct DirectoryGrowthSignal: Equatable, Identifiable, Sendable {
+        public var id: String { folder.path + "\u{0}" + directory.rootRelativePath }
+        public let folder: FolderObservation
+        public let previousFolder: FolderObservation
+        public let directory: DirectoryUsage
+        public let previousDirectory: DirectoryUsage
+        public let growthBytes: Int64
+    }
+
     public struct ProcessGrowthSignal: Equatable, Identifiable, Sendable {
         public var id: Int32 { processID }
         public let processID: Int32
@@ -235,6 +244,58 @@ public enum ObservationComparison {
         }
         .prefix(limit)
         .map { $0 }
+    }
+
+    /// Positive subdirectory allocated-byte changes from the latest complete
+    /// scan of each exact selected root. A path must appear in both complete
+    /// observations; absence from a capped summary is never treated as zero.
+    public static func growingDirectories(
+        in history: LocalHistory,
+        limit: Int = 3
+    ) -> [DirectoryGrowthSignal] {
+        guard limit > 0 else { return [] }
+        var latestByPath: [String: FolderObservation] = [:]
+        for observation in history.observations {
+            for folder in observation.folders {
+                latestByPath[folder.path] = folder
+            }
+        }
+
+        var signals: [DirectoryGrowthSignal] = []
+        for folder in latestByPath.values {
+            guard folder.complete,
+                  let previousFolder = previousCompleteFolder(for: folder, in: history) else { continue }
+            let previousDirectories = directoryMap(in: previousFolder)
+            for directory in directoryMap(in: folder).values {
+                guard directory.complete,
+                      let previousDirectory = previousDirectories[directory.rootRelativePath],
+                      previousDirectory.complete,
+                      let delta = allocatedByteDelta(current: directory, previous: previousDirectory),
+                      delta > 0 else { continue }
+                signals.append(DirectoryGrowthSignal(
+                    folder: folder, previousFolder: previousFolder,
+                    directory: directory, previousDirectory: previousDirectory,
+                    growthBytes: delta
+                ))
+            }
+        }
+
+        return Array(signals.sorted {
+            if $0.growthBytes != $1.growthBytes { return $0.growthBytes > $1.growthBytes }
+            if $0.folder.path != $1.folder.path { return $0.folder.path < $1.folder.path }
+            return $0.directory.rootRelativePath < $1.directory.rootRelativePath
+        }.prefix(limit))
+    }
+
+    private static func directoryMap(in folder: FolderObservation) -> [String: DirectoryUsage] {
+        var directories: [String: DirectoryUsage] = [:]
+        for directory in folder.subdirectorySummaries {
+            directories[directory.rootRelativePath] = directory
+        }
+        if let gitMetadata = folder.gitMetadataUsage {
+            directories[gitMetadata.rootRelativePath] = gitMetadata
+        }
+        return directories
     }
 
     private static func completeCategoryMetrics(

@@ -1267,6 +1267,14 @@ private struct DiskerCoreChecks {
         if let previous {
             try expect(ObservationComparison.allocatedByteDelta(current: currentDirectory, previous: previous) == 25, "directory growth should compare allocated estimates")
         }
+        let directoryGrowth = ObservationComparison.growingDirectories(in: history)
+        try expect(directoryGrowth.count == 1
+                   && directoryGrowth[0].folder.path == "/selected"
+                   && directoryGrowth[0].directory.rootRelativePath == "Projects/Example"
+                   && directoryGrowth[0].growthBytes == 875,
+                   "directory highlights should compare the latest complete same-path subfolder observation")
+        try expect(ObservationComparison.growingDirectories(in: history, limit: 0).isEmpty,
+                   "directory growth highlights should honor an empty limit")
         let changedPath = directory("Projects/Other", bytes: 100, complete: true)
         try expect(ObservationComparison.allocatedByteDelta(current: currentDirectory, previous: changedPath) == nil, "different relative subfolder paths must not be compared")
 
@@ -1303,6 +1311,8 @@ private struct DiskerCoreChecks {
         try expect(ObservationComparison.previousCompleteDirectory(
             for: partialFolder.subdirectorySummaries[0], in: partialFolder, history: partialHistory
         ) == nil, "partial root observations must not be compared even if a subtree summary appears complete")
+        try expect(ObservationComparison.growingDirectories(in: partialHistory).isEmpty,
+                   "a newer partial root scan must suppress older subfolder growth signals")
     }
 
     private static func folderWithDirectory(
