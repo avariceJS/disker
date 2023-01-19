@@ -1724,7 +1724,7 @@ struct DashboardView: View {
         let summaries = Array(folder.fileExtensionSummaries.prefix(5))
         let growth = ObservationComparison.growingFileExtensions(for: folder, in: model.history)
         return VStack(alignment: .leading, spacing: 4) {
-            Text("Largest filename extensions")
+            Text("Largest filename extensions · allocated estimate")
                 .font(.caption2.weight(.semibold))
             ForEach(summaries) { item in
                 HStack(spacing: 8) {
@@ -1748,7 +1748,7 @@ struct DashboardView: View {
             }
             if let growth, !growth.isEmpty,
                let previous = model.previousCompleteObservation(for: folder) {
-                Text("Growing categories since \(previous.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                Text("Growing categories · allocated estimate since \(previous.finishedAt.formatted(date: .abbreviated, time: .shortened))")
                     .font(.caption2.weight(.semibold))
                     .padding(.top, 2)
                 ForEach(growth) { item in
