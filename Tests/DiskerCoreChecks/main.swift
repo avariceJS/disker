@@ -23,6 +23,7 @@ private struct DiskerCoreChecks {
         let checks: [(String, () throws -> Void)] = [
             ("capacity math", testCapacityMath),
             ("capacity clamping", testCapacityClamping),
+            ("low available capacity warning threshold", testLowAvailableCapacityWarning),
             ("comparable capacity history", testCapacityHistoryComparison),
             ("explicit application bundle history index", testApplicationBundleIndex),
             ("explicitly selected app bundle identity read", testApplicationBundleMetadata),
@@ -102,6 +103,33 @@ private struct DiskerCoreChecks {
         let sample = CapacityObservation(totalBytes: 100, availableBytes: 200)
         try expect(sample.availableBytes == 100, "available bytes should not exceed total capacity")
         try expect(sample.notAvailableBytes == 0, "not-available bytes should never be negative")
+    }
+
+    private static func testLowAvailableCapacityWarning() throws {
+        let gibibyte: Int64 = 1_073_741_824
+        let smallerVolume = CapacityObservation(
+            totalBytes: 100 * gibibyte, availableBytes: 10 * gibibyte
+        )
+        try expect(smallerVolume.lowAvailableCapacityThreshold == 10 * gibibyte
+                   && !smallerVolume.isLowOnAvailableCapacity,
+                   "volumes below 200 GiB should use the 10 GiB warning threshold inclusively")
+        let belowSmallThreshold = CapacityObservation(
+            totalBytes: 100 * gibibyte, availableBytes: 10 * gibibyte - 1
+        )
+        try expect(belowSmallThreshold.isLowOnAvailableCapacity,
+                   "available capacity below the threshold should raise a dashboard signal")
+
+        let largerVolume = CapacityObservation(
+            totalBytes: 1_000 * gibibyte, availableBytes: 50 * gibibyte
+        )
+        try expect(largerVolume.lowAvailableCapacityThreshold == 50 * gibibyte
+                   && !largerVolume.isLowOnAvailableCapacity,
+                   "larger volumes should use five percent of system-reported capacity")
+        let belowLargeThreshold = CapacityObservation(
+            totalBytes: 1_000 * gibibyte, availableBytes: 50 * gibibyte - 1
+        )
+        try expect(belowLargeThreshold.isLowOnAvailableCapacity,
+                   "large-volume warning should trigger only below the five-percent boundary")
     }
 
     private static func testCapacityHistoryComparison() throws {

@@ -18,6 +18,16 @@ public struct CapacityObservation: Codable, Equatable, Sendable {
         max(0, totalBytes - availableBytes)
     }
 
+    /// Conservative dashboard signal threshold: the larger of 10 GiB or 5%
+    /// of the system-reported volume capacity. This does not attribute use.
+    public var lowAvailableCapacityThreshold: Int64 {
+        max(10 * 1_073_741_824, totalBytes / 20)
+    }
+
+    public var isLowOnAvailableCapacity: Bool {
+        availableBytes < lowAvailableCapacityThreshold
+    }
+
     public init(
         observedAt: Date = .now, totalBytes: Int64, availableBytes: Int64,
         availabilityBasis: CapacityAvailabilityBasis = .importantUsage,

@@ -32,6 +32,7 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 ## Current behavior
 
 - Reads total and available capacity reported by macOS for `/`.
+- Shows a low-capacity signal below the larger of 10 GiB or 5% available. This is a review prompt only; it does not attribute usage or estimate reclaimable space.
 - Labels the macOS-reported system volume by name and local/network status when available; capacity history comparisons require a matching volume UUID when both observations contain one.
 - Scans only folders or application bundles selected in the native open panel, with at most 50 folder roots per scan.
 - Provides native **Scan → Choose Folders to Scan…** (`⌘O`) and **Choose an Application Bundle…** (`⌘⇧O`) commands.

@@ -462,6 +462,28 @@ struct DashboardView: View {
                     .tint(.blue)
                     .accessibilityLabel("Available capacity")
                     .accessibilityValue("\(format(capacity.availableBytes)) of \(format(capacity.totalBytes))")
+                if capacity.isLowOnAvailableCapacity {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Low available capacity")
+                                .font(.subheadline.weight(.semibold))
+                            Text("macOS reports less than the warning threshold of \(format(capacity.lowAvailableCapacityThreshold)). This does not identify which folders use space or how much any action could reclaim.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button("Review selected folders") {
+                                selectedSection = "Folders"
+                            }
+                            .buttonStyle(.link)
+                            .controlSize(.small)
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+                }
                 let capacitySeries = Array(ObservationComparison.comparableCapacitySeries(in: model.history).suffix(24))
                 if capacitySeries.count > 1 {
                     let values = capacitySeries.map { Double($0.availableBytes) / 1_073_741_824 }
