@@ -731,6 +731,13 @@ private struct DiskerCoreChecks {
             let nestedSummary = try requireSummary("nested", in: folder)
             try expect(nestedSummary.excludedSpecialFileCount == 1 && !nestedSummary.complete,
                        "special entries should make only their containing subtree partial")
+            let decoded = try JSONDecoder().decode(
+                FolderObservation.self, from: JSONEncoder().encode(folder)
+            )
+            try expect(decoded.excludedSpecialFileCount == 2
+                       && decoded.subdirectorySummaries.first(where: { $0.rootRelativePath == "nested" })?
+                            .excludedSpecialFileCount == 1,
+                       "special-entry coverage counts should persist at root and subtree levels")
 
             let selectedFIFO = root.appendingPathComponent("nested/nested-stream.sqlite")
             let selected = FolderScanner.scan(roots: [selectedFIFO]).folders[0]
