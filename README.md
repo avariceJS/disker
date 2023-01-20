@@ -40,6 +40,7 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 - Compares repeated complete bundle scans and app-associated folder scans of the same selected path using allocated-byte estimates; incomplete results stay explicitly partial.
 - Folder-size scans read filesystem metadata only and do not open file contents. The separate, explicit app-selection flow validates the selected bundle's static signature by reading its signed executable and resources locally; this checks integrity, not notarization or publisher trust, and nothing is uploaded.
 - Does not follow symbolic links; deduplicates hard links within each selected folder.
+- Excludes sockets, FIFOs, device nodes, and other non-regular entries from file totals and filename categories, while marking the affected root and subtree as partial.
 - Detects changed/replaced directories where possible and marks their coverage partial; a scan is still not an atomic snapshot.
 - Flags a direct `.git` metadata entry as a project marker and separately measures a real `.git` directory even when it falls outside the largest-folder ranking. A `.git` file remains a marker only; Disker does not read its contents or claim project ownership.
 - Shows logical file size separately from allocated blocks summed from `st_blocks`.

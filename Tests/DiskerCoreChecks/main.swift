@@ -34,6 +34,7 @@ private struct DiskerCoreChecks {
             ("live RAM and process sample", testLiveRAMSample),
             ("cautious sustained process growth signal", testPossibleProcessGrowth),
             ("metadata scan and symlink exclusion", testMetadataScanAndSymlinkExclusion),
+            ("special filesystem entries remain partial and uncounted", testSpecialFileExclusion),
             ("metadata-only filename extension summaries", testFileExtensionSummaries),
             ("selected-scope duplicate verification", testDuplicateVerification),
             ("duplicate verification cancellation", testDuplicateVerificationCancellation),
@@ -700,6 +701,33 @@ private struct DiskerCoreChecks {
         }
     }
 
+    private static func testSpecialFileExclusion() throws {
+        try withTemporaryDirectory { root in
+            let regularFile = root.appendingPathComponent("payload.txt")
+            try Data(repeating: 0x31, count: 512).write(to: regularFile)
+            let nested = root.appendingPathComponent("nested", isDirectory: true)
+            try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: false)
+            for pipeURL in [root.appendingPathComponent("root-stream.db"), nested.appendingPathComponent("nested-stream.sqlite")] {
+                let result = pipeURL.path.withCString { mkfifo($0, mode_t(S_IRUSR | S_IWUSR)) }
+                try expect(result == 0, "synthetic FIFO fixtures should be created without reading or writing their endpoints")
+            }
+
+            let folder = FolderScanner.scan(roots: [root]).folders[0]
+            try expect(folder.fileCount == 1 && folder.fileExtensionSummaries.map(\.extensionName) == ["txt"],
+                       "special entries must not enter regular-file totals or filename categories")
+            try expect(folder.excludedSpecialFileCount == 2 && folder.inaccessibleCount == 0 && !folder.complete,
+                       "excluded special entries should be visible as partial coverage, not access failures")
+            let nestedSummary = try requireSummary("nested", in: folder)
+            try expect(nestedSummary.excludedSpecialFileCount == 1 && !nestedSummary.complete,
+                       "special entries should make only their containing subtree partial")
+
+            let selectedFIFO = root.appendingPathComponent("nested/nested-stream.sqlite")
+            let selected = FolderScanner.scan(roots: [selectedFIFO]).folders[0]
+            try expect(selected.excludedSpecialFileCount == 1 && selected.fileCount == 0 && !selected.complete,
+                       "a selected special-file root should remain excluded and explicitly incomplete")
+        }
+    }
+
     private static func testDuplicateVerification() throws {
         try withTemporaryDirectory { root in
             let first = root.appendingPathComponent("first.bin")
@@ -933,6 +961,7 @@ private struct DiskerCoreChecks {
             throw CheckFailure.assertion("old history JSON should decode one folder")
         }
         try expect(folder.excludedSymlinkCount == 0, "old folder history should default symlink count to zero")
+        try expect(folder.excludedSpecialFileCount == 0, "old folder history should default special-file count to zero")
         try expect(folder.changedDuringScanCount == 0, "old folder history should default mutation count to zero")
         try expect(!folder.gitMetadataEntryDetected, "old folder history should default Git marker state to false")
         try expect(folder.gitMetadataUsage == nil, "old folder history should default retained Git metrics to absent")
@@ -950,6 +979,7 @@ private struct DiskerCoreChecks {
                    "legacy app-folder associations without an identifier must remain unverified")
         try expect(folder.subdirectorySummaries.count == 1, "old folder history should preserve existing directory summaries")
         try expect(folder.subdirectorySummaries[0].changedDuringScanCount == 0, "old directory summaries should default mutation count to zero")
+        try expect(folder.subdirectorySummaries[0].excludedSpecialFileCount == 0, "old directory summaries should default special-file count to zero")
         try expect(!folder.subdirectorySummaries[0].gitMetadataEntryDetected, "old directory summaries should default Git marker state to false")
         try expect(!folder.subdirectorySummariesTruncated, "old folder history should default truncation to false")
         try expect(folder.fileExtensionSummaries.isEmpty && !folder.fileExtensionSummariesTruncated,

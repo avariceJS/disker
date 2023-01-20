@@ -49,6 +49,7 @@ public enum FolderScanner {
         var fileCount = 0
         var incompleteCount = 0
         var excludedSymlinkCount = 0
+        var excludedSpecialFileCount = 0
         var changedDuringScanCount = 0
         var gitMetadataEntryDetected = false
     }
@@ -99,9 +100,14 @@ public enum FolderScanner {
             var rootLogicalBytes: Int64 = 0
             var rootAllocatedBytes: Int64 = 0
             var rootFileCount = 0
+            var excludedSpecialFileCount = 0
             var extensionMetrics: [String: FileExtensionMetrics] = [:]
 
             if rootType != S_IFDIR {
+                guard rootType == S_IFREG else {
+                    results.append(emptyObservation(root: root, excludedSpecialFileCount: 1))
+                    continue
+                }
                 let file = fileRecord(metadata: rootMetadata, relativePath: root.lastPathComponent, parentPath: "")
                 if rootMetadata.st_nlink > 1 {
                     seenFileIdentities.insert(file.identity)
@@ -238,6 +244,9 @@ public enum FolderScanner {
                                 path: fullPath,
                                 expectedIdentity: identity(of: metadata)
                             ))
+                        } else if type != S_IFREG {
+                            excludedSpecialFileCount += 1
+                            addCoverageEvent(directory.relativePath, symlink: false, specialFile: true, to: &metrics)
                         } else {
                             let file = fileRecord(
                                 metadata: metadata,
@@ -317,6 +326,7 @@ public enum FolderScanner {
                 parentMetrics.fileCount += child.fileCount
                 parentMetrics.incompleteCount += child.incompleteCount
                 parentMetrics.excludedSymlinkCount += child.excludedSymlinkCount
+                parentMetrics.excludedSpecialFileCount += child.excludedSpecialFileCount
                 parentMetrics.changedDuringScanCount += child.changedDuringScanCount
                 metrics[parent] = parentMetrics
             }
@@ -359,8 +369,10 @@ public enum FolderScanner {
                 fileExtensionSummariesTruncated: rankedExtensions.count > maximumFileExtensionSummaries,
                 inaccessibleCount: inaccessibleCount,
                 complete: scanComplete && inaccessibleCount == 0 && excludedSymlinkCount == 0
+                    && excludedSpecialFileCount == 0
                     && metrics[""]?.changedDuringScanCount == 0,
                 excludedSymlinkCount: excludedSymlinkCount,
+                excludedSpecialFileCount: excludedSpecialFileCount,
                 changedDuringScanCount: metrics[""]?.changedDuringScanCount ?? 0,
                 gitMetadataEntryDetected: metrics[""]?.gitMetadataEntryDetected ?? false,
                 gitMetadataUsage: gitMetadataUsage,
@@ -382,16 +394,18 @@ public enum FolderScanner {
             fileCount: value.fileCount,
             incompleteCount: value.incompleteCount,
             excludedSymlinkCount: value.excludedSymlinkCount,
+            excludedSpecialFileCount: value.excludedSpecialFileCount,
             changedDuringScanCount: value.changedDuringScanCount,
             gitMetadataEntryDetected: value.gitMetadataEntryDetected,
             complete: value.incompleteCount == 0 && value.excludedSymlinkCount == 0
+                && value.excludedSpecialFileCount == 0
                 && value.changedDuringScanCount == 0
         )
     }
 
     private static func emptyObservation(
         root: URL, inaccessibleCount: Int = 0, excludedSymlinkCount: Int = 0,
-        changedDuringScanCount: Int = 0
+        excludedSpecialFileCount: Int = 0, changedDuringScanCount: Int = 0
     ) -> FolderObservation {
         FolderObservation(
             path: root.path,
@@ -402,6 +416,7 @@ public enum FolderScanner {
             inaccessibleCount: inaccessibleCount,
             complete: false,
             excludedSymlinkCount: excludedSymlinkCount,
+            excludedSpecialFileCount: excludedSpecialFileCount,
             changedDuringScanCount: changedDuringScanCount
         )
     }
@@ -451,11 +466,12 @@ public enum FolderScanner {
     }
 
     private static func addCoverageEvent(
-        _ path: String, symlink: Bool, changed: Bool = false,
+        _ path: String, symlink: Bool, specialFile: Bool = false, changed: Bool = false,
         to metrics: inout [String: DirectoryMetrics]
     ) {
         var value = metrics[path, default: DirectoryMetrics()]
         if symlink { value.excludedSymlinkCount += 1 }
+        else if specialFile { value.excludedSpecialFileCount += 1 }
         else if changed { value.changedDuringScanCount += 1 }
         else { value.incompleteCount += 1 }
         metrics[path] = value

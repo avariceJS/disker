@@ -795,6 +795,7 @@ struct DashboardView: View {
                                     Text(coverageSummary(
                                         inaccessible: bundle.inaccessibleCount,
                                         excludedSymlinks: bundle.excludedSymlinkCount,
+                                        excludedSpecialFiles: bundle.excludedSpecialFileCount,
                                         changed: bundle.changedDuringScanCount,
                                         wasCancelled: model.scanWasCancelled(for: bundle)
                                     ))
@@ -947,6 +948,7 @@ struct DashboardView: View {
                                         Text(coverageSummary(
                                             inaccessible: folder.inaccessibleCount,
                                             excludedSymlinks: folder.excludedSymlinkCount,
+                                            excludedSpecialFiles: folder.excludedSpecialFileCount,
                                             changed: folder.changedDuringScanCount,
                                             wasCancelled: observation.cancelled
                                         ))
@@ -1313,6 +1315,7 @@ struct DashboardView: View {
                             Text(coverageSummary(
                                 inaccessible: observation.inaccessibleCount,
                                 excludedSymlinks: observation.excludedSymlinkCount,
+                                excludedSpecialFiles: observation.excludedSpecialFileCount,
                                 changed: observation.changedDuringScanCount,
                                 wasCancelled: model.scanWasCancelled(for: observation)
                             ))
@@ -1553,6 +1556,7 @@ struct DashboardView: View {
                                 Text(coverageSummary(
                                     inaccessible: folder.inaccessibleCount,
                                     excludedSymlinks: folder.excludedSymlinkCount,
+                                    excludedSpecialFiles: folder.excludedSpecialFileCount,
                                     changed: folder.changedDuringScanCount,
                                     wasCancelled: scanCancelled
                                 ))
@@ -1614,6 +1618,7 @@ struct DashboardView: View {
                                 Text(coverageSummary(
                                     inaccessible: gitUsage.incompleteCount,
                                     excludedSymlinks: gitUsage.excludedSymlinkCount,
+                                    excludedSpecialFiles: gitUsage.excludedSpecialFileCount,
                                     changed: gitUsage.changedDuringScanCount,
                                     wasCancelled: scanCancelled
                                 ))
@@ -1676,6 +1681,7 @@ struct DashboardView: View {
                                             Text(coverageSummary(
                                                 inaccessible: directory.incompleteCount,
                                                 excludedSymlinks: directory.excludedSymlinkCount,
+                                                excludedSpecialFiles: directory.excludedSpecialFileCount,
                                                 changed: directory.changedDuringScanCount,
                                                 wasCancelled: scanCancelled
                                             ))
@@ -1856,11 +1862,13 @@ struct DashboardView: View {
     }
 
     private func coverageSummary(
-        inaccessible: Int, excludedSymlinks: Int, changed: Int, wasCancelled: Bool
+        inaccessible: Int, excludedSymlinks: Int, excludedSpecialFiles: Int = 0,
+        changed: Int, wasCancelled: Bool
     ) -> String {
         var details: [String] = []
         if inaccessible > 0 { details.append("\(inaccessible) unmeasured") }
         if excludedSymlinks > 0 { details.append("\(excludedSymlinks) symlinks not followed") }
+        if excludedSpecialFiles > 0 { details.append("\(excludedSpecialFiles) special files excluded") }
         if changed > 0 { details.append("\(changed) changed during scan") }
         if wasCancelled && details.isEmpty { details.append("scan cancelled") }
         return details.isEmpty ? "Coverage incomplete" : "Partial · " + details.joined(separator: " · ")

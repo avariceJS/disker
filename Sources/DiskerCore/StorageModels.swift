@@ -104,6 +104,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     public let fileExtensionSummariesTruncated: Bool
     public let inaccessibleCount: Int
     public let excludedSymlinkCount: Int
+    public let excludedSpecialFileCount: Int
     public let changedDuringScanCount: Int
     public let gitMetadataEntryDetected: Bool
     /// Metrics for a direct, real `.git` directory, retained even when it is
@@ -130,6 +131,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         fileExtensionSummariesTruncated: Bool = false,
         inaccessibleCount: Int, finishedAt: Date = .now, complete: Bool,
         excludedSymlinkCount: Int = 0,
+        excludedSpecialFileCount: Int = 0,
         changedDuringScanCount: Int = 0,
         gitMetadataEntryDetected: Bool = false,
         gitMetadataUsage: DirectoryUsage? = nil,
@@ -150,6 +152,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         self.fileExtensionSummariesTruncated = fileExtensionSummariesTruncated
         self.inaccessibleCount = inaccessibleCount
         self.excludedSymlinkCount = excludedSymlinkCount
+        self.excludedSpecialFileCount = excludedSpecialFileCount
         self.changedDuringScanCount = changedDuringScanCount
         self.gitMetadataEntryDetected = gitMetadataEntryDetected
         self.gitMetadataUsage = gitMetadataUsage
@@ -166,7 +169,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, path, displayName, logicalBytes, allocatedBytes, fileCount
         case fileExtensionSummaries, fileExtensionSummariesTruncated
-        case inaccessibleCount, excludedSymlinkCount, changedDuringScanCount, gitMetadataEntryDetected
+        case inaccessibleCount, excludedSymlinkCount, excludedSpecialFileCount
+        case changedDuringScanCount, gitMetadataEntryDetected
         case finishedAt, complete
         case subdirectorySummaries, subdirectorySummariesTruncated, gitMetadataUsage
         case applicationBundleIdentifier
@@ -186,6 +190,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         fileExtensionSummariesTruncated = try values.decodeIfPresent(Bool.self, forKey: .fileExtensionSummariesTruncated) ?? false
         inaccessibleCount = try values.decode(Int.self, forKey: .inaccessibleCount)
         excludedSymlinkCount = try values.decodeIfPresent(Int.self, forKey: .excludedSymlinkCount) ?? 0
+        excludedSpecialFileCount = try values.decodeIfPresent(Int.self, forKey: .excludedSpecialFileCount) ?? 0
         changedDuringScanCount = try values.decodeIfPresent(Int.self, forKey: .changedDuringScanCount) ?? 0
         gitMetadataEntryDetected = try values.decodeIfPresent(Bool.self, forKey: .gitMetadataEntryDetected) ?? false
         gitMetadataUsage = try values.decodeIfPresent(DirectoryUsage.self, forKey: .gitMetadataUsage)
@@ -211,6 +216,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         try values.encode(fileExtensionSummariesTruncated, forKey: .fileExtensionSummariesTruncated)
         try values.encode(inaccessibleCount, forKey: .inaccessibleCount)
         try values.encode(excludedSymlinkCount, forKey: .excludedSymlinkCount)
+        try values.encode(excludedSpecialFileCount, forKey: .excludedSpecialFileCount)
         try values.encode(changedDuringScanCount, forKey: .changedDuringScanCount)
         try values.encode(gitMetadataEntryDetected, forKey: .gitMetadataEntryDetected)
         try values.encodeIfPresent(gitMetadataUsage, forKey: .gitMetadataUsage)
@@ -233,6 +239,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
             inaccessibleCount: inaccessibleCount,
             finishedAt: finishedAt, complete: complete,
             excludedSymlinkCount: excludedSymlinkCount,
+            excludedSpecialFileCount: excludedSpecialFileCount,
             changedDuringScanCount: changedDuringScanCount,
             gitMetadataEntryDetected: gitMetadataEntryDetected,
             gitMetadataUsage: gitMetadataUsage,
@@ -256,6 +263,7 @@ public struct DirectoryUsage: Codable, Equatable, Sendable {
     public let fileCount: Int
     public let incompleteCount: Int
     public let excludedSymlinkCount: Int
+    public let excludedSpecialFileCount: Int
     public let changedDuringScanCount: Int
     public let gitMetadataEntryDetected: Bool
     public let complete: Bool
@@ -263,6 +271,7 @@ public struct DirectoryUsage: Codable, Equatable, Sendable {
     public init(
         rootRelativePath: String, logicalBytes: Int64, allocatedBytes: Int64,
         fileCount: Int, incompleteCount: Int, excludedSymlinkCount: Int,
+        excludedSpecialFileCount: Int = 0,
         changedDuringScanCount: Int = 0,
         gitMetadataEntryDetected: Bool = false,
         complete: Bool
@@ -273,6 +282,7 @@ public struct DirectoryUsage: Codable, Equatable, Sendable {
         self.fileCount = fileCount
         self.incompleteCount = incompleteCount
         self.excludedSymlinkCount = excludedSymlinkCount
+        self.excludedSpecialFileCount = excludedSpecialFileCount
         self.changedDuringScanCount = changedDuringScanCount
         self.gitMetadataEntryDetected = gitMetadataEntryDetected
         self.complete = complete
@@ -280,7 +290,8 @@ public struct DirectoryUsage: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case rootRelativePath, logicalBytes, allocatedBytes, fileCount
-        case incompleteCount, excludedSymlinkCount, changedDuringScanCount, complete
+        case incompleteCount, excludedSymlinkCount, excludedSpecialFileCount
+        case changedDuringScanCount, complete
         case gitMetadataEntryDetected
     }
 
@@ -292,6 +303,7 @@ public struct DirectoryUsage: Codable, Equatable, Sendable {
         fileCount = try values.decode(Int.self, forKey: .fileCount)
         incompleteCount = try values.decode(Int.self, forKey: .incompleteCount)
         excludedSymlinkCount = try values.decode(Int.self, forKey: .excludedSymlinkCount)
+        excludedSpecialFileCount = try values.decodeIfPresent(Int.self, forKey: .excludedSpecialFileCount) ?? 0
         changedDuringScanCount = try values.decodeIfPresent(Int.self, forKey: .changedDuringScanCount) ?? 0
         gitMetadataEntryDetected = try values.decodeIfPresent(Bool.self, forKey: .gitMetadataEntryDetected) ?? false
         complete = try values.decode(Bool.self, forKey: .complete)
