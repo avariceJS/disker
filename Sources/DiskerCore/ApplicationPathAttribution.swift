@@ -135,7 +135,7 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
         case .signatureCoveredSharedGroupClaim:
             "A locally valid static signature covers the selected app's bundle ID and embedded App Groups claim for this exact path. This does not establish developer trust or OS-granted access. The container is shared; current use and exclusive ownership are not established."
         case .declaredSharedGroupContainerClaim:
-            "The selected app's embedded App Groups claim names this exact path. Disker has not validated the signature or access, and this container is shared with other group members."
+            "The selected app's embedded App Groups claim names this exact path. Disker has not matched a locally validated signed identifier to the declared bundle ID or established OS-granted access. This container is shared with other group members."
         case .validatedBundleIdentifierPathMatch:
             "The selected app's locally validated signature carries this bundle identifier, which matches this exact per-app container path. Current use and exclusive ownership are not established."
         case .probableContainerPathMatch:

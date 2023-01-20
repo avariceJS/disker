@@ -286,8 +286,19 @@ private struct DiskerCoreChecks {
                    && sharedGroup.groupIdentifier == groupIdentifier,
                    "an exact embedded App Groups claim should identify a shared group-container path")
         try expect(sharedGroup.explanation.contains("shared with other group members")
-                   && sharedGroup.explanation.contains("not validated"),
-                   "shared-container attribution must disclose shared use and unvalidated signature")
+                   && sharedGroup.explanation.contains("not matched a locally validated signed identifier"),
+                   "shared-container attribution must disclose shared use and its unmatched signed identity")
+        let mismatchedGroupIdentity = ApplicationPathAttribution.classify(
+            bundleIdentifier: identifier,
+            associatedFolderPath: groupContainer,
+            homeDirectoryPath: home,
+            claimedGroupIdentifiers: [groupIdentifier],
+            signatureValidated: true,
+            signedBundleIdentifier: "com.example.Other"
+        )
+        try expect(mismatchedGroupIdentity.evidence == .declaredSharedGroupContainerClaim
+                   && mismatchedGroupIdentity.explanation.contains("not matched a locally validated signed identifier"),
+                   "a valid signature for a different bundle ID must not strengthen an App Group path claim")
         let signatureCoveredSharedGroup = ApplicationPathAttribution.classify(
             bundleIdentifier: identifier,
             associatedFolderPath: groupContainer + "/Documents",
