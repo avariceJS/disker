@@ -59,6 +59,7 @@ private struct DiskerCoreChecks {
             ("same-root complete directory growth comparison", testDirectoryGrowthComparison),
             ("scan progress callback", testScanProgressCallback),
             ("directory mutations make coverage partial", testDirectoryMutationCoverage),
+            ("file mutations during enumeration make coverage partial", testFileMutationCoverage),
             ("cancellation preserves partial coverage", testCancellationPreservesPartialCoverage),
         ]
 
@@ -1509,6 +1510,30 @@ private struct DiskerCoreChecks {
             try expect(changedDirectory, "fixture should mutate the directory during the scan")
             try expect(!folder.complete, "a directory that changes while being enumerated must not look like a complete snapshot")
             try expect(folder.changedDuringScanCount > 0, "the changed directory should have an explicit coverage count")
+        }
+    }
+
+    private static func testFileMutationCoverage() throws {
+        try withTemporaryDirectory { root in
+            let changedFile = root.appendingPathComponent("file-000.bin")
+            try Data([0x01]).write(to: changedFile)
+            for index in 1..<512 {
+                try Data([UInt8(index % 255)]).write(
+                    to: root.appendingPathComponent(String(format: "file-%03d.bin", index))
+                )
+            }
+            var changedFileDuringEnumeration = false
+            let result = FolderScanner.scan(roots: [root], progress: { _ in
+                guard !changedFileDuringEnumeration else { return }
+                changedFileDuringEnumeration = true
+                try? Data(repeating: 0x7F, count: 4096).write(to: changedFile)
+            })
+            guard let folder = result.folders.first else {
+                throw CheckFailure.assertion("file mutation fixture should produce a folder observation")
+            }
+            try expect(changedFileDuringEnumeration, "fixture should change a previously sampled file during enumeration")
+            try expect(!folder.complete, "a file changed before parent-directory revalidation must not appear complete")
+            try expect(folder.changedDuringScanCount > 0, "the changed file should have an explicit coverage count")
         }
     }
 

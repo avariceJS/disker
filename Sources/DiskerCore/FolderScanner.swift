@@ -24,6 +24,41 @@ public enum FolderScanner {
         let extensionName: String
     }
 
+    private struct ScannedFileMetadata {
+        let name: String
+        let identity: FileIdentity
+        let fileType: UInt32
+        let size: Int64
+        let allocatedBlocks: Int64
+        let modifiedSeconds: Int64
+        let modifiedNanoseconds: Int64
+        let changedSeconds: Int64
+        let changedNanoseconds: Int64
+
+        init(name: String, metadata: stat) {
+            self.name = name
+            identity = FileIdentity(device: UInt64(metadata.st_dev), inode: UInt64(metadata.st_ino))
+            fileType = UInt32(metadata.st_mode & S_IFMT)
+            size = Int64(metadata.st_size)
+            allocatedBlocks = Int64(metadata.st_blocks)
+            modifiedSeconds = Int64(metadata.st_mtimespec.tv_sec)
+            modifiedNanoseconds = Int64(metadata.st_mtimespec.tv_nsec)
+            changedSeconds = Int64(metadata.st_ctimespec.tv_sec)
+            changedNanoseconds = Int64(metadata.st_ctimespec.tv_nsec)
+        }
+
+        func differs(from metadata: stat) -> Bool {
+            identity != FileIdentity(device: UInt64(metadata.st_dev), inode: UInt64(metadata.st_ino))
+                || fileType != UInt32(metadata.st_mode & S_IFMT)
+                || size != Int64(metadata.st_size)
+                || allocatedBlocks != Int64(metadata.st_blocks)
+                || modifiedSeconds != Int64(metadata.st_mtimespec.tv_sec)
+                || modifiedNanoseconds != Int64(metadata.st_mtimespec.tv_nsec)
+                || changedSeconds != Int64(metadata.st_ctimespec.tv_sec)
+                || changedNanoseconds != Int64(metadata.st_ctimespec.tv_nsec)
+        }
+    }
+
     private struct FileExtensionMetrics {
         var logicalBytes: Int64 = 0
         var allocatedBytes: Int64 = 0
@@ -188,6 +223,7 @@ public enum FolderScanner {
                     }
 
                     var discoveredDirectories: [PendingDirectory] = []
+                    var scannedFiles: [ScannedFileMetadata] = []
                     var interrupted = false
                     while true {
                         errno = 0
@@ -248,6 +284,10 @@ public enum FolderScanner {
                             excludedSpecialFileCount += 1
                             addCoverageEvent(directory.relativePath, symlink: false, specialFile: true, to: &metrics)
                         } else {
+                            // Keep only the current directory's file metadata
+                            // and revalidate it after enumeration. This catches
+                            // in-place writes that directory timestamps cannot.
+                            scannedFiles.append(ScannedFileMetadata(name: name, metadata: metadata))
                             let file = fileRecord(
                                 metadata: metadata,
                                 relativePath: relativePath,
@@ -276,6 +316,27 @@ public enum FolderScanner {
                                 if fileCountForProgress.isMultiple(of: 256) {
                                     progress(ScanProgress(currentPath: fullPath, visitedFiles: fileCountForProgress))
                                 }
+                            }
+                        }
+                    }
+                    if !interrupted {
+                        for file in scannedFiles {
+                            var current = stat()
+                            let result = file.name.withCString {
+                                fstatat(directoryFD, $0, &current, AT_SYMLINK_NOFOLLOW)
+                            }
+                            if result != 0 {
+                                if errno == ENOENT || errno == ENOTDIR || errno == ELOOP {
+                                    scanComplete = false
+                                    addCoverageEvent(directory.relativePath, symlink: false, changed: true, to: &metrics)
+                                } else {
+                                    inaccessibleCount += 1
+                                    scanComplete = false
+                                    addCoverageEvent(directory.relativePath, symlink: false, to: &metrics)
+                                }
+                            } else if file.differs(from: current) {
+                                scanComplete = false
+                                addCoverageEvent(directory.relativePath, symlink: false, changed: true, to: &metrics)
                             }
                         }
                     }
@@ -528,4 +589,5 @@ public enum FolderScanner {
             || before.st_ctimespec.tv_sec != after.st_ctimespec.tv_sec
             || before.st_ctimespec.tv_nsec != after.st_ctimespec.tv_nsec
     }
+
 }
