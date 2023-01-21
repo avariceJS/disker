@@ -216,6 +216,10 @@ final class DashboardModel {
             var identities = applicationBundleIdentities
             if inspectSelectedAppBundles {
                 for url in urls where url.pathExtension.lowercased() == "app" {
+                    let accessGranted = url.startAccessingSecurityScopedResource()
+                    defer {
+                        if accessGranted { url.stopAccessingSecurityScopedResource() }
+                    }
                     if let identity = ApplicationBundleMetadata.identity(fromSelectedBundleAt: url) {
                         identities[url.path] = identity
                     }
