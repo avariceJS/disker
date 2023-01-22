@@ -808,6 +808,8 @@ private struct DiskerCoreChecks {
             let plan = try CleanupPlanner.makePlan(
                 from: result, preserving: [group.sha256: first.path]
             )
+            try expect(plan.verifiedAt == result.verifiedAt,
+                       "the dry-run plan should retain the time of its source content verification")
             try expect(plan.entries.count == 1 && plan.entries[0].targetPath == second.path, "a dry-run plan should list only exact non-preserved paths")
             try expect(plan.entries[0].preservedPath == first.path && plan.entries[0].verifiedSHA256 == group.sha256, "each proposed action should carry its chosen keeper and content evidence")
             try expect(plan.entries[0].reclaimableBytes == nil && plan.entries[0].risk == .unknown, "duplicate equality must not invent reclaimed bytes or low risk")

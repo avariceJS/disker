@@ -1078,6 +1078,15 @@ struct DashboardView: View {
                             Text("\(result.checkedFileCount) same-size candidates hashed across \(result.selectedRootPaths.count) selected folders.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
+                            Group {
+                                if let verifiedAt = result.verifiedAt {
+                                    Text("Checked \(verifiedAt.formatted(date: .abbreviated, time: .shortened)). Files may have changed since this check.")
+                                } else {
+                                    Text("Verification time unavailable. Run a new check before acting on any path.")
+                                }
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                             if !result.complete {
                                 Text(duplicateCoverageSummary(result))
                                     .font(.caption)
@@ -1178,6 +1187,16 @@ struct DashboardView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
+                            Group {
+                                if let verifiedAt = plan.verifiedAt {
+                                    Text("Evidence checked \(verifiedAt.formatted(date: .abbreviated, time: .shortened)). Run Verify Folders again before acting on these paths.")
+                                } else {
+                                    Text("Verification time unavailable. Run Verify Folders again before acting on these paths.")
+                                }
+                            }
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
                             if !plan.sourceCoverageComplete {
                                 Text("The verification scope was partial. This plan covers only groups that were confirmed; other matches may remain unmeasured.")
                                     .font(.caption)

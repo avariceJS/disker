@@ -32,6 +32,7 @@ public struct DuplicateGroup: Codable, Equatable, Sendable, Identifiable {
 }
 
 public struct DuplicateVerificationResult: Codable, Equatable, Sendable {
+    public let verifiedAt: Date?
     public let selectedRootPaths: [String]
     public let groups: [DuplicateGroup]
     public let checkedFileCount: Int
@@ -42,10 +43,11 @@ public struct DuplicateVerificationResult: Codable, Equatable, Sendable {
     public let cancelled: Bool
 
     public init(
-        selectedRootPaths: [String], groups: [DuplicateGroup], checkedFileCount: Int,
+        verifiedAt: Date? = .now, selectedRootPaths: [String], groups: [DuplicateGroup], checkedFileCount: Int,
         inaccessibleCount: Int, excludedSymlinkCount: Int, excludedSpecialFileCount: Int,
         changedDuringCheckCount: Int, cancelled: Bool
     ) {
+        self.verifiedAt = verifiedAt
         self.selectedRootPaths = selectedRootPaths
         self.groups = groups
         self.checkedFileCount = checkedFileCount
@@ -355,7 +357,7 @@ public enum DuplicateVerifier {
         }.sorted { utf8LessThan($0.sha256, $1.sha256) }
 
         return DuplicateVerificationResult(
-            selectedRootPaths: roots.map(\.path), groups: groups,
+            verifiedAt: .now, selectedRootPaths: roots.map(\.path), groups: groups,
             checkedFileCount: checkedFileCount,
             inaccessibleCount: inaccessibleCount,
             excludedSymlinkCount: excludedSymlinkCount,

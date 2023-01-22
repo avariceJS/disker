@@ -18,16 +18,16 @@ public struct CleanupPlanEntry: Equatable, Sendable, Identifiable {
 }
 
 public struct CleanupPlan: Equatable, Sendable {
-    public let createdAt: Date
+    public let verifiedAt: Date?
     public let selectedRootPaths: [String]
     public let sourceCoverageComplete: Bool
     public let entries: [CleanupPlanEntry]
 
     public init(
-        createdAt: Date = .now, selectedRootPaths: [String] = [],
+        verifiedAt: Date? = .now, selectedRootPaths: [String] = [],
         sourceCoverageComplete: Bool = false, entries: [CleanupPlanEntry]
     ) {
-        self.createdAt = createdAt
+        self.verifiedAt = verifiedAt
         self.selectedRootPaths = selectedRootPaths
         self.sourceCoverageComplete = sourceCoverageComplete
         self.entries = entries
@@ -86,6 +86,7 @@ public enum CleanupPlanner {
         }
 
         return CleanupPlan(
+            verifiedAt: result.verifiedAt,
             selectedRootPaths: result.selectedRootPaths,
             sourceCoverageComplete: result.complete,
             entries: entries.sorted {
