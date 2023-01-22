@@ -897,6 +897,11 @@ private struct DiskerCoreChecks {
             try expect(changedPreviouslyHashedFile, "the fixture should mutate an earlier file while a later file is being hashed")
             try expect(result.changedDuringCheckCount > 0 && !result.complete,
                        "final file metadata validation should detect a mutation after hashing that file")
+            try expect(result.groups.isEmpty,
+                       "a changed candidate must be removed before duplicate groups are reported")
+            let plan = try CleanupPlanner.makePlan(from: result, preserving: [:])
+            try expect(plan.entries.isEmpty,
+                       "a changed candidate must not appear in a read-only cleanup plan")
         }
     }
 

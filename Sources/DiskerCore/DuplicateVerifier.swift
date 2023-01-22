@@ -276,6 +276,7 @@ public enum DuplicateVerifier {
         var lastProgressBytes: UInt64 = 0
         var checkedFileCount = 0
         var filesByHash: [String: [DuplicateFile]] = [:]
+        var finalMetadataValidatedPaths = Set<String>()
 
         outer: for bucket in buckets {
             for candidate in bucket.sorted(by: { utf8LessThan($0.path, $1.path) }) {
@@ -310,20 +311,6 @@ public enum DuplicateVerifier {
         }
 
         if !cancelled {
-            for candidate in candidatesBySize.values.joined() {
-                if shouldCancel() { cancelled = true; break }
-                switch revalidateMetadata(candidate) {
-                case .unchanged:
-                    continue
-                case .changed:
-                    changedDuringCheckCount += 1
-                case .unavailable:
-                    inaccessibleCount += 1
-                }
-            }
-        }
-
-        if !cancelled {
             for directory in scannedDirectories {
                 let pending = PendingDirectory(
                     components: directory.components,
@@ -347,9 +334,24 @@ public enum DuplicateVerifier {
             }
         }
 
+        if !cancelled {
+            for candidate in candidatesBySize.values.joined() {
+                if shouldCancel() { cancelled = true; break }
+                switch revalidateMetadata(candidate) {
+                case .unchanged:
+                    finalMetadataValidatedPaths.insert(candidate.path)
+                case .changed:
+                    changedDuringCheckCount += 1
+                case .unavailable:
+                    inaccessibleCount += 1
+                }
+            }
+        }
+
         let groups = filesByHash.compactMap { digest, files -> DuplicateGroup? in
-            guard files.count > 1 else { return nil }
-            return DuplicateGroup(sha256: digest, files: files.sorted { utf8LessThan($0.path, $1.path) })
+            let validatedFiles = files.filter { finalMetadataValidatedPaths.contains($0.path) }
+            guard validatedFiles.count > 1 else { return nil }
+            return DuplicateGroup(sha256: digest, files: validatedFiles.sorted { utf8LessThan($0.path, $1.path) })
         }.sorted { utf8LessThan($0.sha256, $1.sha256) }
 
         return DuplicateVerificationResult(
