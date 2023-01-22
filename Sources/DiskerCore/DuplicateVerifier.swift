@@ -106,6 +106,12 @@ public enum DuplicateVerifier {
         case unavailable
     }
 
+    private enum MetadataResult {
+        case unchanged
+        case changed
+        case unavailable
+    }
+
     public static func verify(
         roots: [URL],
         shouldCancel: () -> Bool = { Task.isCancelled },
@@ -304,6 +310,20 @@ public enum DuplicateVerifier {
         }
 
         if !cancelled {
+            for candidate in candidatesBySize.values.joined() {
+                if shouldCancel() { cancelled = true; break }
+                switch revalidateMetadata(candidate) {
+                case .unchanged:
+                    continue
+                case .changed:
+                    changedDuringCheckCount += 1
+                case .unavailable:
+                    inaccessibleCount += 1
+                }
+            }
+        }
+
+        if !cancelled {
             for directory in scannedDirectories {
                 let pending = PendingDirectory(
                     components: directory.components,
@@ -411,6 +431,31 @@ public enum DuplicateVerifier {
         return .hashed(digest.finalize().map { String(format: "%02x", $0) }.joined())
     }
 
+    private static func revalidateMetadata(_ candidate: Candidate) -> MetadataResult {
+        guard let name = candidate.components.last else { return .unavailable }
+        var parentFD = dup(candidate.rootDescriptor)
+        guard parentFD >= 0 else { return .unavailable }
+        defer { close(parentFD) }
+
+        for component in candidate.components.dropLast() {
+            let next = component.withCString {
+                openat(parentFD, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            }
+            guard next >= 0 else {
+                return itemChanged(errno) ? .changed : .unavailable
+            }
+            close(parentFD)
+            parentFD = next
+        }
+
+        var current = stat()
+        let result = name.withCString {
+            fstatat(parentFD, $0, &current, AT_SYMLINK_NOFOLLOW)
+        }
+        guard result == 0 else { return itemChanged(errno) ? .changed : .unavailable }
+        return fileMetadataChanged(candidate.metadata, current) ? .changed : .unchanged
+    }
+
     private static func openDirectory(
         rootFD: Int32, directory: PendingDirectory
     ) -> OpenResult {
@@ -447,7 +492,9 @@ public enum DuplicateVerifier {
     }
 
     private static func fileMetadataChanged(_ lhs: stat, _ rhs: stat) -> Bool {
-        lhs.st_size != rhs.st_size || lhs.st_mtimespec.tv_sec != rhs.st_mtimespec.tv_sec
+        !sameIdentity(lhs, rhs) || lhs.st_mode & S_IFMT != rhs.st_mode & S_IFMT
+            || lhs.st_size != rhs.st_size || lhs.st_blocks != rhs.st_blocks
+            || lhs.st_mtimespec.tv_sec != rhs.st_mtimespec.tv_sec
             || lhs.st_mtimespec.tv_nsec != rhs.st_mtimespec.tv_nsec
             || lhs.st_ctimespec.tv_sec != rhs.st_ctimespec.tv_sec
             || lhs.st_ctimespec.tv_nsec != rhs.st_ctimespec.tv_nsec

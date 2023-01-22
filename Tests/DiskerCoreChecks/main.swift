@@ -40,6 +40,7 @@ private struct DiskerCoreChecks {
             ("selected-scope duplicate verification", testDuplicateVerification),
             ("duplicate verification cancellation", testDuplicateVerificationCancellation),
             ("duplicate directory mutation coverage", testDuplicateDirectoryMutationCoverage),
+            ("duplicate files are revalidated after hashing", testDuplicateFileRevalidation),
             ("nested directory usage summaries", testNestedDirectorySummaries),
             ("cautious development storage hints", testStorageAreaHints),
             ("Git metadata marker detection", testGitMetadataMarkerDetection),
@@ -869,6 +870,33 @@ private struct DiskerCoreChecks {
             try expect(mutated, "the verification progress checkpoint should run after candidate hashing")
             try expect(result.changedDuringCheckCount > 0 && !result.complete, "a directory entry change during hashing must make final coverage partial")
             try expect(result.groups.count == 1, "already verified groups may be retained alongside an explicit partial-coverage result")
+        }
+    }
+
+    private static func testDuplicateFileRevalidation() throws {
+        try withTemporaryDirectory { root in
+            let first = root.appendingPathComponent("alpha.bin")
+            let second = root.appendingPathComponent("beta.bin")
+            let original = Data(repeating: 0x2A, count: 1024 * 1024)
+            try original.write(to: first)
+            try original.write(to: second)
+
+            var changedPreviouslyHashedFile = false
+            let result = DuplicateVerifier.verify(roots: [root], progress: { progress in
+                guard !changedPreviouslyHashedFile, progress.currentPath == second.path else { return }
+                changedPreviouslyHashedFile = true
+                do {
+                    let file = try FileHandle(forWritingTo: first)
+                    try file.seek(toOffset: 0)
+                    try file.write(contentsOf: Data(repeating: 0x7B, count: original.count))
+                    try file.close()
+                } catch {
+                    // The assertions below make a failed mutation visible.
+                }
+            })
+            try expect(changedPreviouslyHashedFile, "the fixture should mutate an earlier file while a later file is being hashed")
+            try expect(result.changedDuringCheckCount > 0 && !result.complete,
+                       "final file metadata validation should detect a mutation after hashing that file")
         }
     }
 
