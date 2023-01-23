@@ -42,11 +42,11 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 - Folder-size scans read filesystem metadata only and do not open file contents. The separate, explicit app-selection flow validates the selected bundle's static signature by reading its signed executable and resources locally; this checks integrity, not notarization or publisher trust, and nothing is uploaded.
 - Does not follow symbolic links; deduplicates hard links within each selected folder.
 - Excludes sockets, FIFOs, device nodes, and other non-regular entries from file totals and filename categories, while marking the affected root and subtree as partial.
-- Detects changed/replaced directories where possible and marks their coverage partial; a scan is still not an atomic snapshot.
+- Revalidates directory and regular-file metadata during scans; detected changes make coverage partial. A scan is still not an atomic snapshot.
 - Flags a direct `.git` metadata entry as a project marker and separately measures a real `.git` directory even when it falls outside the largest-folder ranking. A `.git` file remains a marker only; Disker does not read its contents or claim project ownership.
 - Shows logical file size separately from allocated blocks summed from `st_blocks`.
 - Groups selected-folder file metadata by safe filename extension, showing the five largest categories and explicitly noting that names do not verify content or purpose; up to 30 categories are retained.
-- Adds cautious, exact-name hints for common development storage locations such as SwiftPM build output, Xcode DerivedData, `node_modules`, and Python environments. These hints do not determine ownership or safety to remove.
+- Adds cautious, exact-component hints for common SwiftPM, Xcode, npm/pnpm/Yarn, Python, Gradle/Maven/Cargo, CocoaPods/Carthage, simulator, and Docker data locations. They are name matches only; they do not determine ownership, regenerability, or safety to remove.
 - Saves up to 180 capacity, folder-scan, and RAM observations under `~/Library/Application Support/Disker/observations.json`. Capacity history is sampled when Disker opens, after a folder scan, or when the user presses Refresh; it is not a background monitor.
 - Plots up to 24 comparable root-volume capacity observations, separating series when volume UUID, reported capacity, or the macOS availability method changes. The chart reports system availability and does not explain which folders changed.
 - Compares complete folder scans to earlier complete scans for the same path; incomplete scans never produce growth deltas.
@@ -61,7 +61,7 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 - Keeps up to 180 on-demand RAM samples locally and plots free and compressed page counts separately from storage. It does not infer pressure or diagnose leaks.
 - Flags possible process resident-size growth only across three consecutive manual samples spanning at least 15 minutes, with a stable PID, process name, and kernel-reported start time plus at least 100 MiB growth. It is an investigation signal, not a leak diagnosis.
 - Verifies byte-identical duplicate candidates only after a separate folder selection and confirmation. It hashes regular files sharing a logical size, skips symlinks and hard-link aliases, and reports no reclaimable-space estimate.
-- Provides an optional dry-run plan from verified duplicate groups only after the user explicitly chooses a path to preserve. The plan identifies exact other paths and unknown risk/reclaimable space; no file action is implemented.
+- Provides an optional dry-run plan from verified duplicate groups only after the user explicitly chooses a path to preserve. Changed files are removed from groups before planning. The plan identifies exact other paths, retains the verification time, warns that files may have changed since, and reports risk/reclaimable space as unknown; no file action is implemented.
 - Does not include full application ownership attribution, automatic associated-data discovery, general cleanup discovery, or background monitoring. The Applications view covers selected app bundles and user-associated folders only.
 
 Folder totals are estimates. APFS clones, snapshots, shared blocks, concurrent changes, inaccessible areas, and system-managed storage prevent recursive file totals from reconciling with physical volume usage.
