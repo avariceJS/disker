@@ -939,6 +939,23 @@ private struct DiskerCoreChecks {
                    "JavaScript dependency trees should be recognized by their exact name")
         try expect(StorageAreaHint.matching(relativePath: "project/.venv/lib") == .pythonEnvironment,
                    "Python environments should be recognized without inspecting their contents")
+        let projectHints: [(String, StorageAreaHint)] = [
+            ("frontend/.npm/_cacache", .npmData),
+            ("frontend/.pnpm-store/v3", .pnpmStore),
+            ("frontend/.yarn/cache", .yarnData),
+            ("android/.gradle/caches", .gradleData),
+            ("java/.m2/repository", .mavenData),
+            ("rust/.cargo/registry", .cargoData),
+            ("rust/target/debug", .buildOutputCandidate),
+            ("ios/Pods/Library", .cocoaPodsDependencies),
+            ("ios/Carthage/Build", .carthageDependencies),
+            ("Library/Developer/CoreSimulator/Devices", .simulatorData),
+            ("Library/Containers/Docker/Data", .dockerData),
+        ]
+        for (path, expectedHint) in projectHints {
+            try expect(StorageAreaHint.matching(relativePath: path) == expectedHint,
+                       "known development storage names should map to descriptive, non-ownership hints")
+        }
         try expect(StorageAreaHint.matching(relativePath: "project/node_modules_backup") == nil,
                    "similar but non-exact names must not be classified")
         try expect(StorageAreaHint.matching(relativePath: "project/output") == nil,
