@@ -30,6 +30,6 @@ The mission remains in progress: Disker does not automatically discover app supp
 
 ## Repository and next work
 
-Canonical remote: `https://github.com/avariceJS/disker.git`; `.git` is authoritative, `.gitmeta` history is preserved, and `main` is the only development branch. Latest verified published HEAD: `a17e4648c56589534fcc9ee361b00415cf2e58ee`. Commit and push each verified milestone to `origin/main`, then confirm local and remote HEAD match.
+Canonical remote: `https://github.com/avariceJS/disker.git`; `.git` is authoritative, `.gitmeta` history is preserved, and `main` is the only development branch. Latest verified published HEAD: `75e417aeb8e46a87b92bd0e16a35ad151ec893d0`. Commit and push each verified milestone to `origin/main`, then confirm local and remote HEAD match.
 
-Next, resume visual and interactive validation of the installed app when a visible native window is available, especially app association and saved-scope/rescan flows. Continue improving evidence-based app/project attribution and growth explanations without inferring ownership from names. Keep cleanup review read-only with unknown risk/reclaimable space unless physical impact is established.
+Next, obtain a screen-capture consent path and visually inspect the latest Duplicates and Folders states. Then continue improving evidence-backed app/project drill-down, comparison and coverage states while keeping selected-scope boundaries. Keep cleanup review read-only with unknown risk/reclaimable space unless physical impact is established.
