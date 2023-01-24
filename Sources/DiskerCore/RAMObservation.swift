@@ -1,6 +1,20 @@
 import Darwin
 import Foundation
 
+public struct SwapUsage: Codable, Equatable, Sendable {
+    public let totalBytes: UInt64
+    public let availableBytes: UInt64
+    public let usedBytes: UInt64
+    public let pageSize: UInt32
+
+    public init(totalBytes: UInt64, availableBytes: UInt64, usedBytes: UInt64, pageSize: UInt32) {
+        self.totalBytes = totalBytes
+        self.availableBytes = availableBytes
+        self.usedBytes = usedBytes
+        self.pageSize = pageSize
+    }
+}
+
 public struct ProcessRAMSample: Codable, Equatable, Identifiable, Sendable {
     public var id: Int32 { processID }
     public let processID: Int32
@@ -48,13 +62,14 @@ public struct RAMObservation: Codable, Equatable, Sendable {
     public let sampledProcessCount: Int
     public let unavailableProcessCount: Int
     public let largestProcesses: [ProcessRAMSample]
+    public let swapUsage: SwapUsage?
 
     public init(
         observedAt: Date, physicalBytes: UInt64, freeBytes: UInt64,
         activeBytes: UInt64, inactiveBytes: UInt64, wiredBytes: UInt64,
         compressedBytes: UInt64, processListAvailable: Bool,
         sampledProcessCount: Int, unavailableProcessCount: Int,
-        largestProcesses: [ProcessRAMSample]
+        largestProcesses: [ProcessRAMSample], swapUsage: SwapUsage? = nil
     ) {
         self.observedAt = observedAt
         self.physicalBytes = physicalBytes
@@ -67,6 +82,7 @@ public struct RAMObservation: Codable, Equatable, Sendable {
         self.sampledProcessCount = sampledProcessCount
         self.unavailableProcessCount = unavailableProcessCount
         self.largestProcesses = largestProcesses
+        self.swapUsage = swapUsage
     }
 
     public static func current(processLimit: Int = 10) throws -> RAMObservation {
@@ -124,7 +140,23 @@ public struct RAMObservation: Codable, Equatable, Sendable {
             processListAvailable: processList.1,
             sampledProcessCount: processes.count,
             unavailableProcessCount: max(0, pids.count - processes.count),
-            largestProcesses: Array(sorted.prefix(max(0, processLimit)))
+            largestProcesses: Array(sorted.prefix(max(0, processLimit))),
+            swapUsage: currentSwapUsage()
+        )
+    }
+
+    private static func currentSwapUsage() -> SwapUsage? {
+        var usage = xsw_usage()
+        var size = MemoryLayout<xsw_usage>.size
+        let result = sysctlbyname("vm.swapusage", &usage, &size, nil, 0)
+        guard result == 0, size == MemoryLayout<xsw_usage>.size,
+              usage.xsu_used <= usage.xsu_total,
+              usage.xsu_avail <= usage.xsu_total else { return nil }
+        return SwapUsage(
+            totalBytes: usage.xsu_total,
+            availableBytes: usage.xsu_avail,
+            usedBytes: usage.xsu_used,
+            pageSize: usage.xsu_pagesize
         )
     }
 

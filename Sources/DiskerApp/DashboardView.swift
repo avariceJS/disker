@@ -1447,11 +1447,41 @@ struct DashboardView: View {
                             Text("installed")
                                 .foregroundStyle(.secondary)
                         }
-                        HStack(spacing: 18) {
+                        LazyVGrid(
+                            columns: [GridItem(.adaptive(minimum: 118), alignment: .leading)],
+                            alignment: .leading, spacing: 14
+                        ) {
                             ramMetric("Free pages", bytes: ram.freeBytes)
                             ramMetric("Active", bytes: ram.activeBytes)
                             ramMetric("Wired", bytes: ram.wiredBytes)
                             ramMetric("Compressed", bytes: ram.compressedBytes)
+                            if let swap = ram.swapUsage {
+                                if swap.totalBytes == 0 {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text("Swap")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Text("No allocation")
+                                            .font(.system(.body, design: .rounded).weight(.medium))
+                                    }
+                                } else {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text("Swap used / total")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Text("\(format(swap.usedBytes)) / \(format(swap.totalBytes))")
+                                            .font(.system(.body, design: .rounded).weight(.medium))
+                                    }
+                                }
+                            } else {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Swap")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text("Unavailable")
+                                        .font(.system(.body, design: .rounded).weight(.medium))
+                                }
+                            }
                         }
                         Text("Kernel page counts are a point-in-time view. Inactive pages may be reclaimable cache; these values are not a single additive ‘used’ total and are not macOS memory pressure.")
                             .font(.caption)
@@ -1465,7 +1495,7 @@ struct DashboardView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Manual RAM history")
                             .font(.title3.weight(.semibold))
-                        Text("Free and compressed pages across your last 24 on-demand samples. These snapshots are not a memory-pressure or leak diagnosis.")
+                        Text("Free and compressed pages, plus swap use when macOS reports it, across your last 24 on-demand samples. These snapshots are not a memory-pressure or leak diagnosis.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -1482,6 +1512,14 @@ struct DashboardView: View {
                                 series: .value("Metric", "Compressed pages")
                             )
                             .foregroundStyle(by: .value("Metric", "Compressed pages"))
+                            if let swap = sample.swapUsage {
+                                LineMark(
+                                    x: .value("Sample time", sample.observedAt),
+                                    y: .value("MiB", Double(swap.usedBytes) / 1_048_576),
+                                    series: .value("Metric", "Swap used")
+                                )
+                                .foregroundStyle(by: .value("Metric", "Swap used"))
+                            }
                         }
                         .chartLegend(position: .bottom, alignment: .leading)
                         .chartYAxisLabel("MiB")

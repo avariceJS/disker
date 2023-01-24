@@ -612,7 +612,14 @@ private struct DiskerCoreChecks {
         try expect(sample.physicalBytes > 0, "macOS should report installed physical RAM")
         try expect(sample.largestProcesses.count <= 1, "process list should respect its requested limit")
         try expect(sample.sampledProcessCount > 0, "process list should include accessible processes")
-        print("  RAM: \(sample.physicalBytes) bytes; process list available: \(sample.processListAvailable); \(sample.sampledProcessCount) processes sampled")
+        if let swap = sample.swapUsage {
+            try expect(swap.usedBytes <= swap.totalBytes && swap.availableBytes <= swap.totalBytes,
+                       "reported swap use should be bounded by the total swap allocation, including the zero-allocation state")
+        }
+        let swapSummary = sample.swapUsage.map {
+            $0.totalBytes == 0 ? "no swap allocated" : "\($0.usedBytes)/\($0.totalBytes) swap bytes used/total"
+        } ?? "swap statistics unavailable"
+        print("  RAM: \(sample.physicalBytes) bytes; process list available: \(sample.processListAvailable); \(sample.sampledProcessCount) processes sampled; \(swapSummary)")
     }
 
     private static func testPossibleProcessGrowth() throws {
@@ -1116,6 +1123,10 @@ private struct DiskerCoreChecks {
         let oldProcessJSON = #"{"processID":123,"name":"OldSample","residentBytes":4096}"#
         let oldProcess = try JSONDecoder().decode(ProcessRAMSample.self, from: Data(oldProcessJSON.utf8))
         try expect(oldProcess.processStartTime == nil, "old process samples without a start time should remain readable but ineligible for PID-safe trends")
+
+        let oldRAMJSON = #"{"observedAt":1,"physicalBytes":16000,"freeBytes":2000,"activeBytes":4000,"inactiveBytes":3000,"wiredBytes":2000,"compressedBytes":1000,"processListAvailable":true,"sampledProcessCount":0,"unavailableProcessCount":0,"largestProcesses":[]}"#
+        let oldRAM = try JSONDecoder().decode(RAMObservation.self, from: Data(oldRAMJSON.utf8))
+        try expect(oldRAM.swapUsage == nil, "legacy RAM observations without swap metrics should remain readable and explicitly unavailable")
     }
 
     private static func testSparseFileAccounting() throws {
