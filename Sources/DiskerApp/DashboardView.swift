@@ -1584,6 +1584,10 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title).font(.title3.weight(.semibold))
             ForEach(folders.sorted { $0.allocatedBytes > $1.allocatedBytes }) { folder in
+                let projectPaths = Set(folder.projectDirectorySummaries.map(\.rootRelativePath))
+                let rankedSubdirectories = folder.subdirectorySummaries.filter {
+                    !projectPaths.contains($0.rootRelativePath)
+                }
                 HStack(spacing: 14) {
                     Image(systemName: "folder.fill").foregroundStyle(.blue)
                     VStack(alignment: .leading, spacing: 4) {
@@ -1684,7 +1688,12 @@ struct DashboardView: View {
                     .background(.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
                 }
 
-                if includeDetails && !folder.subdirectorySummaries.isEmpty {
+                if includeDetails && (!folder.projectDirectorySummaries.isEmpty
+                                      || folder.projectDirectorySummariesTruncated) {
+                    projectDirectorySection(for: folder, scanCancelled: scanCancelled)
+                }
+
+                if includeDetails && !rankedSubdirectories.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Largest subfolders")
                             .font(.subheadline.weight(.semibold))
@@ -1697,7 +1706,7 @@ struct DashboardView: View {
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        ForEach(folder.subdirectorySummaries, id: \.rootRelativePath) { directory in
+                        ForEach(rankedSubdirectories, id: \.rootRelativePath) { directory in
                             let directoryURL = URL(fileURLWithPath: folder.path)
                                 .appendingPathComponent(directory.rootRelativePath, isDirectory: true)
                             HStack(spacing: 10) {
@@ -1782,6 +1791,81 @@ struct DashboardView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private func projectDirectorySection(
+        for folder: FolderObservation, scanCancelled: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Label("Folders with direct Git markers", systemImage: "chevron.left.forwardslash.chevron.right")
+                .font(.subheadline.weight(.semibold))
+            Text("Each path contains a direct `.git` file or directory. These are repository-marker candidates, not verified project ownership. Folder totals overlap when paths are nested.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if folder.projectDirectorySummariesTruncated {
+                Text("Showing the 20 largest marker folders; additional paths were omitted.")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
+            ForEach(folder.projectDirectorySummaries, id: \.rootRelativePath) { directory in
+                HStack(spacing: 10) {
+                    Image(systemName: "folder").foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(directory.rootRelativePath)
+                            .font(.subheadline.weight(.medium))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Label("Direct `.git` marker · name match", systemImage: "folder.badge.questionmark")
+                            .font(.caption2)
+                            .foregroundStyle(.blue)
+                        HStack(spacing: 8) {
+                            Text("Logical \(format(directory.logicalBytes))")
+                            Text("Allocated ~\(format(directory.allocatedBytes))")
+                                .help("Allocated-byte estimate from filesystem metadata")
+                            Text("\(directory.fileCount) files")
+                            if !directory.complete {
+                                Text(coverageSummary(
+                                    inaccessible: directory.incompleteCount,
+                                    excludedSymlinks: directory.excludedSymlinkCount,
+                                    excludedSpecialFiles: directory.excludedSpecialFileCount,
+                                    changed: directory.changedDuringScanCount,
+                                    wasCancelled: scanCancelled
+                                ))
+                                .foregroundStyle(.orange)
+                            } else if let previous = model.previousCompleteDirectory(
+                                for: directory, in: folder
+                            ), let delta = ObservationComparison.allocatedByteDelta(
+                                current: directory, previous: previous
+                            ) {
+                                Text(changeDescription(delta))
+                                    .foregroundStyle(delta >= 0 ? .orange : .green)
+                            } else if directory.complete {
+                                Text("First complete observation")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 5)
+                    Button {
+                        let url = URL(fileURLWithPath: folder.path)
+                            .appendingPathComponent(directory.rootRelativePath, isDirectory: true)
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    } label: {
+                        Image(systemName: "arrow.up.right.square")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Reveal repository-marker folder in Finder")
+                    .accessibilityLabel("Reveal \(directory.rootRelativePath) in Finder")
+                }
+                .padding(.vertical, 7)
+                Divider()
+            }
+        }
+        .padding(14)
+        .background(.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private func fileExtensionSummary(for folder: FolderObservation) -> some View {

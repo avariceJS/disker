@@ -125,6 +125,10 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     public let complete: Bool
     public let subdirectorySummaries: [DirectoryUsage]
     public let subdirectorySummariesTruncated: Bool
+    /// Bounded summaries for nested directories with a direct non-symlink
+    /// `.git` directory or file entry, independent of the largest-folder cap.
+    public let projectDirectorySummaries: [DirectoryUsage]
+    public let projectDirectorySummariesTruncated: Bool
     /// Identifier read from the Info.plist of an explicitly selected app bundle.
     /// It is metadata evidence, not proof of signing identity or ownership.
     public let applicationBundleIdentifier: String?
@@ -147,6 +151,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         gitMetadataUsage: DirectoryUsage? = nil,
         subdirectorySummaries: [DirectoryUsage] = [],
         subdirectorySummariesTruncated: Bool = false,
+        projectDirectorySummaries: [DirectoryUsage] = [],
+        projectDirectorySummariesTruncated: Bool = false,
         applicationBundleIdentifier: String? = nil,
         applicationGroupIdentifiers: [String] = [],
         applicationSignatureValidated: Bool = false,
@@ -170,6 +176,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         self.complete = complete
         self.subdirectorySummaries = subdirectorySummaries
         self.subdirectorySummariesTruncated = subdirectorySummariesTruncated
+        self.projectDirectorySummaries = projectDirectorySummaries
+        self.projectDirectorySummariesTruncated = projectDirectorySummariesTruncated
         self.applicationBundleIdentifier = applicationBundleIdentifier
         self.applicationGroupIdentifiers = applicationGroupIdentifiers
         self.applicationSignatureValidated = applicationSignatureValidated
@@ -183,6 +191,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         case changedDuringScanCount, gitMetadataEntryDetected
         case finishedAt, complete
         case subdirectorySummaries, subdirectorySummariesTruncated, gitMetadataUsage
+        case projectDirectorySummaries, projectDirectorySummariesTruncated
         case applicationBundleIdentifier
         case applicationGroupIdentifiers
         case applicationSignatureValidated, applicationSignedBundleIdentifier
@@ -208,6 +217,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         complete = try values.decode(Bool.self, forKey: .complete)
         subdirectorySummaries = try values.decodeIfPresent([DirectoryUsage].self, forKey: .subdirectorySummaries) ?? []
         subdirectorySummariesTruncated = try values.decodeIfPresent(Bool.self, forKey: .subdirectorySummariesTruncated) ?? false
+        projectDirectorySummaries = try values.decodeIfPresent([DirectoryUsage].self, forKey: .projectDirectorySummaries) ?? []
+        projectDirectorySummariesTruncated = try values.decodeIfPresent(Bool.self, forKey: .projectDirectorySummariesTruncated) ?? false
         applicationBundleIdentifier = try values.decodeIfPresent(String.self, forKey: .applicationBundleIdentifier)
         applicationGroupIdentifiers = try values.decodeIfPresent([String].self, forKey: .applicationGroupIdentifiers) ?? []
         applicationSignatureValidated = try values.decodeIfPresent(Bool.self, forKey: .applicationSignatureValidated) ?? false
@@ -234,6 +245,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         try values.encode(complete, forKey: .complete)
         try values.encode(subdirectorySummaries, forKey: .subdirectorySummaries)
         try values.encode(subdirectorySummariesTruncated, forKey: .subdirectorySummariesTruncated)
+        try values.encode(projectDirectorySummaries, forKey: .projectDirectorySummaries)
+        try values.encode(projectDirectorySummariesTruncated, forKey: .projectDirectorySummariesTruncated)
         try values.encodeIfPresent(applicationBundleIdentifier, forKey: .applicationBundleIdentifier)
         try values.encode(applicationGroupIdentifiers, forKey: .applicationGroupIdentifiers)
         try values.encode(applicationSignatureValidated, forKey: .applicationSignatureValidated)
@@ -255,6 +268,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
             gitMetadataUsage: gitMetadataUsage,
             subdirectorySummaries: subdirectorySummaries,
             subdirectorySummariesTruncated: subdirectorySummariesTruncated,
+            projectDirectorySummaries: projectDirectorySummaries,
+            projectDirectorySummariesTruncated: projectDirectorySummariesTruncated,
             applicationBundleIdentifier: identity.bundleIdentifier,
             applicationGroupIdentifiers: identity.claimedGroupIdentifiers,
             applicationSignatureValidated: identity.signatureValidated,

@@ -43,7 +43,7 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 - Does not follow symbolic links; deduplicates hard links within each selected folder.
 - Excludes sockets, FIFOs, device nodes, and other non-regular entries from file totals and filename categories, while marking the affected root and subtree as partial.
 - Revalidates directory and regular-file metadata during scans; detected changes make coverage partial. A scan is still not an atomic snapshot.
-- Flags a direct `.git` metadata entry as a project marker and separately measures a real `.git` directory even when it falls outside the largest-folder ranking. A `.git` file remains a marker only; Disker does not read its contents or claim project ownership.
+- Flags direct `.git` entries as repository markers, separately measures a real root `.git` directory, and retains up to 20 nested repository-marker folders even when they fall outside the 100 largest-folder summaries. Those candidate paths compare growth only within the same selected root and exact relative path; they are not verified project ownership.
 - Shows logical file size separately from allocated blocks summed from `st_blocks`.
 - Groups selected-folder file metadata by safe filename extension, showing the five largest categories and explicitly noting that names do not verify content or purpose; up to 30 categories are retained.
 - Adds cautious, exact-component hints for common SwiftPM, Xcode, npm/pnpm/Yarn, Python, Gradle/Maven/Cargo, CocoaPods/Carthage, simulator, and Docker data locations. They are name matches only; they do not determine ownership, regenerability, or safety to remove.

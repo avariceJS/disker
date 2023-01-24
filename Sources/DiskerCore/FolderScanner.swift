@@ -8,6 +8,7 @@ public struct ScanProgress: Sendable {
 
 public enum FolderScanner {
     private static let maximumDirectorySummaries = 100
+    private static let maximumProjectDirectorySummaries = 20
     private static let maximumFileExtensionSummaries = 30
 
     private struct FileIdentity: Hashable {
@@ -264,7 +265,7 @@ public enum FolderScanner {
                             : directory.relativePath + "/" + name
                         let fullPath = (directory.path as NSString).appendingPathComponent(name)
                         let type = metadata.st_mode & S_IFMT
-                        if name == ".git", type != S_IFLNK {
+                        if name == ".git", type == S_IFDIR || type == S_IFREG {
                             var parentMetrics = metrics[directory.relativePath, default: DirectoryMetrics()]
                             parentMetrics.gitMetadataEntryDetected = true
                             metrics[directory.relativePath] = parentMetrics
@@ -400,6 +401,7 @@ public enum FolderScanner {
                 return utf8LessThan($0.rootRelativePath, $1.rootRelativePath)
             }
             let wasTruncated = summaries.count > maximumDirectorySummaries
+            let projectSummaries = summaries.filter(\.gitMetadataEntryDetected)
             // Keep the direct repository metadata component independently of
             // the leaderboard cap; `.git` itself remains an explicitly
             // selected-root-relative measurement, not proof of project ownership.
@@ -438,7 +440,9 @@ public enum FolderScanner {
                 gitMetadataEntryDetected: metrics[""]?.gitMetadataEntryDetected ?? false,
                 gitMetadataUsage: gitMetadataUsage,
                 subdirectorySummaries: Array(summaries.prefix(maximumDirectorySummaries)),
-                subdirectorySummariesTruncated: wasTruncated
+                subdirectorySummariesTruncated: wasTruncated,
+                projectDirectorySummaries: Array(projectSummaries.prefix(maximumProjectDirectorySummaries)),
+                projectDirectorySummariesTruncated: projectSummaries.count > maximumProjectDirectorySummaries
             ))
 
             if cancelled { break }

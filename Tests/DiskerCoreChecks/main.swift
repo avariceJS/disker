@@ -984,6 +984,9 @@ private struct DiskerCoreChecks {
             let nested = try requireSummary("vendor/project", in: folder)
             try expect(!vendor.gitMetadataEntryDetected, "a nested project's marker must not be attributed to its ancestor")
             try expect(nested.gitMetadataEntryDetected, "a .git file marker should identify its immediate containing directory")
+            try expect(folder.projectDirectorySummaries.contains(where: {
+                $0.rootRelativePath == "vendor/project"
+            }), "nested .git files should also identify bounded repository-marker folders")
             try expect(folder.logicalBytes > 0, "metadata scan should count marker file size without parsing its contents")
             let selectedGitFile = FolderScanner.scan(roots: [nestedProject]).folders[0]
             try expect(selectedGitFile.gitMetadataEntryDetected && selectedGitFile.gitMetadataUsage == nil, "a direct .git file is a marker only, with no payload or external path resolution")
@@ -997,6 +1000,15 @@ private struct DiskerCoreChecks {
             let selectedSymlinkMarker = FolderScanner.scan(roots: [symlinkRoot]).folders[0]
             try expect(!selectedSymlinkMarker.gitMetadataEntryDetected && selectedSymlinkMarker.gitMetadataUsage == nil, "a .git symlink must not be followed or attributed")
             try expect(selectedSymlinkMarker.excludedSymlinkCount == 1 && !selectedSymlinkMarker.complete, "a .git symlink should remain visible as partial coverage")
+
+            let specialMarkerRoot = root.appendingPathComponent("special-marker", isDirectory: true)
+            try FileManager.default.createDirectory(at: specialMarkerRoot, withIntermediateDirectories: false)
+            let specialMarkerResult = specialMarkerRoot.appendingPathComponent(".git")
+                .path.withCString { mkfifo($0, mode_t(S_IRUSR | S_IWUSR)) }
+            try expect(specialMarkerResult == 0, "synthetic special Git-like markers should be created without opening them")
+            let specialMarker = FolderScanner.scan(roots: [specialMarkerRoot]).folders[0]
+            try expect(!specialMarker.gitMetadataEntryDetected && specialMarker.projectDirectorySummaries.isEmpty,
+                       "special filesystem entries named .git should not be presented as repository markers")
         }
     }
 
@@ -1010,10 +1022,27 @@ private struct DiskerCoreChecks {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
                 try Data(repeating: 0x47, count: 8192).write(to: directory.appendingPathComponent("payload.bin"))
             }
+            for index in 0..<21 {
+                let project = root.appendingPathComponent(String(format: "project-%03d", index), isDirectory: true)
+                let projectGit = project.appendingPathComponent(".git", isDirectory: true)
+                try FileManager.default.createDirectory(at: projectGit, withIntermediateDirectories: true)
+                try Data("synthetic".utf8).write(to: project.appendingPathComponent("main.swift"))
+                try Data().write(to: projectGit.appendingPathComponent("HEAD"))
+            }
             let folder = FolderScanner.scan(roots: [root]).folders[0]
             try expect(folder.subdirectorySummaries.count == 100 && folder.subdirectorySummariesTruncated, "the ordinary leaderboard should remain capped at 100 entries")
             try expect(!folder.subdirectorySummaries.contains(where: { $0.rootRelativePath == ".git" }), "small Git metadata may fall below the largest-folder cutoff")
             try expect(folder.gitMetadataUsage?.logicalBytes == 0, "the direct Git metadata measurement should survive outside the capped leaderboard")
+            try expect(folder.projectDirectorySummaries.count == 20 && folder.projectDirectorySummariesTruncated,
+                       "nested Git-marker folders should have an independent 20-entry bounded summary")
+            try expect(folder.projectDirectorySummaries.allSatisfy(\.gitMetadataEntryDetected),
+                       "dedicated project summaries should retain direct Git marker evidence")
+            try expect(!folder.subdirectorySummaries.contains(where: { $0.rootRelativePath == "project-020" }),
+                       "small repository folders should remain available even below the ordinary largest-folder cutoff")
+            let restored = try JSONDecoder().decode(FolderObservation.self, from: JSONEncoder().encode(folder))
+            try expect(restored.projectDirectorySummaries == folder.projectDirectorySummaries
+                       && restored.projectDirectorySummariesTruncated,
+                       "bounded repository-marker summaries should persist with the folder observation")
         }
     }
 
@@ -1442,6 +1471,41 @@ private struct DiskerCoreChecks {
         ) == nil, "partial root observations must not be compared even if a subtree summary appears complete")
         try expect(ObservationComparison.growingDirectories(in: partialHistory).isEmpty,
                    "a newer partial root scan must suppress older subfolder growth signals")
+
+        let oldProjectDirectory = DirectoryUsage(
+            rootRelativePath: "vendor/small-project", logicalBytes: 100,
+            allocatedBytes: 100, fileCount: 1, incompleteCount: 0,
+            excludedSymlinkCount: 0, gitMetadataEntryDetected: true, complete: true
+        )
+        let newProjectDirectory = DirectoryUsage(
+            rootRelativePath: "vendor/small-project", logicalBytes: 125,
+            allocatedBytes: 125, fileCount: 1, incompleteCount: 0,
+            excludedSymlinkCount: 0, gitMetadataEntryDetected: true, complete: true
+        )
+        let oldProjectFolder = FolderObservation(
+            id: UUID(), path: "/project-root", displayName: "project-root",
+            logicalBytes: 100, allocatedBytes: 100, fileCount: 1,
+            inaccessibleCount: 0, complete: true,
+            projectDirectorySummaries: [oldProjectDirectory]
+        )
+        let newProjectFolder = FolderObservation(
+            id: UUID(), path: "/project-root", displayName: "project-root",
+            logicalBytes: 125, allocatedBytes: 125, fileCount: 1,
+            inaccessibleCount: 0, complete: true,
+            projectDirectorySummaries: [newProjectDirectory]
+        )
+        let projectHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: .now, folders: [oldProjectFolder], cancelled: false),
+            ScanObservation(startedAt: .now, folders: [newProjectFolder], cancelled: false),
+        ])
+        try expect(ObservationComparison.previousCompleteDirectory(
+            for: newProjectDirectory, in: newProjectFolder, history: projectHistory
+        )?.allocatedBytes == 100,
+                   "repository-marker paths should compare with the prior complete same-root observation")
+        let projectGrowth = ObservationComparison.growingDirectories(in: projectHistory)
+        try expect(projectGrowth.count == 1 && projectGrowth[0].directory.rootRelativePath == "vendor/small-project"
+                   && projectGrowth[0].growthBytes == 25,
+                   "repository-marker summaries omitted from the ordinary leaderboard should still support growth history")
     }
 
     private static func folderWithDirectory(

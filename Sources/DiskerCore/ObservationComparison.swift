@@ -292,6 +292,9 @@ public enum ObservationComparison {
         for directory in folder.subdirectorySummaries {
             directories[directory.rootRelativePath] = directory
         }
+        for directory in folder.projectDirectorySummaries {
+            directories[directory.rootRelativePath] = directory
+        }
         if let gitMetadata = folder.gitMetadataUsage {
             directories[gitMetadata.rootRelativePath] = gitMetadata
         }
@@ -346,7 +349,9 @@ public enum ObservationComparison {
                 guard let previousFolder = observation.folders.first(where: {
                     $0.path == folder.path && $0.complete
                 }) else { return nil }
-                return previousFolder.subdirectorySummaries.first(where: {
+                return previousFolder.projectDirectorySummaries.first(where: {
+                    $0.rootRelativePath == current.rootRelativePath && $0.complete
+                }) ?? previousFolder.subdirectorySummaries.first(where: {
                     $0.rootRelativePath == current.rootRelativePath && $0.complete
                 }) ?? previousFolder.gitMetadataUsage.flatMap {
                     $0.rootRelativePath == current.rootRelativePath && $0.complete ? $0 : nil
