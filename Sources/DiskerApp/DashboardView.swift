@@ -433,23 +433,25 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: 24) {
                 header("Storage overview", subtitle: "A measured view of your Mac's storage, with clear limits.")
                 capacityCard
-                scanCard
-                folderGrowthCard
-                directoryGrowthCard
-                if let latest = model.latestScan, !latest.folders.isEmpty {
-                    let largestFolders = Array(latest.folders.sorted {
-                        $0.allocatedBytes > $1.allocatedBytes
-                    }.prefix(3))
-                    folderList(
-                        largestFolders, title: "Largest selected folders",
-                        scanCancelled: latest.cancelled, includeDetails: false
-                    )
-                    Button("Open Folders for the full breakdown") {
-                        selectedSection = "Folders"
-                    }
-                    .buttonStyle(.link)
-                } else {
+                if model.latestScan == nil && !model.isScanning {
                     emptyHistoryCard
+                } else {
+                    scanCard
+                    folderGrowthCard
+                    directoryGrowthCard
+                    if let latest = model.latestScan, !latest.folders.isEmpty {
+                        let largestFolders = Array(latest.folders.sorted {
+                            $0.allocatedBytes > $1.allocatedBytes
+                        }.prefix(3))
+                        folderList(
+                            largestFolders, title: "Largest selected folders",
+                            scanCancelled: latest.cancelled, includeDetails: false
+                        )
+                        Button("Open Folders for the full breakdown") {
+                            selectedSection = "Folders"
+                        }
+                        .buttonStyle(.link)
+                    }
                 }
                 methodologyNote
             }
