@@ -33,6 +33,7 @@ private struct DiskerCoreChecks {
             ("zero important-usage fallback", testImportantUsageFallback),
             ("live root volume capacity", testLiveCapacitySource),
             ("live RAM and process sample", testLiveRAMSample),
+            ("opt-in RAM monitoring policy", testRAMMonitoringPolicy),
             ("cautious sustained process growth signal", testPossibleProcessGrowth),
             ("metadata scan and symlink exclusion", testMetadataScanAndSymlinkExclusion),
             ("special filesystem entries remain partial and uncounted", testSpecialFileExclusion),
@@ -657,6 +658,18 @@ private struct DiskerCoreChecks {
         try expect(ObservationComparison.possibleProcessGrowth(
             in: LocalHistory(ramObservations: Array(samples.prefix(2)))
         ).isEmpty, "two short-interval samples must not look like sustained growth")
+    }
+
+    private static func testRAMMonitoringPolicy() throws {
+        try expect(RAMMonitoringPolicy.interval == 300, "automatic RAM sampling should use a five-minute cadence")
+        try expect(RAMMonitoringPolicy.shouldSample(enabled: true, appIsActive: true, sampleInProgress: false),
+                   "an opted-in active app may take a scheduled sample")
+        try expect(!RAMMonitoringPolicy.shouldSample(enabled: false, appIsActive: true, sampleInProgress: false),
+                   "RAM sampling should remain off unless explicitly enabled")
+        try expect(!RAMMonitoringPolicy.shouldSample(enabled: true, appIsActive: false, sampleInProgress: false),
+                   "automatic RAM sampling should pause while Disker is inactive")
+        try expect(!RAMMonitoringPolicy.shouldSample(enabled: true, appIsActive: true, sampleInProgress: true),
+                   "scheduled samples should not overlap an active manual sample")
     }
 
     private static func testMetadataScanAndSymlinkExclusion() throws {

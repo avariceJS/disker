@@ -58,11 +58,12 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 - Reports complete-only allocated-estimate deltas for matching descendant paths under the same selected root.
 - Provides Finder reveal for selected folder roots.
 - Provides a separate, manual RAM sample using Mach VM page counts and process resident sizes.
+- Offers optional five-minute RAM sampling while Disker is the active app. It is off by default, pauses while the app is inactive, and installs no background service; samples stay in the bounded local history.
 - Keeps up to 180 on-demand RAM samples locally and plots free, compressed, and macOS-reported swap use separately from storage. A zero allocated-swap state is shown distinctly from an unavailable sysctl result. It does not infer pressure or diagnose leaks.
-- Flags possible process resident-size growth only across three consecutive manual samples spanning at least 15 minutes, with a stable PID, process name, and kernel-reported start time plus at least 100 MiB growth. It is an investigation signal, not a leak diagnosis.
+- Flags possible process resident-size growth only across three consecutive samples spanning at least 15 minutes, with a stable PID, process name, and kernel-reported start time plus at least 100 MiB growth. It is an investigation signal, not a leak diagnosis.
 - Verifies byte-identical duplicate candidates only after a separate folder selection and confirmation. It hashes regular files sharing a logical size, skips symlinks and hard-link aliases, and reports no reclaimable-space estimate.
 - Provides an optional dry-run plan from verified duplicate groups only after the user explicitly chooses a path to preserve. Changed files are removed from groups before planning. The plan identifies exact other paths, retains the verification time, warns that files may have changed since, and reports risk/reclaimable space as unknown; no file action is implemented.
-- Does not include full application ownership attribution, automatic associated-data discovery, general cleanup discovery, or background monitoring. The Applications view covers selected app bundles and user-associated folders only.
+- Does not include full application ownership attribution, automatic associated-data discovery, general cleanup discovery, background storage scans, or system-wide memory-pressure monitoring. The Applications view covers selected app bundles and user-associated folders only.
 
 Folder totals are estimates. APFS clones, snapshots, shared blocks, concurrent changes, inaccessible areas, and system-managed storage prevent recursive file totals from reconciling with physical volume usage.
 

@@ -12,6 +12,8 @@ final class DashboardModel {
     var ram: RAMObservation?
     var history = LocalHistory()
     var isScanning = false
+    var isSamplingRAM = false
+    var isAppActive = false
     var duplicateResult: DuplicateVerificationResult?
     var isVerifyingDuplicates = false
     var duplicateCurrentPath = ""
@@ -83,7 +85,10 @@ final class DashboardModel {
     }
 
     func refreshRAM() {
+        guard !isSamplingRAM else { return }
+        isSamplingRAM = true
         Task {
+            defer { isSamplingRAM = false }
             do {
                 let sample = try await Task.detached(priority: .utility) {
                     try RAMObservation.current()
@@ -328,6 +333,8 @@ struct DashboardView: View {
     @State private var model = DashboardModel()
     @State private var selectedSection: String? = "Overview"
     @State private var isConfirmingHistoryClear = false
+    @State private var isAutomaticRAMSamplingEnabled = false
+    @Environment(\.scenePhase) private var scenePhase
 
     private let sections = ["Overview", "Applications", "Folders", "Duplicates", "History", "RAM", "About"]
 
@@ -366,7 +373,35 @@ struct DashboardView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(Color(nsColor: .windowBackgroundColor))
         }
-        .onAppear { model.refreshCapacity() }
+        .onAppear {
+            model.isAppActive = scenePhase == .active
+            model.refreshCapacity()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            model.isAppActive = phase == .active
+        }
+        .onChange(of: isAutomaticRAMSamplingEnabled) { _, enabled in
+            if enabled && scenePhase == .active {
+                model.refreshRAM()
+            }
+        }
+        .task(id: isAutomaticRAMSamplingEnabled) {
+            guard isAutomaticRAMSamplingEnabled else { return }
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(RAMMonitoringPolicy.interval * 1_000_000_000))
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                let maySample = RAMMonitoringPolicy.shouldSample(
+                    enabled: isAutomaticRAMSamplingEnabled,
+                    appIsActive: model.isAppActive,
+                    sampleInProgress: model.isSamplingRAM
+                )
+                if maySample { model.refreshRAM() }
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .chooseFoldersToScan)) { _ in
             model.chooseFolders()
         }
@@ -1431,6 +1466,18 @@ struct DashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 header("RAM", subtitle: "A separate snapshot of physical memory and process resident sizes.")
+                Toggle(isOn: $isAutomaticRAMSamplingEnabled) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Sample RAM every five minutes")
+                            .font(.subheadline.weight(.medium))
+                        Text("Only while Disker is active. Samples stay in local history; no background service is installed.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .toggleStyle(.switch)
+                .accessibilityHint("When enabled, Disker saves a RAM sample every five minutes while this app is active. It pauses when the app is inactive and is off again next time Disker opens.")
                 if let ram = model.ram {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
@@ -1493,9 +1540,9 @@ struct DashboardView: View {
                     .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
 
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Manual RAM history")
+                        Text("RAM history")
                             .font(.title3.weight(.semibold))
-                        Text("Free and compressed pages, plus swap use when macOS reports it, across your last 24 on-demand samples. These snapshots are not a memory-pressure or leak diagnosis.")
+                        Text("Free and compressed pages, plus swap use when macOS reports it, across your last 24 manual or automatic samples. These snapshots are not a memory-pressure or leak diagnosis.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
