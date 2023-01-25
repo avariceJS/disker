@@ -69,7 +69,7 @@ Folder totals are estimates. APFS clones, snapshots, shared blocks, concurrent c
 
 `scripts/benchmark-selected-root.sh <directory>` measures metadata-scan elapsed time, process CPU time, coverage, and logical/allocated estimates for one explicitly supplied directory. It does not read file contents or persist the observation.
 
-RAM is sampled on demand. Inactive pages may be reclaimable cache; process resident size differs from physical footprint. Swap measurements are optional and reflect macOS's current allocated swap accounting, not memory pressure. Disker does not currently report system memory pressure or diagnose leaks. RAM history shares the bounded local observation file and is removed through **About → Clear Local History…**.
+RAM snapshots are manual by default. Optional automatic sampling runs only while Disker is the active app and pauses when it becomes inactive. Inactive pages may be reclaimable cache; process resident size differs from physical footprint. Swap measurements are optional and reflect macOS's current allocated swap accounting, not memory pressure. Disker does not currently report system memory pressure or diagnose leaks. RAM history shares the bounded local observation file and is removed through **About → Clear Local History…**.
 
 Duplicate verification reads file contents only after the user selects folders and confirms the exact scope. SHA-256 results remain in the current app session; no file is moved or removed. Identical content does not establish ownership, safety to delete, or physical space that would be reclaimed.
 
