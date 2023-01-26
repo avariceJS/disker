@@ -32,6 +32,6 @@ The mission remains in progress: Disker does not automatically discover app supp
 
 ## Repository and next work
 
-Canonical remote: `https://github.com/avariceJS/disker.git`; `.git` is authoritative, `.gitmeta` history is preserved, and `main` is the only development branch. Latest verified published HEAD: `f0175c9` (`Expose bounded nested repository footprints`), on `main`; the local `HEAD` was pushed to `origin/main` successfully. Commit and push each verified milestone to `origin/main`, then confirm local and remote HEAD match.
+Canonical remote: `https://github.com/avariceJS/disker.git`; `.git` is authoritative, `.gitmeta` history is preserved, and `main` is the only development branch. Latest verified published HEAD: `8009c79` (`Clarify active RAM history behavior`), on `main`; the local `HEAD` was pushed to `origin/main` successfully. Commit and push each verified milestone to `origin/main`, then confirm local and remote HEAD match.
 
 Next, obtain a screen-capture consent path and visually inspect the latest Duplicates and Folders states. Then continue improving evidence-backed app/project drill-down, comparison and coverage states while keeping selected-scope boundaries. Keep cleanup review read-only with unknown risk/reclaimable space unless physical impact is established.
