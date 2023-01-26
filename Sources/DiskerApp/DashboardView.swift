@@ -1486,6 +1486,11 @@ struct DashboardView: View {
                             Label("Physical RAM", systemImage: "memorychip")
                                 .font(.headline)
                             Spacer()
+                            if model.isSamplingRAM {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .accessibilityLabel("Sampling RAM")
+                            }
                             Text(ram.observedAt.formatted(date: .abbreviated, time: .shortened))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -1650,7 +1655,16 @@ struct DashboardView: View {
                     } description: {
                         Text("Take a point-in-time sample of system RAM and process resident sizes.")
                     } actions: {
-                        Button("Sample RAM", action: model.refreshRAM)
+                        Button {
+                            model.refreshRAM()
+                        } label: {
+                            if model.isSamplingRAM {
+                                Label("Sampling RAM…", systemImage: "hourglass")
+                            } else {
+                                Text("Sample RAM")
+                            }
+                        }
+                        .disabled(model.isSamplingRAM)
                     }
                 }
             }
@@ -1659,7 +1673,8 @@ struct DashboardView: View {
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button("Refresh RAM", action: model.refreshRAM)
+                Button(model.isSamplingRAM ? "Sampling RAM…" : "Refresh RAM", action: model.refreshRAM)
+                    .disabled(model.isSamplingRAM)
             }
         }
     }
