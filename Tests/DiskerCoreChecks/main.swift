@@ -1140,6 +1140,21 @@ private struct DiskerCoreChecks {
         let oldRAMJSON = #"{"observedAt":1,"physicalBytes":16000,"freeBytes":2000,"activeBytes":4000,"inactiveBytes":3000,"wiredBytes":2000,"compressedBytes":1000,"processListAvailable":true,"sampledProcessCount":0,"unavailableProcessCount":0,"largestProcesses":[]}"#
         let oldRAM = try JSONDecoder().decode(RAMObservation.self, from: Data(oldRAMJSON.utf8))
         try expect(oldRAM.swapUsage == nil, "legacy RAM observations without swap metrics should remain readable and explicitly unavailable")
+        let measuredSwap = SwapUsage(
+            totalBytes: 4096, availableBytes: 1024, usedBytes: 3072, pageSize: 4096
+        )
+        let currentRAM = RAMObservation(
+            observedAt: Date(timeIntervalSince1970: 2), physicalBytes: 16_000,
+            freeBytes: 2_000, activeBytes: 4_000, inactiveBytes: 3_000,
+            wiredBytes: 2_000, compressedBytes: 1_000,
+            processListAvailable: true, sampledProcessCount: 0,
+            unavailableProcessCount: 0, largestProcesses: [], swapUsage: measuredSwap
+        )
+        let restoredRAM = try JSONDecoder().decode(
+            RAMObservation.self, from: JSONEncoder().encode(currentRAM)
+        )
+        try expect(restoredRAM.swapUsage == measuredSwap,
+                   "manual and automatic RAM history should preserve optional swap measurements")
     }
 
     private static func testSparseFileAccounting() throws {
