@@ -1234,6 +1234,14 @@ private struct DiskerCoreChecks {
             try expect(reloaded.observations.last?.id == latestID, "newest observation should survive a restart")
             try expect(reloaded.observations.last?.cancelled == true, "cancelled scan status should persist")
             try expect(reloaded.observations.last?.folders.first?.complete == false, "incomplete folder coverage should persist")
+            let historyPermissions = try FileManager.default.attributesOfItem(atPath: fileURL.path)[.posixPermissions] as? NSNumber
+            try expect(historyPermissions?.intValue == 0o600,
+                       "saved observations containing user paths should be readable only by the local account")
+            let historyDirectoryPermissions = try FileManager.default.attributesOfItem(
+                atPath: fileURL.deletingLastPathComponent().path
+            )[.posixPermissions] as? NSNumber
+            try expect(historyDirectoryPermissions?.intValue == 0o700,
+                       "the observation directory should be accessible only by the local account")
             for index in 0...180 {
                 try ObservationStore.append(ramSample(at: TimeInterval(index)), to: fileURL)
             }

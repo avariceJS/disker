@@ -132,12 +132,18 @@ public enum ObservationStore {
 
     private static func save(_ history: LocalHistory, fileURL: URL?) throws {
         guard let url = fileURL ?? historyURL() else { throw StorageReadError.historyLocationUnavailable }
+        let directoryURL = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
+            at: directoryURL,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700], ofItemAtPath: directoryURL.path
         )
         let data = try JSONEncoder().encode(history)
         try data.write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     public static func clear(at fileURL: URL? = nil) throws {

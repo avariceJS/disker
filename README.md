@@ -75,6 +75,6 @@ Duplicate verification reads file contents only after the user selects folders a
 
 ## Privacy
 
-No account, network service, or telemetry is used. Folder selection is explicit, and later access is limited to the user's manual rescan action. Disker stores metadata observations and app-folder associations locally in `observations.json`; read-only bookmarks for up to 20 selected scan roots are kept separately in `selected-scopes.json`, with owner-only file permissions. The About page's confirmed “Clear Local History…” action removes both files and never changes selected folders or their contents.
+No account, network service, or telemetry is used. Folder selection is explicit, and later access is limited to the user's manual rescan action. Disker stores metadata observations and app-folder associations locally in `observations.json` inside a user-only directory, with owner-only file permissions. Read-only bookmarks for up to 20 selected scan roots are kept separately in `selected-scopes.json` with the same permissions. The About page's confirmed “Clear Local History…” action removes both files and never changes selected folders or their contents.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/HANDOFF.md](docs/HANDOFF.md).
