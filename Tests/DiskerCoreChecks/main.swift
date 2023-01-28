@@ -1211,6 +1211,10 @@ private struct DiskerCoreChecks {
     private static func testHistoryPersistenceAndRetention() throws {
         try withTemporaryDirectory { root in
             let fileURL = root.appendingPathComponent("nested/history.json")
+            try FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o755]
+            )
             let firstID = UUID()
             var latestID = UUID()
             for index in 0...180 {
@@ -1226,6 +1230,15 @@ private struct DiskerCoreChecks {
                     folders: [folder], cancelled: index == 180
                 )
                 try ObservationStore.append(observation, to: fileURL)
+                if index == 0 {
+                    // Simulate a history file created by an older build before
+                    // owner-only permissions were enforced.
+                    try FileManager.default.setAttributes(
+                        [.posixPermissions: 0o755],
+                        ofItemAtPath: fileURL.deletingLastPathComponent().path
+                    )
+                    try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: fileURL.path)
+                }
             }
 
             let reloaded = try ObservationStore.load(from: fileURL)
