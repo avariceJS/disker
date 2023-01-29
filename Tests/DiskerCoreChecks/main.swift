@@ -34,6 +34,7 @@ private struct DiskerCoreChecks {
             ("live root volume capacity", testLiveCapacitySource),
             ("live RAM and process sample", testLiveRAMSample),
             ("opt-in RAM monitoring policy", testRAMMonitoringPolicy),
+            ("system memory-pressure transition mapping", testMemoryPressureEventMapping),
             ("cautious sustained process growth signal", testPossibleProcessGrowth),
             ("metadata scan and symlink exclusion", testMetadataScanAndSymlinkExclusion),
             ("special filesystem entries remain partial and uncounted", testSpecialFileExclusion),
@@ -672,6 +673,27 @@ private struct DiskerCoreChecks {
                    "scheduled samples should not overlap an active manual sample")
     }
 
+    private static func testMemoryPressureEventMapping() throws {
+        try expect(MemoryPressureLevel.from(events: .normal) == .normal,
+                   "a system normal-pressure transition should remain normal")
+        try expect(MemoryPressureLevel.from(events: .warning) == .warning,
+                   "a system warning-pressure transition should remain warning")
+        try expect(MemoryPressureLevel.from(events: .critical) == .critical,
+                   "a system critical-pressure transition should remain critical")
+        try expect(MemoryPressureLevel.from(events: [.warning, .critical]) == .critical,
+                   "when event flags overlap, the most severe pressure level should be retained")
+        try expect(MemoryPressureLevel.from(events: []) == nil,
+                   "unknown dispatch event flags must not be presented as a pressure state")
+
+        let event = MemoryPressureObservation(
+            observedAt: Date(timeIntervalSince1970: 42), level: .warning
+        )
+        let restored = try JSONDecoder().decode(
+            MemoryPressureObservation.self, from: JSONEncoder().encode(event)
+        )
+        try expect(restored == event, "system pressure transitions should persist with their timestamp and level")
+    }
+
     private static func testMetadataScanAndSymlinkExclusion() throws {
         try withTemporaryDirectory { root in
             let data = Data(repeating: 0x5A, count: 8192)
@@ -1120,6 +1142,8 @@ private struct DiskerCoreChecks {
         try expect(!folder.applicationSignatureValidated && folder.applicationSignedBundleIdentifier == nil,
                    "legacy folder history should default to unvalidated signature metadata")
         try expect(history.ramObservations.isEmpty, "old folder history should default manual RAM history to empty")
+        try expect(history.memoryPressureObservations.isEmpty,
+                   "older history should default system pressure transition history to empty")
         try expect(history.capacityObservations.isEmpty, "old history should default capacity observations to empty")
         try expect(history.applicationAssociations.count == 1,
                    "old history should preserve application associations when decoding the added optional bundle identifier")

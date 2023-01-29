@@ -26,6 +26,7 @@ final class DashboardModel {
     var visitedFiles = 0
     private var scanTask: Task<ScanObservation, Never>?
     private var duplicateTask: Task<DuplicateVerificationResult, Never>?
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
 
     init() {
         do {
@@ -102,6 +103,36 @@ final class DashboardModel {
             } catch {
                 errorMessage = error.localizedDescription
             }
+        }
+    }
+
+    func updateMemoryPressureMonitoring(enabled: Bool, appIsActive: Bool) {
+        guard enabled && appIsActive else {
+            memoryPressureSource?.setEventHandler {}
+            memoryPressureSource?.cancel()
+            memoryPressureSource = nil
+            return
+        }
+        guard memoryPressureSource == nil else { return }
+
+        let source = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.normal, .warning, .critical], queue: .main
+        )
+        source.setEventHandler { [weak self, weak source] in
+            guard let source,
+                  let level = MemoryPressureLevel.from(events: source.data) else { return }
+            self?.recordMemoryPressureTransition(level)
+        }
+        memoryPressureSource = source
+        source.resume()
+    }
+
+    private func recordMemoryPressureTransition(_ level: MemoryPressureLevel) {
+        let observation = MemoryPressureObservation(observedAt: .now, level: level)
+        do {
+            history = try ObservationStore.append(observation)
+        } catch {
+            errorMessage = "A system pressure transition was observed, but local history could not be saved: \(error.localizedDescription)"
         }
     }
 
@@ -376,14 +407,23 @@ struct DashboardView: View {
         .onAppear {
             model.isAppActive = scenePhase == .active
             model.refreshCapacity()
+            model.updateMemoryPressureMonitoring(
+                enabled: isAutomaticRAMSamplingEnabled, appIsActive: model.isAppActive
+            )
         }
         .onChange(of: scenePhase) { _, phase in
             model.isAppActive = phase == .active
+            model.updateMemoryPressureMonitoring(
+                enabled: isAutomaticRAMSamplingEnabled, appIsActive: model.isAppActive
+            )
         }
         .onChange(of: isAutomaticRAMSamplingEnabled) { _, enabled in
             if enabled && scenePhase == .active {
                 model.refreshRAM()
             }
+            model.updateMemoryPressureMonitoring(
+                enabled: enabled, appIsActive: model.isAppActive
+            )
         }
         .task(id: isAutomaticRAMSamplingEnabled) {
             guard isAutomaticRAMSamplingEnabled else { return }
@@ -1470,16 +1510,16 @@ struct DashboardView: View {
                 header("RAM", subtitle: "A separate snapshot of physical memory and process resident sizes.")
                 Toggle(isOn: $isAutomaticRAMSamplingEnabled) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Sample RAM every five minutes")
+                        Text("Sample RAM and watch pressure changes")
                             .font(.subheadline.weight(.medium))
-                        Text("Only while Disker is active. Samples stay in local history; no background service is installed.")
+                        Text("RAM samples arrive every five minutes; system pressure is recorded only when macOS reports a transition. This pauses while Disker is inactive and runs no background service.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .toggleStyle(.switch)
-                .accessibilityHint("When enabled, Disker saves a RAM sample every five minutes while this app is active. It pauses when the app is inactive and is off again next time Disker opens.")
+                .accessibilityHint("When enabled, Disker saves a RAM sample every five minutes and records system pressure transitions while this app is active. It pauses when the app is inactive and is off again next time Disker opens.")
                 if let ram = model.ram {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
@@ -1667,6 +1707,7 @@ struct DashboardView: View {
                         .disabled(model.isSamplingRAM)
                     }
                 }
+                memoryPressureCard
             }
             .padding(30)
             .frame(maxWidth: 960, alignment: .leading)
@@ -1677,6 +1718,44 @@ struct DashboardView: View {
                     .disabled(model.isSamplingRAM)
             }
         }
+    }
+
+    private var memoryPressureCard: some View {
+        let recentEvents = Array(model.history.memoryPressureObservations.suffix(12).reversed())
+        return VStack(alignment: .leading, spacing: 10) {
+            Label("System memory-pressure transitions", systemImage: "waveform.path.ecg")
+                .font(.title3.weight(.semibold))
+            Text("These are system-wide transitions macOS reported while Disker was active and monitoring was enabled. Gaps and periods before the first event are unknown; no event does not mean normal pressure.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if recentEvents.isEmpty {
+                Text(isAutomaticRAMSamplingEnabled
+                     ? "Waiting for a pressure transition. Current system pressure is unknown."
+                     : "Enable RAM monitoring to observe pressure transitions while Disker is active.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(recentEvents) { event in
+                    HStack(spacing: 10) {
+                        Circle()
+                            .fill(event.level == .critical ? .red : event.level == .warning ? .orange : .green)
+                            .frame(width: 8, height: 8)
+                        Text(event.level.rawValue.capitalized)
+                            .font(.subheadline.weight(.medium))
+                        Spacer()
+                        Text(event.observedAt.formatted(date: .abbreviated, time: .shortened))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    Divider()
+                }
+            }
+        }
+        .padding(20)
+        .background(.background, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
     }
 
     private func folderList(

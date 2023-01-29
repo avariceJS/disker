@@ -58,7 +58,7 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 - Reports complete-only allocated-estimate deltas for matching descendant paths under the same selected root.
 - Provides Finder reveal for selected folder roots.
 - Provides a separate, manual RAM sample using Mach VM page counts and process resident sizes.
-- Offers optional five-minute RAM sampling while Disker is the active app. It is off by default, pauses while the app is inactive, and installs no background service; samples stay in the bounded local history.
+- Offers optional five-minute RAM sampling and records public macOS memory-pressure transitions while Disker is the active app. It is off by default, pauses while inactive, and installs no background service; samples and events stay in bounded local history.
 - Keeps up to 180 on-demand RAM samples locally and plots free, compressed, and macOS-reported swap use separately from storage. A zero allocated-swap state is shown distinctly from an unavailable sysctl result. It does not infer pressure or diagnose leaks.
 - Flags possible process resident-size growth only across three consecutive samples spanning at least 15 minutes, with a stable PID, process name, and kernel-reported start time plus at least 100 MiB growth. It is an investigation signal, not a leak diagnosis.
 - Verifies byte-identical duplicate candidates only after a separate folder selection and confirmation. It hashes regular files sharing a logical size, skips symlinks and hard-link aliases, and reports no reclaimable-space estimate.
@@ -69,7 +69,7 @@ Folder totals are estimates. APFS clones, snapshots, shared blocks, concurrent c
 
 `scripts/benchmark-selected-root.sh <directory>` measures metadata-scan elapsed time, process CPU time, coverage, and logical/allocated estimates for one explicitly supplied directory. It does not read file contents or persist the observation.
 
-RAM snapshots are manual by default. Optional automatic sampling runs only while Disker is the active app and pauses when it becomes inactive. Inactive pages may be reclaimable cache; process resident size differs from physical footprint. Swap measurements are optional and reflect macOS's current allocated swap accounting, not memory pressure. Disker does not currently report system memory pressure or diagnose leaks. RAM history shares the bounded local observation file and is removed through **About → Clear Local History…**.
+RAM snapshots are manual by default. Optional automatic sampling and system pressure transition observation run only while Disker is active. The transition log does not provide an initial pressure baseline or a continuous current state; gaps and unobserved periods remain unknown. Inactive pages may be reclaimable cache; process resident size differs from physical footprint. Swap measurements are optional and reflect macOS's current allocated swap accounting, not memory pressure. Disker does not diagnose leaks. RAM history shares the bounded local observation file and is removed through **About → Clear Local History…**.
 
 Duplicate verification reads file contents only after the user selects folders and confirms the exact scope. SHA-256 results remain in the current app session; no file is moved or removed. Identical content does not establish ownership, safety to delete, or physical space that would be reclaimed.
 

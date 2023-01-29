@@ -3,28 +3,35 @@ import Foundation
 public struct LocalHistory: Codable, Sendable {
     public var observations: [ScanObservation]
     public var ramObservations: [RAMObservation]
+    public var memoryPressureObservations: [MemoryPressureObservation]
     public var capacityObservations: [CapacityObservation]
     public var applicationAssociations: [ApplicationFolderAssociation]
 
     public init(
         observations: [ScanObservation] = [], ramObservations: [RAMObservation] = [],
+        memoryPressureObservations: [MemoryPressureObservation] = [],
         capacityObservations: [CapacityObservation] = [],
         applicationAssociations: [ApplicationFolderAssociation] = []
     ) {
         self.observations = observations
         self.ramObservations = ramObservations
+        self.memoryPressureObservations = memoryPressureObservations
         self.capacityObservations = capacityObservations
         self.applicationAssociations = applicationAssociations
     }
 
     private enum CodingKeys: String, CodingKey {
-        case observations, ramObservations, capacityObservations, applicationAssociations
+        case observations, ramObservations, memoryPressureObservations
+        case capacityObservations, applicationAssociations
     }
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         observations = try values.decodeIfPresent([ScanObservation].self, forKey: .observations) ?? []
         ramObservations = try values.decodeIfPresent([RAMObservation].self, forKey: .ramObservations) ?? []
+        memoryPressureObservations = try values.decodeIfPresent(
+            [MemoryPressureObservation].self, forKey: .memoryPressureObservations
+        ) ?? []
         capacityObservations = try values.decodeIfPresent([CapacityObservation].self, forKey: .capacityObservations) ?? []
         applicationAssociations = try values.decodeIfPresent([ApplicationFolderAssociation].self, forKey: .applicationAssociations) ?? []
     }
@@ -33,6 +40,7 @@ public struct LocalHistory: Codable, Sendable {
         var values = encoder.container(keyedBy: CodingKeys.self)
         try values.encode(observations, forKey: .observations)
         try values.encode(ramObservations, forKey: .ramObservations)
+        try values.encode(memoryPressureObservations, forKey: .memoryPressureObservations)
         try values.encode(capacityObservations, forKey: .capacityObservations)
         try values.encode(applicationAssociations, forKey: .applicationAssociations)
     }
@@ -67,6 +75,17 @@ public enum ObservationStore {
         var history = try load(from: fileURL)
         history.ramObservations.append(observation)
         history.ramObservations = Array(history.ramObservations.suffix(maximumObservationCount))
+        try save(history, fileURL: fileURL)
+        return history
+    }
+
+    @discardableResult
+    public static func append(_ observation: MemoryPressureObservation, to fileURL: URL? = nil) throws -> LocalHistory {
+        var history = try load(from: fileURL)
+        history.memoryPressureObservations.append(observation)
+        history.memoryPressureObservations = Array(
+            history.memoryPressureObservations.suffix(maximumObservationCount)
+        )
         try save(history, fileURL: fileURL)
         return history
     }
