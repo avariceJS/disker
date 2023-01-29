@@ -671,6 +671,11 @@ private struct DiskerCoreChecks {
                    "automatic RAM sampling should pause while Disker is inactive")
         try expect(!RAMMonitoringPolicy.shouldSample(enabled: true, appIsActive: true, sampleInProgress: true),
                    "scheduled samples should not overlap an active manual sample")
+        try expect(RAMMonitoringPolicy.shouldObservePressure(enabled: true, appIsActive: true),
+                   "system pressure events should be observed during an opted-in active session")
+        try expect(!RAMMonitoringPolicy.shouldObservePressure(enabled: true, appIsActive: false)
+                   && !RAMMonitoringPolicy.shouldObservePressure(enabled: false, appIsActive: true),
+                   "pressure observation should stop when Disker is inactive or monitoring is disabled")
     }
 
     private static func testMemoryPressureEventMapping() throws {
@@ -1304,6 +1309,20 @@ private struct DiskerCoreChecks {
             try expect(withCapacityHistory.capacityObservations.last?.availableBytes == 720, "latest capacity sample should survive reload")
             try expect(withCapacityHistory.ramObservations.count == 180 && withCapacityHistory.observations.count == 180,
                        "capacity samples should preserve folder and RAM history")
+
+            let pressureFileURL = root.appendingPathComponent("pressure-history.json")
+            for index in 0...180 {
+                try ObservationStore.append(MemoryPressureObservation(
+                    observedAt: Date(timeIntervalSince1970: TimeInterval(index)),
+                    level: index.isMultiple(of: 2) ? .normal : .warning
+                ), to: pressureFileURL)
+            }
+            let pressureHistory = try ObservationStore.load(from: pressureFileURL)
+            try expect(pressureHistory.memoryPressureObservations.count == 180,
+                       "system pressure transition history should remain bounded")
+            try expect(pressureHistory.memoryPressureObservations.first?.observedAt == Date(timeIntervalSince1970: 1)
+                       && pressureHistory.memoryPressureObservations.last?.level == .normal,
+                       "pressure event history should preserve the latest ordered transitions")
         }
     }
 

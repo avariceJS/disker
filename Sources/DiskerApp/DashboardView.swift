@@ -107,7 +107,9 @@ final class DashboardModel {
     }
 
     func updateMemoryPressureMonitoring(enabled: Bool, appIsActive: Bool) {
-        guard enabled && appIsActive else {
+        guard RAMMonitoringPolicy.shouldObservePressure(
+            enabled: enabled, appIsActive: appIsActive
+        ) else {
             memoryPressureSource?.setEventHandler {}
             memoryPressureSource?.cancel()
             memoryPressureSource = nil

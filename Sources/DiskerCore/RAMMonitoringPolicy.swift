@@ -8,4 +8,8 @@ public enum RAMMonitoringPolicy {
     ) -> Bool {
         enabled && appIsActive && !sampleInProgress
     }
+
+    public static func shouldObservePressure(enabled: Bool, appIsActive: Bool) -> Bool {
+        enabled && appIsActive
+    }
 }
