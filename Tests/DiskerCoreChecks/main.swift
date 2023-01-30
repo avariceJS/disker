@@ -1360,6 +1360,9 @@ private struct DiskerCoreChecks {
             )
             try ObservationStore.append(observation, to: fileURL)
             try ObservationStore.append(ramSample(at: 1), to: fileURL)
+            try ObservationStore.append(MemoryPressureObservation(
+                observedAt: Date(timeIntervalSince1970: 2), level: .warning
+            ), to: fileURL)
             try ObservationStore.associateApplicationFolders(
                 ["/synthetic/support"], with: "/synthetic/Test.app", to: fileURL
             )
@@ -1369,6 +1372,8 @@ private struct DiskerCoreChecks {
             let reloaded = try ObservationStore.load(from: fileURL)
             try expect(reloaded.observations.isEmpty, "clearing history should leave an empty store")
             try expect(reloaded.ramObservations.isEmpty, "clearing local history should clear manual RAM samples too")
+            try expect(reloaded.memoryPressureObservations.isEmpty,
+                       "clearing local history should clear system pressure transitions too")
             try expect(reloaded.applicationAssociations.isEmpty, "clearing local history should clear app-folder associations")
             let preservedNeighbor = try Data(contentsOf: neighboringFile)
             try expect(preservedNeighbor == sentinel, "history reset must not remove neighboring files")

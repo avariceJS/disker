@@ -25,6 +25,7 @@ final class DashboardModel {
     var currentPath = ""
     var visitedFiles = 0
     private var scanTask: Task<ScanObservation, Never>?
+    private var ramSampleTask: Task<Void, Never>?
     private var duplicateTask: Task<DuplicateVerificationResult, Never>?
     private var memoryPressureSource: DispatchSourceMemoryPressure?
 
@@ -88,12 +89,16 @@ final class DashboardModel {
     func refreshRAM() {
         guard !isSamplingRAM else { return }
         isSamplingRAM = true
-        Task {
-            defer { isSamplingRAM = false }
+        ramSampleTask = Task {
+            defer {
+                isSamplingRAM = false
+                ramSampleTask = nil
+            }
             do {
                 let sample = try await Task.detached(priority: .utility) {
                     try RAMObservation.current()
                 }.value
+                guard !Task.isCancelled else { return }
                 ram = sample
                 do {
                     history = try ObservationStore.append(sample)
@@ -101,7 +106,7 @@ final class DashboardModel {
                     errorMessage = "RAM sample completed, but local history could not be saved: \(error.localizedDescription)"
                 }
             } catch {
-                errorMessage = error.localizedDescription
+                if !Task.isCancelled { errorMessage = error.localizedDescription }
             }
         }
     }
@@ -337,6 +342,10 @@ final class DashboardModel {
     }
 
     func clearHistory() {
+        ramSampleTask?.cancel()
+        ramSampleTask = nil
+        isSamplingRAM = false
+        updateMemoryPressureMonitoring(enabled: false, appIsActive: false)
         do {
             try ObservationStore.clear()
             try SelectedScopeBookmarkStore.clear()
@@ -463,10 +472,13 @@ struct DashboardView: View {
             isPresented: $isConfirmingHistoryClear,
             titleVisibility: .visible
         ) {
-            Button("Clear History", role: .destructive) { model.clearHistory() }
+            Button("Clear History", role: .destructive) {
+                isAutomaticRAMSamplingEnabled = false
+                model.clearHistory()
+            }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("This removes saved capacity, folder, and RAM observations, app-folder associations, and remembered read-only scan permissions from this Mac. Your files and folders will not be changed.")
+            Text("This removes saved capacity, folder, RAM and system-pressure observations, app-folder associations, and remembered read-only scan permissions from this Mac. Active RAM monitoring will stop. Your files and folders will not be changed.")
         }
     }
 
