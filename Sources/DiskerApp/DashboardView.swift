@@ -1738,6 +1738,11 @@ struct DashboardView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
+                if model.history.memoryPressureObservations.count > recentEvents.count {
+                    Text("Showing the latest \(recentEvents.count) of \(model.history.memoryPressureObservations.count) retained transitions.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
                 ForEach(recentEvents) { event in
                     HStack(spacing: 10) {
                         Circle()
