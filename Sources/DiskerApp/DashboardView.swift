@@ -1521,7 +1521,7 @@ struct DashboardView: View {
     private var ramPage: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                header("RAM", subtitle: "A separate snapshot of physical memory and process resident sizes.")
+                header("RAM", subtitle: "Physical memory, process resident sizes, swap, and reported pressure transitions.")
                 Toggle(isOn: $isAutomaticRAMSamplingEnabled) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Sample RAM and watch pressure changes")
@@ -1632,9 +1632,11 @@ struct DashboardView: View {
                         .chartLegend(position: .bottom, alignment: .leading)
                         .chartYAxisLabel("MiB")
                         .frame(height: 180)
-                        .accessibilityLabel("Manual history of free and compressed RAM pages")
+                        .accessibilityLabel("Recent RAM history of free and compressed pages and reported swap use")
                         if model.history.ramObservations.count < 2 {
-                            Text("Take another manual sample later to begin comparing observations.")
+                            Text(isAutomaticRAMSamplingEnabled
+                                 ? "More samples will arrive every five minutes while Disker is active."
+                                 : "Take another sample later to begin comparing observations.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
