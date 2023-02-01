@@ -1640,7 +1640,7 @@ struct DashboardView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                        Text("A possible process-growth signal requires the same PID and kernel start time in three consecutive samples spanning at least 15 minutes, with a resident-size increase of 100 MiB or more.")
+                        Text("A possible process-growth signal needs a continuous series of available samples for the same PID, name, and kernel start time, at least three samples spanning 15 minutes or more, and a resident-size increase of 100 MiB or more.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

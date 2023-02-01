@@ -35,45 +35,40 @@ public enum ObservationComparison {
         public var growthBytes: UInt64 { lastResidentBytes - firstResidentBytes }
     }
 
-    /// A cautious investigation signal from three consecutive manual samples.
-    /// It requires stable PID, process name, and kernel-reported start time.
+    /// A cautious investigation signal from a continuous run of available
+    /// samples spanning at least 15 minutes. The run includes at least three
+    /// samples and requires a stable PID, process name, and kernel start time.
     public static func possibleProcessGrowth(in history: LocalHistory) -> [ProcessGrowthSignal] {
-        let recent = Array(history.ramObservations.suffix(3))
-        guard recent.count == 3,
-              recent.allSatisfy(\.processListAvailable),
-              let first = recent.first,
-              let last = recent.last,
-              last.observedAt.timeIntervalSince(first.observedAt) >= 15 * 60
-        else { return [] }
-
-        let firstSamples = first.largestProcesses
-        let finalSamples = last.largestProcesses
+        guard let latestObservation = history.ramObservations.last,
+              latestObservation.processListAvailable else { return [] }
         let threshold = UInt64(100 * 1024 * 1024)
 
-        return firstSamples.compactMap { initial -> ProcessGrowthSignal? in
-            guard let startTime = initial.processStartTime else { return nil }
-            let matching = recent.compactMap { observation in
-                observation.largestProcesses.first(where: {
-                    $0.processID == initial.processID
-                        && $0.name == initial.name
-                        && $0.processStartTime == startTime
-                })
+        return latestObservation.largestProcesses.compactMap { latest -> ProcessGrowthSignal? in
+            guard let startTime = latest.processStartTime else { return nil }
+            var matching: [(observation: RAMObservation, process: ProcessRAMSample)] = []
+            for observation in history.ramObservations.reversed() {
+                guard observation.processListAvailable,
+                      let process = observation.largestProcesses.first(where: {
+                          $0.processID == latest.processID
+                              && $0.name == latest.name
+                              && $0.processStartTime == startTime
+                      }) else { break }
+                matching.append((observation, process))
             }
-            guard matching.count == 3,
-                  let latest = finalSamples.first(where: {
-                      $0.processID == initial.processID
-                          && $0.name == initial.name
-                          && $0.processStartTime == startTime
-                  }),
-                  latest.residentBytes >= initial.residentBytes,
-                  latest.residentBytes - initial.residentBytes >= threshold
-            else { return nil }
+            guard matching.count >= 3,
+                  let startingSample = matching.enumerated().first(where: { index, sample in
+                      index >= 2
+                          && matching[0].observation.observedAt.timeIntervalSince(sample.observation.observedAt) >= 15 * 60
+                  })?.element else { return nil }
+            let initial = startingSample.process
+            guard latest.residentBytes >= initial.residentBytes,
+                  latest.residentBytes - initial.residentBytes >= threshold else { return nil }
 
             return ProcessGrowthSignal(
-                processID: initial.processID,
-                processName: initial.name,
-                firstObservedAt: first.observedAt,
-                lastObservedAt: last.observedAt,
+                processID: latest.processID,
+                processName: latest.name,
+                firstObservedAt: startingSample.observation.observedAt,
+                lastObservedAt: latestObservation.observedAt,
                 firstResidentBytes: initial.residentBytes,
                 lastResidentBytes: latest.residentBytes
             )

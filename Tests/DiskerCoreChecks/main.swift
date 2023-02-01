@@ -637,6 +637,19 @@ private struct DiskerCoreChecks {
         try expect(signals.count == 1, "three consecutive samples over the minimum interval should expose a substantial sustained growth signal")
         try expect(signals[0].processID == 4242 && signals[0].growthBytes == 170 * 1_048_576, "the signal should report the same process and observed resident-size change")
 
+        let fiveMinuteSamples = [0, 5, 10, 15].enumerated().map { index, minutes in
+            ramObservation(
+                at: TimeInterval(minutes * 60), processStart: processStart,
+                residentBytes: UInt64([50, 100, 150, 220][index]) * 1_048_576
+            )
+        }
+        let automaticSignals = ObservationComparison.possibleProcessGrowth(
+            in: LocalHistory(ramObservations: fiveMinuteSamples)
+        )
+        try expect(automaticSignals.count == 1 && automaticSignals[0].growthBytes == 170 * 1_048_576
+                   && automaticSignals[0].firstObservedAt == Date(timeIntervalSince1970: 0),
+                   "five-minute samples should use four observations to cover a 15-minute growth interval")
+
         let reusedPID = ramObservation(
             at: 30 * 60,
             processStart: processStart.addingTimeInterval(1),
