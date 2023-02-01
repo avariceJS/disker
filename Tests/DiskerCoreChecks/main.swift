@@ -649,6 +649,10 @@ private struct DiskerCoreChecks {
         try expect(automaticSignals.count == 1 && automaticSignals[0].growthBytes == 170 * 1_048_576
                    && automaticSignals[0].firstObservedAt == Date(timeIntervalSince1970: 0),
                    "five-minute samples should use four observations to cover a 15-minute growth interval")
+        let tooShortSamples = Array(fiveMinuteSamples.prefix(3))
+        try expect(ObservationComparison.possibleProcessGrowth(
+            in: LocalHistory(ramObservations: tooShortSamples)
+        ).isEmpty, "three five-minute samples should not be compared as a 15-minute trend")
 
         let reusedPID = ramObservation(
             at: 30 * 60,
