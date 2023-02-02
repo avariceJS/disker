@@ -421,6 +421,13 @@ public enum FolderScanner {
                 }
                 return $0.extensionName < $1.extensionName
             }
+            let omittedExtensions = rankedExtensions.dropFirst(maximumFileExtensionSummaries)
+            let otherExtensionUsage: FileExtensionUsage? = omittedExtensions.isEmpty ? nil : FileExtensionUsage(
+                extensionName: "other extensions",
+                logicalBytes: omittedExtensions.reduce(Int64(0)) { $0 + $1.logicalBytes },
+                allocatedBytes: omittedExtensions.reduce(Int64(0)) { $0 + $1.allocatedBytes },
+                fileCount: omittedExtensions.reduce(0) { $0 + $1.fileCount }
+            )
 
             results.append(FolderObservation(
                 path: root.path,
@@ -430,6 +437,8 @@ public enum FolderScanner {
                 fileCount: rootFileCount,
                 fileExtensionSummaries: Array(rankedExtensions.prefix(maximumFileExtensionSummaries)),
                 fileExtensionSummariesTruncated: rankedExtensions.count > maximumFileExtensionSummaries,
+                otherFileExtensionUsage: otherExtensionUsage,
+                otherFileExtensionCategoryCount: max(0, rankedExtensions.count - maximumFileExtensionSummaries),
                 inaccessibleCount: inaccessibleCount,
                 complete: scanComplete && inaccessibleCount == 0 && excludedSymlinkCount == 0
                     && excludedSpecialFileCount == 0

@@ -801,8 +801,21 @@ private struct DiskerCoreChecks {
             }
             let capped = FolderScanner.scan(roots: [manyRoot]).folders[0]
             try expect(capped.fileExtensionSummaries.count == 30
-                       && capped.fileExtensionSummariesTruncated,
-                       "extension metadata should have a stable cap and disclose omitted categories")
+                       && capped.fileExtensionSummariesTruncated
+                       && capped.otherFileExtensionCategoryCount == 5
+                       && capped.otherFileExtensionUsage?.fileCount == 5,
+                       "extension metadata should retain a stable top cap and aggregate omitted categories")
+            try expect(capped.fileExtensionSummaries.reduce(Int64(0)) { $0 + $1.logicalBytes }
+                           + (capped.otherFileExtensionUsage?.logicalBytes ?? 0) == capped.logicalBytes
+                       && capped.fileExtensionSummaries.reduce(Int64(0)) { $0 + $1.allocatedBytes }
+                           + (capped.otherFileExtensionUsage?.allocatedBytes ?? 0) == capped.allocatedBytes,
+                       "the retained categories plus omitted-category aggregate should reconcile to measured totals")
+            let cappedDecoded = try JSONDecoder().decode(
+                FolderObservation.self, from: JSONEncoder().encode(capped)
+            )
+            try expect(cappedDecoded.otherFileExtensionUsage == capped.otherFileExtensionUsage
+                       && cappedDecoded.otherFileExtensionCategoryCount == 5,
+                       "omitted filename-category totals should persist as a bounded aggregate")
         }
     }
 

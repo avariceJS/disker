@@ -2096,6 +2096,21 @@ struct DashboardView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
+            if let other = folder.otherFileExtensionUsage,
+               folder.otherFileExtensionCategoryCount > 0 {
+                HStack(spacing: 8) {
+                    Text("Other \(folder.otherFileExtensionCategoryCount) extensions")
+                        .font(.caption2)
+                    Text("\(other.fileCount) files")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    Text(format(other.allocatedBytes))
+                        .font(.caption2.monospacedDigit())
+                }
+                .accessibilityElement(children: .combine)
+                .help("Combined allocated-byte estimate for filename categories beyond the 30-category retention limit.")
+            }
             if let growth, !growth.isEmpty,
                let previous = model.previousCompleteObservation(for: folder) {
                 Text("Growing categories · allocated estimate since \(previous.finishedAt.formatted(date: .abbreviated, time: .shortened))")

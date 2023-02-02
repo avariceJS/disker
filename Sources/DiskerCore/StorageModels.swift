@@ -112,6 +112,11 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     public let fileCount: Int
     public let fileExtensionSummaries: [FileExtensionUsage]
     public let fileExtensionSummariesTruncated: Bool
+    /// Combined bytes for filename categories beyond the retained cap. The
+    /// aggregate is intentionally separate so history never compares it as if
+    /// it were one stable extension category.
+    public let otherFileExtensionUsage: FileExtensionUsage?
+    public let otherFileExtensionCategoryCount: Int
     public let inaccessibleCount: Int
     public let excludedSymlinkCount: Int
     public let excludedSpecialFileCount: Int
@@ -143,6 +148,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         logicalBytes: Int64, allocatedBytes: Int64, fileCount: Int,
         fileExtensionSummaries: [FileExtensionUsage] = [],
         fileExtensionSummariesTruncated: Bool = false,
+        otherFileExtensionUsage: FileExtensionUsage? = nil,
+        otherFileExtensionCategoryCount: Int = 0,
         inaccessibleCount: Int, finishedAt: Date = .now, complete: Bool,
         excludedSymlinkCount: Int = 0,
         excludedSpecialFileCount: Int = 0,
@@ -166,6 +173,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         self.fileCount = fileCount
         self.fileExtensionSummaries = fileExtensionSummaries
         self.fileExtensionSummariesTruncated = fileExtensionSummariesTruncated
+        self.otherFileExtensionUsage = otherFileExtensionUsage
+        self.otherFileExtensionCategoryCount = otherFileExtensionCategoryCount
         self.inaccessibleCount = inaccessibleCount
         self.excludedSymlinkCount = excludedSymlinkCount
         self.excludedSpecialFileCount = excludedSpecialFileCount
@@ -187,6 +196,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, path, displayName, logicalBytes, allocatedBytes, fileCount
         case fileExtensionSummaries, fileExtensionSummariesTruncated
+        case otherFileExtensionUsage, otherFileExtensionCategoryCount
         case inaccessibleCount, excludedSymlinkCount, excludedSpecialFileCount
         case changedDuringScanCount, gitMetadataEntryDetected
         case finishedAt, complete
@@ -207,6 +217,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         fileCount = try values.decode(Int.self, forKey: .fileCount)
         fileExtensionSummaries = try values.decodeIfPresent([FileExtensionUsage].self, forKey: .fileExtensionSummaries) ?? []
         fileExtensionSummariesTruncated = try values.decodeIfPresent(Bool.self, forKey: .fileExtensionSummariesTruncated) ?? false
+        otherFileExtensionUsage = try values.decodeIfPresent(FileExtensionUsage.self, forKey: .otherFileExtensionUsage)
+        otherFileExtensionCategoryCount = try values.decodeIfPresent(Int.self, forKey: .otherFileExtensionCategoryCount) ?? 0
         inaccessibleCount = try values.decode(Int.self, forKey: .inaccessibleCount)
         excludedSymlinkCount = try values.decodeIfPresent(Int.self, forKey: .excludedSymlinkCount) ?? 0
         excludedSpecialFileCount = try values.decodeIfPresent(Int.self, forKey: .excludedSpecialFileCount) ?? 0
@@ -235,6 +247,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         try values.encode(fileCount, forKey: .fileCount)
         try values.encode(fileExtensionSummaries, forKey: .fileExtensionSummaries)
         try values.encode(fileExtensionSummariesTruncated, forKey: .fileExtensionSummariesTruncated)
+        try values.encodeIfPresent(otherFileExtensionUsage, forKey: .otherFileExtensionUsage)
+        try values.encode(otherFileExtensionCategoryCount, forKey: .otherFileExtensionCategoryCount)
         try values.encode(inaccessibleCount, forKey: .inaccessibleCount)
         try values.encode(excludedSymlinkCount, forKey: .excludedSymlinkCount)
         try values.encode(excludedSpecialFileCount, forKey: .excludedSpecialFileCount)
@@ -259,6 +273,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
             logicalBytes: logicalBytes, allocatedBytes: allocatedBytes,
             fileCount: fileCount, fileExtensionSummaries: fileExtensionSummaries,
             fileExtensionSummariesTruncated: fileExtensionSummariesTruncated,
+            otherFileExtensionUsage: otherFileExtensionUsage,
+            otherFileExtensionCategoryCount: otherFileExtensionCategoryCount,
             inaccessibleCount: inaccessibleCount,
             finishedAt: finishedAt, complete: complete,
             excludedSymlinkCount: excludedSymlinkCount,
