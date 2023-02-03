@@ -23,7 +23,7 @@ final class DashboardModel {
     var rememberedScopes: [SelectedScopeBookmark] = []
     var errorMessage: String?
     var currentPath = ""
-    var visitedFiles = 0
+    var countedFileObjects = 0
     private var scanTask: Task<ScanObservation, Never>?
     private var historyGeneration = 0
     private var ramSampleTask: Task<Void, Never>?
@@ -258,7 +258,7 @@ final class DashboardModel {
         isScanning = true
         let generation = historyGeneration
         currentPath = ""
-        visitedFiles = 0
+        countedFileObjects = 0
         let scanTask = Task.detached(priority: .utility) {
             var identities = applicationBundleIdentities
             if inspectSelectedAppBundles {
@@ -276,7 +276,7 @@ final class DashboardModel {
                 Task { @MainActor [weak self] in
                     guard self?.historyGeneration == generation else { return }
                     self?.currentPath = progress.currentPath
-                    self?.visitedFiles = progress.visitedFiles
+                    self?.countedFileObjects = progress.countedFileObjects
                 }
             })
             return observation.includingApplicationBundleIdentities(identities)
@@ -293,7 +293,7 @@ final class DashboardModel {
             }
             isScanning = false
             currentPath = ""
-            visitedFiles = 0
+            countedFileObjects = 0
             self.scanTask = nil
             if generation == historyGeneration { refreshCapacity() }
         }
@@ -687,7 +687,7 @@ struct DashboardView: View {
                         .controlSize(.small)
                     Text(model.currentPath.isEmpty
                          ? "Starting scan…"
-                         : "\(model.visitedFiles.formatted()) files visited · \(model.currentPath)")
+                         : "\(model.countedFileObjects.formatted()) unique file objects counted · \(model.currentPath)")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -697,7 +697,7 @@ struct DashboardView: View {
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(model.currentPath.isEmpty
                                     ? "Scanning folders"
-                                    : "Scanning folders, \(model.visitedFiles) files visited, current path \(model.currentPath)")
+                                    : "Scanning folders, \(model.countedFileObjects) unique file objects counted, current path \(model.currentPath)")
             }
         }
         .padding(18)

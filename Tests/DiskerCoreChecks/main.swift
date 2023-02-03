@@ -1723,6 +1723,10 @@ private struct DiskerCoreChecks {
             for index in 0..<256 {
                 try Data([UInt8(index % 255)]).write(to: root.appendingPathComponent("file-\(index).bin"))
             }
+            try FileManager.default.linkItem(
+                at: root.appendingPathComponent("file-0.bin"),
+                to: root.appendingPathComponent("hard-link-alias.bin")
+            )
             for index in 0..<300 {
                 try FileManager.default.createDirectory(
                     at: root.appendingPathComponent("directory-\(index)", isDirectory: true),
@@ -1739,11 +1743,11 @@ private struct DiskerCoreChecks {
             _ = getrusage(RUSAGE_SELF, &usageAfter)
             try expect(result.folders[0].fileCount == 256, "progress fixture should measure every file")
             try expect(result.folders[0].complete, "wide directory trees should not exhaust open directory descriptors")
-            try expect(reported?.visitedFiles == 256, "scanner should report its 256-file progress interval")
+            try expect(reported?.countedFileObjects == 256, "scanner should report its 256-unique-file-object progress interval")
             try expect(reported?.currentPath.hasPrefix(root.path) == true, "progress should identify a path within the selected root")
             let cpuSeconds = usageSeconds(usageAfter.ru_utime) + usageSeconds(usageAfter.ru_stime)
                 - usageSeconds(usageBefore.ru_utime) - usageSeconds(usageBefore.ru_stime)
-            print(String(format: "  synthetic scan (256 files, 300 directories): %.3f s wall, %.3f s process CPU", wallSeconds, cpuSeconds))
+            print(String(format: "  synthetic scan (256 unique file objects, 300 directories, one extra hard-link path): %.3f s wall, %.3f s process CPU", wallSeconds, cpuSeconds))
         }
     }
 

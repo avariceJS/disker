@@ -3,7 +3,7 @@ import Foundation
 
 public struct ScanProgress: Sendable {
     public let currentPath: String
-    public let visitedFiles: Int
+    public let countedFileObjects: Int
 }
 
 public enum FolderScanner {
@@ -315,7 +315,7 @@ public enum FolderScanner {
                             if isNewFileObject {
                                 fileCountForProgress += 1
                                 if fileCountForProgress.isMultiple(of: 256) {
-                                    progress(ScanProgress(currentPath: fullPath, visitedFiles: fileCountForProgress))
+                                    progress(ScanProgress(currentPath: fullPath, countedFileObjects: fileCountForProgress))
                                 }
                             }
                         }
