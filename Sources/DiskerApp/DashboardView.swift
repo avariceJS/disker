@@ -25,6 +25,7 @@ final class DashboardModel {
     var currentPath = ""
     var visitedFiles = 0
     private var scanTask: Task<ScanObservation, Never>?
+    private var historyGeneration = 0
     private var ramSampleTask: Task<Void, Never>?
     private var duplicateTask: Task<DuplicateVerificationResult, Never>?
     private var memoryPressureSource: DispatchSourceMemoryPressure?
@@ -122,19 +123,21 @@ final class DashboardModel {
         }
         guard memoryPressureSource == nil else { return }
 
+        let generation = historyGeneration
         let source = DispatchSource.makeMemoryPressureSource(
             eventMask: [.normal, .warning, .critical], queue: .main
         )
         source.setEventHandler { [weak self, weak source] in
             guard let source,
                   let level = MemoryPressureLevel.from(events: source.data) else { return }
-            self?.recordMemoryPressureTransition(level)
+            self?.recordMemoryPressureTransition(level, generation: generation)
         }
         memoryPressureSource = source
         source.resume()
     }
 
-    private func recordMemoryPressureTransition(_ level: MemoryPressureLevel) {
+    private func recordMemoryPressureTransition(_ level: MemoryPressureLevel, generation: Int) {
+        guard generation == historyGeneration else { return }
         let observation = MemoryPressureObservation(observedAt: .now, level: level)
         do {
             history = try ObservationStore.append(observation)
@@ -253,6 +256,7 @@ final class DashboardModel {
             return
         }
         isScanning = true
+        let generation = historyGeneration
         currentPath = ""
         visitedFiles = 0
         let scanTask = Task.detached(priority: .utility) {
@@ -270,6 +274,7 @@ final class DashboardModel {
             }
             let observation = FolderScanner.scan(roots: urls, progress: { [weak self] progress in
                 Task { @MainActor [weak self] in
+                    guard self?.historyGeneration == generation else { return }
                     self?.currentPath = progress.currentPath
                     self?.visitedFiles = progress.visitedFiles
                 }
@@ -279,16 +284,18 @@ final class DashboardModel {
         self.scanTask = scanTask
         Task {
             let result = await scanTask.value
-            do {
-                history = try ObservationStore.append(result)
-            } catch {
-                errorMessage = "Scan finished, but local history could not be saved: \(error.localizedDescription)"
+            if generation == historyGeneration {
+                do {
+                    history = try ObservationStore.append(result)
+                } catch {
+                    errorMessage = "Scan finished, but local history could not be saved: \(error.localizedDescription)"
+                }
             }
             isScanning = false
             currentPath = ""
             visitedFiles = 0
             self.scanTask = nil
-            refreshCapacity()
+            if generation == historyGeneration { refreshCapacity() }
         }
     }
 
@@ -342,6 +349,8 @@ final class DashboardModel {
     }
 
     func clearHistory() {
+        historyGeneration &+= 1
+        scanTask?.cancel()
         ramSampleTask?.cancel()
         ramSampleTask = nil
         isSamplingRAM = false
