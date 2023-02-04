@@ -25,7 +25,7 @@ final class DashboardModel {
     var currentPath = ""
     var countedFileObjects = 0
     private var scanTask: Task<ScanObservation, Never>?
-    private var historyGeneration = 0
+    private var historyGeneration = HistoryGeneration()
     private var ramSampleTask: Task<Void, Never>?
     private var duplicateTask: Task<DuplicateVerificationResult, Never>?
     private var memoryPressureSource: DispatchSourceMemoryPressure?
@@ -123,7 +123,7 @@ final class DashboardModel {
         }
         guard memoryPressureSource == nil else { return }
 
-        let generation = historyGeneration
+        let generation = historyGeneration.token()
         let source = DispatchSource.makeMemoryPressureSource(
             eventMask: [.normal, .warning, .critical], queue: .main
         )
@@ -136,8 +136,10 @@ final class DashboardModel {
         source.resume()
     }
 
-    private func recordMemoryPressureTransition(_ level: MemoryPressureLevel, generation: Int) {
-        guard generation == historyGeneration else { return }
+    private func recordMemoryPressureTransition(
+        _ level: MemoryPressureLevel, generation: HistoryGeneration.Token
+    ) {
+        guard historyGeneration.accepts(generation) else { return }
         let observation = MemoryPressureObservation(observedAt: .now, level: level)
         do {
             history = try ObservationStore.append(observation)
@@ -256,7 +258,7 @@ final class DashboardModel {
             return
         }
         isScanning = true
-        let generation = historyGeneration
+        let generation = historyGeneration.token()
         currentPath = ""
         countedFileObjects = 0
         let scanTask = Task.detached(priority: .utility) {
@@ -274,9 +276,9 @@ final class DashboardModel {
             }
             let observation = FolderScanner.scan(roots: urls, progress: { [weak self] progress in
                 Task { @MainActor [weak self] in
-                    guard self?.historyGeneration == generation else { return }
-                    self?.currentPath = progress.currentPath
-                    self?.countedFileObjects = progress.countedFileObjects
+                    guard let self, self.historyGeneration.accepts(generation) else { return }
+                    self.currentPath = progress.currentPath
+                    self.countedFileObjects = progress.countedFileObjects
                 }
             })
             return observation.includingApplicationBundleIdentities(identities)
@@ -284,7 +286,7 @@ final class DashboardModel {
         self.scanTask = scanTask
         Task {
             let result = await scanTask.value
-            if generation == historyGeneration {
+            if historyGeneration.accepts(generation) {
                 do {
                     history = try ObservationStore.append(result)
                 } catch {
@@ -295,7 +297,7 @@ final class DashboardModel {
             currentPath = ""
             countedFileObjects = 0
             self.scanTask = nil
-            if generation == historyGeneration { refreshCapacity() }
+            if historyGeneration.accepts(generation) { refreshCapacity() }
         }
     }
 
@@ -349,7 +351,7 @@ final class DashboardModel {
     }
 
     func clearHistory() {
-        historyGeneration &+= 1
+        historyGeneration.advance()
         scanTask?.cancel()
         ramSampleTask?.cancel()
         ramSampleTask = nil

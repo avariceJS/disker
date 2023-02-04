@@ -56,6 +56,7 @@ private struct DiskerCoreChecks {
             ("immediate cancellation", testImmediateCancellation),
             ("history persistence and bounded retention", testHistoryPersistenceAndRetention),
             ("history reset is limited to its own file", testHistoryClearIsScoped),
+            ("history reset invalidates stale async work", testHistoryGeneration),
             ("corrupt history fails closed and can be reset", testCorruptHistoryIsLeftUntouched),
             ("same-path complete history comparison", testSamePathCompleteHistoryComparison),
             ("selected-folder growth highlights", testFolderGrowthHighlights),
@@ -1410,6 +1411,16 @@ private struct DiskerCoreChecks {
             let preservedNeighbor = try Data(contentsOf: neighboringFile)
             try expect(preservedNeighbor == sentinel, "history reset must not remove neighboring files")
         }
+    }
+
+    private static func testHistoryGeneration() throws {
+        var generation = HistoryGeneration()
+        let pendingScan = generation.token()
+        try expect(generation.accepts(pendingScan), "work should be accepted in the generation where it began")
+
+        generation.advance()
+        try expect(!generation.accepts(pendingScan), "clearing history should invalidate previously queued work")
+        try expect(generation.accepts(generation.token()), "new work should be accepted after history clear")
     }
 
     private static func testSamePathCompleteHistoryComparison() throws {
