@@ -1191,6 +1191,8 @@ private struct DiskerCoreChecks {
         try expect(!folder.subdirectorySummariesTruncated, "old folder history should default truncation to false")
         try expect(folder.fileExtensionSummaries.isEmpty && !folder.fileExtensionSummariesTruncated,
                    "old folder history should default filename-extension summaries to empty and untruncated")
+        try expect(folder.otherFileExtensionUsage == nil && folder.otherFileExtensionCategoryCount == 0,
+                   "old folder history should not invent an omitted filename-category aggregate")
 
         let oldProcessJSON = #"{"processID":123,"name":"OldSample","residentBytes":4096}"#
         let oldProcess = try JSONDecoder().decode(ProcessRAMSample.self, from: Data(oldProcessJSON.utf8))
