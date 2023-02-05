@@ -17,7 +17,7 @@ open "$HOME/Applications/Disker.app"
 
 The bundle is an unsigned development app under `.build/Disker.app`; packaging generates its multi-size drive icon from Core Graphics. The user-level `~/Applications/Disker.app` copy is convenient for Finder and LaunchServices, but this is not a signed or notarized release and is not installed system-wide in `/Applications`. To remove the app, move it to Trash in Finder; clear Disker's locally stored observations first from **About → Clear Local History…** if desired. The scripts use SwiftPM's `--disable-sandbox` for build subprocesses because this development environment disallows SwiftPM's nested sandbox. This package has no dependencies or build plugins.
 
-For a separate local sandbox configuration probe, run `scripts/package-app.sh sandboxed`; it creates `.build/Disker-Sandboxed.app` and ad-hoc signs it with App Sandbox plus read-only user-selected file access. This is not a release signature. Interactive selected-folder access, bookmark reuse, and sandbox-specific failure states still require validation before this can be considered a supported sandbox build.
+For a separate local sandbox configuration probe, run `scripts/package-app.sh sandboxed`; it creates `.build/Disker-Sandboxed.app` and ad-hoc signs it with App Sandbox, read-only user-selected file access, and app-scoped security bookmarks. This is not a release signature. Interactive selected-folder access, bookmark reuse, and sandbox-specific failure states still require validation before this can be considered a supported sandbox build.
 
 ## Development tool inventory
 
