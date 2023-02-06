@@ -132,6 +132,7 @@ public enum FolderScanner {
             var inaccessibleCount = 0
             var excludedSymlinkCount = 0
             var fileCountForProgress = 0
+            var visitedEntryCountForProgress = 0
             var scanComplete = true
             var rootLogicalBytes: Int64 = 0
             var rootAllocatedBytes: Int64 = 0
@@ -250,6 +251,11 @@ public enum FolderScanner {
                             break
                         }
 
+                        let relativePath = directory.relativePath.isEmpty
+                            ? name
+                            : directory.relativePath + "/" + name
+                        let fullPath = (directory.path as NSString).appendingPathComponent(name)
+                        visitedEntryCountForProgress += 1
                         var metadata = stat()
                         let statResult = name.withCString {
                             fstatat(directoryFD, $0, &metadata, AT_SYMLINK_NOFOLLOW)
@@ -258,13 +264,16 @@ public enum FolderScanner {
                             inaccessibleCount += 1
                             scanComplete = false
                             addCoverageEvent(directory.relativePath, symlink: false, to: &metrics)
+                            if visitedEntryCountForProgress.isMultiple(of: 256) {
+                                progress(ScanProgress(
+                                    currentPath: fullPath,
+                                    countedFileObjects: fileCountForProgress
+                                ))
+                            }
                             continue
                         }
-                        let relativePath = directory.relativePath.isEmpty
-                            ? name
-                            : directory.relativePath + "/" + name
-                        let fullPath = (directory.path as NSString).appendingPathComponent(name)
                         let type = metadata.st_mode & S_IFMT
+                        var reachedFileProgressInterval = false
                         if name == ".git", type == S_IFDIR || type == S_IFREG {
                             var parentMetrics = metrics[directory.relativePath, default: DirectoryMetrics()]
                             parentMetrics.gitMetadataEntryDetected = true
@@ -314,10 +323,14 @@ public enum FolderScanner {
                             }
                             if isNewFileObject {
                                 fileCountForProgress += 1
-                                if fileCountForProgress.isMultiple(of: 256) {
-                                    progress(ScanProgress(currentPath: fullPath, countedFileObjects: fileCountForProgress))
-                                }
+                                reachedFileProgressInterval = fileCountForProgress.isMultiple(of: 256)
                             }
+                        }
+                        if reachedFileProgressInterval || visitedEntryCountForProgress.isMultiple(of: 256) {
+                            progress(ScanProgress(
+                                currentPath: fullPath,
+                                countedFileObjects: fileCountForProgress
+                            ))
                         }
                     }
                     if !interrupted {

@@ -1758,6 +1758,22 @@ private struct DiskerCoreChecks {
             try expect(result.folders[0].complete, "wide directory trees should not exhaust open directory descriptors")
             try expect(reported?.countedFileObjects == 256, "scanner should report its 256-unique-file-object progress interval")
             try expect(reported?.currentPath.hasPrefix(root.path) == true, "progress should identify a path within the selected root")
+
+            let emptyTree = root.appendingPathComponent("empty-tree", isDirectory: true)
+            try FileManager.default.createDirectory(at: emptyTree, withIntermediateDirectories: false)
+            for index in 0..<300 {
+                try FileManager.default.createDirectory(
+                    at: emptyTree.appendingPathComponent("directory-\(index)", isDirectory: true),
+                    withIntermediateDirectories: false
+                )
+            }
+            var emptyTreeProgress: ScanProgress?
+            let emptyTreeResult = FolderScanner.scan(roots: [emptyTree], progress: { emptyTreeProgress = $0 })
+            try expect(emptyTreeResult.folders[0].complete && emptyTreeResult.folders[0].fileCount == 0,
+                       "empty directory trees should scan completely without fabricating file totals")
+            try expect(emptyTreeProgress?.countedFileObjects == 0
+                       && emptyTreeProgress?.currentPath.hasPrefix(emptyTree.path) == true,
+                       "directory-entry progress should advance even when the tree contains no files")
             let cpuSeconds = usageSeconds(usageAfter.ru_utime) + usageSeconds(usageAfter.ru_stime)
                 - usageSeconds(usageBefore.ru_utime) - usageSeconds(usageBefore.ru_stime)
             print(String(format: "  synthetic scan (256 unique file objects, 300 directories, one extra hard-link path): %.3f s wall, %.3f s process CPU", wallSeconds, cpuSeconds))
