@@ -21,11 +21,16 @@ final class DashboardModel {
     var duplicateCandidateBytes: UInt64 = 0
     var preservedDuplicatePaths: [String: String] = [:]
     var rememberedScopes: [SelectedScopeBookmark] = []
+    var ownFootprint: ScanObservation?
+    var ownFootprintPaths: [String] = []
+    var isMeasuringOwnFootprint = false
     var errorMessage: String?
     var currentPath = ""
     var countedFileObjects = 0
     private var scanTask: Task<ScanObservation, Never>?
     private var historyGeneration = HistoryGeneration()
+    private var ownFootprintTask: Task<ScanObservation, Never>?
+    private var ownFootprintRequestID: UUID?
     private var ramSampleTask: Task<Void, Never>?
     private var duplicateTask: Task<DuplicateVerificationResult, Never>?
     private var memoryPressureSource: DispatchSourceMemoryPressure?
@@ -45,6 +50,12 @@ final class DashboardModel {
     }
 
     var latestScan: ScanObservation? { history.observations.last }
+
+    var localSupportDirectory: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            .first?
+            .appendingPathComponent("Disker", isDirectory: true)
+    }
 
     var measuredApplicationBundles: [FolderObservation] {
         ApplicationBundleIndex.latestMeasurements(in: history)
@@ -84,6 +95,31 @@ final class DashboardModel {
             }
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    func measureOwnFootprint() {
+        guard !isMeasuringOwnFootprint else { return }
+        var roots = [Bundle.main.bundleURL]
+        if let support = localSupportDirectory,
+           FileManager.default.fileExists(atPath: support.path) {
+            roots.append(support)
+        }
+
+        let requestID = UUID()
+        ownFootprintRequestID = requestID
+        isMeasuringOwnFootprint = true
+        let task = Task.detached(priority: .utility) {
+            FolderScanner.scan(roots: roots)
+        }
+        ownFootprintTask = task
+        Task {
+            let result = await task.value
+            guard ownFootprintRequestID == requestID else { return }
+            ownFootprint = result
+            ownFootprintPaths = roots.map { $0.standardizedFileURL.path }
+            isMeasuringOwnFootprint = false
+            ownFootprintTask = nil
         }
     }
 
@@ -353,6 +389,12 @@ final class DashboardModel {
     func clearHistory() {
         historyGeneration.advance()
         scanTask?.cancel()
+        ownFootprintRequestID = UUID()
+        ownFootprintTask?.cancel()
+        ownFootprintTask = nil
+        isMeasuringOwnFootprint = false
+        ownFootprint = nil
+        ownFootprintPaths = []
         ramSampleTask?.cancel()
         ramSampleTask = nil
         isSamplingRAM = false
@@ -1113,6 +1155,7 @@ struct DashboardView: View {
                 } label: {
                     Text("Privacy and safety")
                 }
+                ownFootprintCard
                 GroupBox {
                     Text("This build reports volume capacity from macOS and estimates selected-folder usage from file metadata. APFS snapshots, copy-on-write clones, shared blocks, system-managed data and inaccessible paths prevent a path scan from reconciling exactly with the system's capacity figures.")
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1135,6 +1178,83 @@ struct DashboardView: View {
             }
             .padding(30)
             .frame(maxWidth: 800, alignment: .leading)
+        }
+    }
+
+    private var ownFootprintCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Measure only Disker’s installed app bundle and its own Application Support folder. This metadata-only check does not include the folders you selected for storage scans and is not saved in history.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(model.isMeasuringOwnFootprint ? "Measuring…" : "Measure Disker’s Files") {
+                    model.measureOwnFootprint()
+                }
+                .disabled(model.isMeasuringOwnFootprint)
+
+                if model.isMeasuringOwnFootprint {
+                    ProgressView("Measuring Disker’s own files…")
+                } else if let observation = model.ownFootprint {
+                    ForEach(observation.folders) { folder in
+                        let isBundle = folder.path == Bundle.main.bundleURL.standardizedFileURL.path
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(isBundle ? "Disker application bundle" : "Disker local support data")
+                                    .font(.subheadline.weight(.semibold))
+                                Text(folder.path)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .truncationMode(.middle)
+                                Text("Logical \(format(folder.logicalBytes)) · allocated estimate \(format(folder.allocatedBytes)) · \(folder.fileCount) files")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                if !folder.complete {
+                                    Text(coverageSummary(
+                                        inaccessible: folder.inaccessibleCount,
+                                        excludedSymlinks: folder.excludedSymlinkCount,
+                                        excludedSpecialFiles: folder.excludedSpecialFileCount,
+                                        changed: folder.changedDuringScanCount,
+                                        wasCancelled: observation.cancelled
+                                    ))
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                                }
+                            }
+                            Spacer(minLength: 4)
+                            Button {
+                                NSWorkspace.shared.activateFileViewerSelecting([
+                                    URL(fileURLWithPath: folder.path)
+                                ])
+                            } label: {
+                                Image(systemName: "arrow.up.right.square")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Reveal Disker files in Finder")
+                            .accessibilityLabel("Reveal \(isBundle ? "Disker application bundle" : "Disker local support data") in Finder")
+                        }
+                        .padding(.vertical, 7)
+                        Divider()
+                    }
+                    if let support = model.localSupportDirectory,
+                       !model.ownFootprintPaths.contains(support.standardizedFileURL.path) {
+                        Text("No Disker Application Support folder existed when this measurement ran.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("This one-time measurement is kept only in the current view. Clear Local History removes Disker’s saved observation and bookmark files.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("No measurement yet.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 4)
+        } label: {
+            Text("Disker’s own files")
         }
     }
 
