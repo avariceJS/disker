@@ -99,7 +99,7 @@ final class DashboardModel {
     }
 
     func measureOwnFootprint() {
-        guard !isMeasuringOwnFootprint else { return }
+        guard !isMeasuringOwnFootprint, !isScanning, !isVerifyingDuplicates else { return }
         var roots = [Bundle.main.bundleURL]
         if let support = localSupportDirectory,
            FileManager.default.fileExists(atPath: support.path) {
@@ -185,7 +185,7 @@ final class DashboardModel {
     }
 
     func chooseFolders(startingAt directory: URL? = nil) {
-        guard !isScanning else { return }
+        guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
         let panel = NSOpenPanel()
         panel.title = "Choose folders to measure"
         panel.prompt = "Scan Folders"
@@ -205,7 +205,7 @@ final class DashboardModel {
     }
 
     func chooseApplicationBundle(startingAt directory: URL? = nil) {
-        guard !isScanning else { return }
+        guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
         let panel = NSOpenPanel()
         panel.title = "Choose an application bundle to measure"
         panel.prompt = "Measure Bundle"
@@ -222,7 +222,7 @@ final class DashboardModel {
     }
 
     func chooseRelatedFolders(for bundlePath: String) {
-        guard !isScanning else { return }
+        guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
         let panel = NSOpenPanel()
         panel.title = "Choose folders associated with this app"
         panel.prompt = "Associate and Scan"
@@ -261,7 +261,7 @@ final class DashboardModel {
     }
 
     func rescanRememberedFolder(_ path: String) {
-        guard !isScanning,
+        guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates,
               let bookmark = rememberedScopes.first(where: { $0.path == path }) else { return }
         do {
             let url = try SelectedScopeBookmarkStore.resolve(bookmark)
@@ -288,7 +288,7 @@ final class DashboardModel {
         _ urls: [URL], applicationBundleIdentities: [String: ApplicationBundleIdentity] = [:],
         inspectSelectedAppBundles: Bool = false
     ) {
-        guard !urls.isEmpty, !isScanning else { return }
+        guard !urls.isEmpty, !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
         guard urls.count <= ApplicationFolderAssociation.maximumRelatedFolderCount else {
             errorMessage = "A scan can include at most 50 selected folders. Reduce the selection and try again."
             return
@@ -342,7 +342,7 @@ final class DashboardModel {
     }
 
     func verifyDuplicates(in roots: [URL]) {
-        guard !roots.isEmpty, !isVerifyingDuplicates else { return }
+        guard !roots.isEmpty, !isVerifyingDuplicates, !isScanning, !isMeasuringOwnFootprint else { return }
         duplicateResult = nil
         preservedDuplicatePaths = [:]
         duplicateCurrentPath = ""
@@ -1190,7 +1190,7 @@ struct DashboardView: View {
                 Button(model.isMeasuringOwnFootprint ? "Measuring…" : "Measure Disker’s Files") {
                     model.measureOwnFootprint()
                 }
-                .disabled(model.isMeasuringOwnFootprint)
+                .disabled(model.isMeasuringOwnFootprint || model.isScanning || model.isVerifyingDuplicates)
 
                 if model.isMeasuringOwnFootprint {
                     ProgressView("Measuring Disker’s own files…")
