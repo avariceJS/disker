@@ -1147,7 +1147,7 @@ struct DashboardView: View {
                         Label("Folder-size scans read metadata only. Explicit app signature checks read signed executable and resource contents locally; duplicate verification reads selected candidates after confirmation. Nothing is uploaded.", systemImage: "hand.raised")
                         Label("For a selected app bundle, Disker reads its declared bundle ID and embedded App Groups claim, then reads signed executable and resource contents to check local signature integrity. It does not verify notarization or publisher trust, current use, or exclusive ownership; App Group data is shared.", systemImage: "app.badge.checkmark")
                         Label("Scan locations are chosen by you. Saved permissions are read-only and scans stay manual.", systemImage: "folder.badge.plus")
-                        Label("No cleanup or deletion actions are available.", systemImage: "lock.shield")
+                        Label("Disker does not offer cleanup or deletion of user files.", systemImage: "lock.shield")
                         Label("History stays in this Mac's Application Support folder.", systemImage: "internaldrive")
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
