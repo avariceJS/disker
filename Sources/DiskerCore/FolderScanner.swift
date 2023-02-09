@@ -410,7 +410,7 @@ public enum FolderScanner {
 
             let summaries = directoryPaths.compactMap { path -> DirectoryUsage? in
                 guard let value = metrics[path] else { return nil }
-                return directoryUsage(path: path, metrics: value)
+                return directoryUsage(path: path, metrics: value, accountingOverflowed: accountingOverflow)
             }.sorted {
                 if $0.allocatedBytes != $1.allocatedBytes { return $0.allocatedBytes > $1.allocatedBytes }
                 return utf8LessThan($0.rootRelativePath, $1.rootRelativePath)
@@ -421,7 +421,7 @@ public enum FolderScanner {
             // the leaderboard cap; `.git` itself remains an explicitly
             // selected-root-relative measurement, not proof of project ownership.
             let gitMetadataUsage = metrics[".git"].map {
-                directoryUsage(path: ".git", metrics: $0)
+                directoryUsage(path: ".git", metrics: $0, accountingOverflowed: accountingOverflow)
             }
             let rankedExtensions = extensionMetrics.map { name, value in
                 FileExtensionUsage(
@@ -469,6 +469,7 @@ public enum FolderScanner {
                 excludedSymlinkCount: excludedSymlinkCount,
                 excludedSpecialFileCount: excludedSpecialFileCount,
                 changedDuringScanCount: metrics[""]?.changedDuringScanCount ?? 0,
+                byteAccountingOverflowed: accountingOverflow,
                 gitMetadataEntryDetected: metrics[""]?.gitMetadataEntryDetected ?? false,
                 gitMetadataUsage: gitMetadataUsage,
                 subdirectorySummaries: Array(summaries.prefix(maximumDirectorySummaries)),
@@ -483,7 +484,9 @@ public enum FolderScanner {
         return ScanObservation(startedAt: startedAt, folders: results, cancelled: cancelled)
     }
 
-    private static func directoryUsage(path: String, metrics value: DirectoryMetrics) -> DirectoryUsage {
+    private static func directoryUsage(
+        path: String, metrics value: DirectoryMetrics, accountingOverflowed: Bool = false
+    ) -> DirectoryUsage {
         DirectoryUsage(
             rootRelativePath: path,
             logicalBytes: value.logicalBytes,
@@ -496,7 +499,7 @@ public enum FolderScanner {
             gitMetadataEntryDetected: value.gitMetadataEntryDetected,
             complete: value.incompleteCount == 0 && value.excludedSymlinkCount == 0
                 && value.excludedSpecialFileCount == 0
-                && value.changedDuringScanCount == 0
+                && value.changedDuringScanCount == 0 && !accountingOverflowed
         )
     }
 

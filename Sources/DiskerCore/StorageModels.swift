@@ -121,6 +121,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     public let excludedSymlinkCount: Int
     public let excludedSpecialFileCount: Int
     public let changedDuringScanCount: Int
+    /// At least one logical or allocated-byte total exceeded Int64's range and was capped.
+    public let byteAccountingOverflowed: Bool
     public let gitMetadataEntryDetected: Bool
     /// Metrics for a direct, real `.git` directory, retained even when it is
     /// outside the capped largest-subdirectory ranking. A `.git` file is only
@@ -154,6 +156,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         excludedSymlinkCount: Int = 0,
         excludedSpecialFileCount: Int = 0,
         changedDuringScanCount: Int = 0,
+        byteAccountingOverflowed: Bool = false,
         gitMetadataEntryDetected: Bool = false,
         gitMetadataUsage: DirectoryUsage? = nil,
         subdirectorySummaries: [DirectoryUsage] = [],
@@ -179,6 +182,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         self.excludedSymlinkCount = excludedSymlinkCount
         self.excludedSpecialFileCount = excludedSpecialFileCount
         self.changedDuringScanCount = changedDuringScanCount
+        self.byteAccountingOverflowed = byteAccountingOverflowed
         self.gitMetadataEntryDetected = gitMetadataEntryDetected
         self.gitMetadataUsage = gitMetadataUsage
         self.finishedAt = finishedAt
@@ -198,7 +202,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         case fileExtensionSummaries, fileExtensionSummariesTruncated
         case otherFileExtensionUsage, otherFileExtensionCategoryCount
         case inaccessibleCount, excludedSymlinkCount, excludedSpecialFileCount
-        case changedDuringScanCount, gitMetadataEntryDetected
+        case changedDuringScanCount, byteAccountingOverflowed, gitMetadataEntryDetected
         case finishedAt, complete
         case subdirectorySummaries, subdirectorySummariesTruncated, gitMetadataUsage
         case projectDirectorySummaries, projectDirectorySummariesTruncated
@@ -223,6 +227,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         excludedSymlinkCount = try values.decodeIfPresent(Int.self, forKey: .excludedSymlinkCount) ?? 0
         excludedSpecialFileCount = try values.decodeIfPresent(Int.self, forKey: .excludedSpecialFileCount) ?? 0
         changedDuringScanCount = try values.decodeIfPresent(Int.self, forKey: .changedDuringScanCount) ?? 0
+        byteAccountingOverflowed = try values.decodeIfPresent(Bool.self, forKey: .byteAccountingOverflowed) ?? false
         gitMetadataEntryDetected = try values.decodeIfPresent(Bool.self, forKey: .gitMetadataEntryDetected) ?? false
         gitMetadataUsage = try values.decodeIfPresent(DirectoryUsage.self, forKey: .gitMetadataUsage)
         finishedAt = try values.decode(Date.self, forKey: .finishedAt)
@@ -253,6 +258,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         try values.encode(excludedSymlinkCount, forKey: .excludedSymlinkCount)
         try values.encode(excludedSpecialFileCount, forKey: .excludedSpecialFileCount)
         try values.encode(changedDuringScanCount, forKey: .changedDuringScanCount)
+        try values.encode(byteAccountingOverflowed, forKey: .byteAccountingOverflowed)
         try values.encode(gitMetadataEntryDetected, forKey: .gitMetadataEntryDetected)
         try values.encodeIfPresent(gitMetadataUsage, forKey: .gitMetadataUsage)
         try values.encode(finishedAt, forKey: .finishedAt)

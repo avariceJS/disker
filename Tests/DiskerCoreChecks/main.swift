@@ -23,6 +23,7 @@ private struct DiskerCoreChecks {
         let checks: [(String, () throws -> Void)] = [
             ("capacity math", testCapacityMath),
             ("checked byte accounting saturates on overflow", testCheckedByteAccounting),
+            ("overflow disclosure persists with folder history", testByteAccountingOverflowPersistence),
             ("capacity clamping", testCapacityClamping),
             ("low available capacity warning threshold", testLowAvailableCapacityWarning),
             ("comparable capacity history", testCapacityHistoryComparison),
@@ -116,6 +117,18 @@ private struct DiskerCoreChecks {
         let allocation = CheckedByteCount.multiplying(Int64.max, 512)
         try expect(allocation.value == Int64.max && allocation.overflowed,
                    "an overflowing allocated-byte estimate should saturate and report overflow")
+    }
+
+    private static func testByteAccountingOverflowPersistence() throws {
+        let folder = FolderObservation(
+            path: "/synthetic/huge", displayName: "huge", logicalBytes: Int64.max,
+            allocatedBytes: Int64.max, fileCount: 2, inaccessibleCount: 0, complete: false,
+            byteAccountingOverflowed: true
+        )
+        let encoded = try JSONEncoder().encode(folder)
+        let decoded = try JSONDecoder().decode(FolderObservation.self, from: encoded)
+        try expect(decoded.byteAccountingOverflowed,
+                   "a capped byte estimate must retain its overflow explanation after history reload")
     }
 
     private static func testCapacityClamping() throws {
@@ -1232,6 +1245,7 @@ private struct DiskerCoreChecks {
         try expect(folder.excludedSymlinkCount == 0, "old folder history should default symlink count to zero")
         try expect(folder.excludedSpecialFileCount == 0, "old folder history should default special-file count to zero")
         try expect(folder.changedDuringScanCount == 0, "old folder history should default mutation count to zero")
+        try expect(!folder.byteAccountingOverflowed, "old folder history should default byte-overflow disclosure to false")
         try expect(!folder.gitMetadataEntryDetected, "old folder history should default Git marker state to false")
         try expect(folder.gitMetadataUsage == nil, "old folder history should default retained Git metrics to absent")
         try expect(folder.applicationBundleIdentifier == nil,

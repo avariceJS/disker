@@ -967,7 +967,8 @@ struct DashboardView: View {
                                         excludedSymlinks: bundle.excludedSymlinkCount,
                                         excludedSpecialFiles: bundle.excludedSpecialFileCount,
                                         changed: bundle.changedDuringScanCount,
-                                        wasCancelled: model.scanWasCancelled(for: bundle)
+                                        wasCancelled: model.scanWasCancelled(for: bundle),
+                                        accountingOverflowed: bundle.byteAccountingOverflowed
                                     ))
                                     .foregroundStyle(.orange)
                                 }
@@ -1120,7 +1121,8 @@ struct DashboardView: View {
                                             excludedSymlinks: folder.excludedSymlinkCount,
                                             excludedSpecialFiles: folder.excludedSpecialFileCount,
                                             changed: folder.changedDuringScanCount,
-                                            wasCancelled: observation.cancelled
+                                            wasCancelled: observation.cancelled,
+                                            accountingOverflowed: folder.byteAccountingOverflowed
                                         ))
                                             .font(.caption).foregroundStyle(.orange)
                                     }
@@ -1215,7 +1217,8 @@ struct DashboardView: View {
                                         excludedSymlinks: folder.excludedSymlinkCount,
                                         excludedSpecialFiles: folder.excludedSpecialFileCount,
                                         changed: folder.changedDuringScanCount,
-                                        wasCancelled: observation.cancelled
+                                        wasCancelled: observation.cancelled,
+                                        accountingOverflowed: folder.byteAccountingOverflowed
                                     ))
                                     .font(.caption)
                                     .foregroundStyle(.orange)
@@ -1584,7 +1587,8 @@ struct DashboardView: View {
                                 excludedSymlinks: observation.excludedSymlinkCount,
                                 excludedSpecialFiles: observation.excludedSpecialFileCount,
                                 changed: observation.changedDuringScanCount,
-                                wasCancelled: model.scanWasCancelled(for: observation)
+                                wasCancelled: model.scanWasCancelled(for: observation),
+                                accountingOverflowed: observation.byteAccountingOverflowed
                             ))
                             .foregroundStyle(.orange)
                         }
@@ -1940,7 +1944,8 @@ struct DashboardView: View {
                                     excludedSymlinks: folder.excludedSymlinkCount,
                                     excludedSpecialFiles: folder.excludedSpecialFileCount,
                                     changed: folder.changedDuringScanCount,
-                                    wasCancelled: scanCancelled
+                                    wasCancelled: scanCancelled,
+                                    accountingOverflowed: folder.byteAccountingOverflowed
                                 ))
                                 .foregroundStyle(.orange)
                             }
@@ -2002,7 +2007,8 @@ struct DashboardView: View {
                                     excludedSymlinks: gitUsage.excludedSymlinkCount,
                                     excludedSpecialFiles: gitUsage.excludedSpecialFileCount,
                                     changed: gitUsage.changedDuringScanCount,
-                                    wasCancelled: scanCancelled
+                                    wasCancelled: scanCancelled,
+                                    accountingOverflowed: folder.byteAccountingOverflowed
                                 ))
                                 .foregroundStyle(.orange)
                             } else if let previous = model.previousCompleteDirectory(for: gitUsage, in: folder),
@@ -2070,7 +2076,8 @@ struct DashboardView: View {
                                                 excludedSymlinks: directory.excludedSymlinkCount,
                                                 excludedSpecialFiles: directory.excludedSpecialFileCount,
                                                 changed: directory.changedDuringScanCount,
-                                                wasCancelled: scanCancelled
+                                                wasCancelled: scanCancelled,
+                                                accountingOverflowed: folder.byteAccountingOverflowed
                                             ))
                                             .foregroundStyle(.orange)
                                         } else if let previous = model.previousCompleteDirectory(
@@ -2163,7 +2170,8 @@ struct DashboardView: View {
                                     excludedSymlinks: directory.excludedSymlinkCount,
                                     excludedSpecialFiles: directory.excludedSpecialFileCount,
                                     changed: directory.changedDuringScanCount,
-                                    wasCancelled: scanCancelled
+                                    wasCancelled: scanCancelled,
+                                    accountingOverflowed: folder.byteAccountingOverflowed
                                 ))
                                 .foregroundStyle(.orange)
                             } else if let previous = model.previousCompleteDirectory(
@@ -2340,9 +2348,10 @@ struct DashboardView: View {
 
     private func coverageSummary(
         inaccessible: Int, excludedSymlinks: Int, excludedSpecialFiles: Int = 0,
-        changed: Int, wasCancelled: Bool
+        changed: Int, wasCancelled: Bool, accountingOverflowed: Bool = false
     ) -> String {
         var details: [String] = []
+        if accountingOverflowed { details.append("byte total exceeded the supported range and was capped") }
         if inaccessible > 0 { details.append("\(inaccessible) unmeasured") }
         if excludedSymlinks > 0 { details.append("\(excludedSymlinks) symlinks not followed") }
         if excludedSpecialFiles > 0 { details.append("\(excludedSpecialFiles) special files excluded") }
