@@ -100,24 +100,24 @@ final class DashboardModel {
 
     func measureOwnFootprint() {
         guard !isMeasuringOwnFootprint, !isScanning, !isVerifyingDuplicates else { return }
-        var roots = [Bundle.main.bundleURL]
-        if let support = localSupportDirectory,
-           FileManager.default.fileExists(atPath: support.path) {
-            roots.append(support)
-        }
+        let bundleURL = Bundle.main.bundleURL
+        let supportDirectory = localSupportDirectory
 
         let requestID = UUID()
         ownFootprintRequestID = requestID
         isMeasuringOwnFootprint = true
         let task = Task.detached(priority: .utility) {
-            FolderScanner.scan(roots: roots)
+            DiskerFootprintScanner.scan(
+                bundleURL: bundleURL,
+                supportDirectory: supportDirectory
+            )
         }
         ownFootprintTask = task
         Task {
             let result = await task.value
             guard ownFootprintRequestID == requestID else { return }
             ownFootprint = result
-            ownFootprintPaths = roots.map { $0.standardizedFileURL.path }
+            ownFootprintPaths = result.folders.map(\.path)
             isMeasuringOwnFootprint = false
             ownFootprintTask = nil
         }

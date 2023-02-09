@@ -39,6 +39,7 @@ private struct DiskerCoreChecks {
             ("metadata scan and symlink exclusion", testMetadataScanAndSymlinkExclusion),
             ("special filesystem entries remain partial and uncounted", testSpecialFileExclusion),
             ("metadata-only filename extension summaries", testFileExtensionSummaries),
+            ("Disker own-footprint scan stays in app-owned scope", testDiskerFootprintScope),
             ("selected-scope duplicate verification", testDuplicateVerification),
             ("duplicate verification cancellation", testDuplicateVerificationCancellation),
             ("duplicate directory mutation coverage", testDuplicateDirectoryMutationCoverage),
@@ -817,6 +818,55 @@ private struct DiskerCoreChecks {
             try expect(cappedDecoded.otherFileExtensionUsage == capped.otherFileExtensionUsage
                        && cappedDecoded.otherFileExtensionCategoryCount == 5,
                        "omitted filename-category totals should persist as a bounded aggregate")
+        }
+    }
+
+    private static func testDiskerFootprintScope() throws {
+        try withTemporaryDirectory { root in
+            let bundle = root.appendingPathComponent("Disker.app", isDirectory: true)
+            let support = root.appendingPathComponent("Application Support/Disker", isDirectory: true)
+            let neighboring = root.appendingPathComponent("Application Support/AnotherApp", isDirectory: true)
+            try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: neighboring, withIntermediateDirectories: true)
+            let bundleData = Data(repeating: 0x31, count: 19)
+            let supportData = Data(repeating: 0x52, count: 23)
+            let neighboringData = Data(repeating: 0x73, count: 4096)
+            try bundleData.write(to: bundle.appendingPathComponent("binary"))
+            try supportData.write(to: support.appendingPathComponent("observations.json"))
+            try neighboringData.write(to: neighboring.appendingPathComponent("private.bin"))
+
+            let result = DiskerFootprintScanner.scan(
+                bundleURL: bundle, supportDirectory: support
+            )
+            try expect(result.folders.map(\.path) == [bundle.path, support.path],
+                       "the own-footprint check should scan only the app bundle and its dedicated support directory")
+            try expect(result.folders.map(\.logicalBytes) == [Int64(bundleData.count), Int64(supportData.count)],
+                       "neighboring application support data must not contribute to Disker's footprint")
+            try expect(result.folders.allSatisfy(\.complete),
+                       "ordinary synthetic bundle and support directories should have complete coverage")
+            let bundleAfter = try Data(contentsOf: bundle.appendingPathComponent("binary"))
+            let supportAfter = try Data(contentsOf: support.appendingPathComponent("observations.json"))
+            let neighboringAfter = try Data(contentsOf: neighboring.appendingPathComponent("private.bin"))
+            try expect(bundleAfter == bundleData
+                       && supportAfter == supportData
+                       && neighboringAfter == neighboringData,
+                       "metadata-only own-footprint measurement must leave all synthetic contents unchanged")
+
+            let linkedSupport = root.appendingPathComponent("linked-support", isDirectory: true)
+            try FileManager.default.createSymbolicLink(at: linkedSupport, withDestinationURL: neighboring)
+            let linkedResult = DiskerFootprintScanner.scan(
+                bundleURL: bundle, supportDirectory: linkedSupport
+            )
+            try expect(linkedResult.folders.count == 2
+                       && linkedResult.folders[1].excludedSymlinkCount == 1
+                       && !linkedResult.folders[1].complete,
+                       "a symlinked support root should be reported as partial without following its target")
+
+            try expect(DiskerFootprintScanner.selectedRoots(
+                bundleURL: bundle, supportDirectory: bundle
+            ).map(\.path) == [bundle.path],
+                       "the same app and support path should not be measured twice")
         }
     }
 
