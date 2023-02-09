@@ -22,6 +22,7 @@ public enum FolderScanner {
         let identity: FileIdentity
         let logicalBytes: Int64
         let allocatedBytes: Int64
+        let allocatedBytesOverflowed: Bool
         let extensionName: String
     }
 
@@ -134,6 +135,7 @@ public enum FolderScanner {
             var fileCountForProgress = 0
             var visitedEntryCountForProgress = 0
             var scanComplete = true
+            var accountingOverflow = false
             var rootLogicalBytes: Int64 = 0
             var rootAllocatedBytes: Int64 = 0
             var rootFileCount = 0
@@ -150,11 +152,11 @@ public enum FolderScanner {
                     seenFileIdentities.insert(file.identity)
                     linkedFilesByIdentity[file.identity] = file
                 } else if seenFileIdentities.insert(file.identity).inserted {
-                    addFile(file, to: "", metrics: &metrics)
-                    rootLogicalBytes += file.logicalBytes
-                    rootAllocatedBytes += file.allocatedBytes
+                    addFile(file, to: "", metrics: &metrics, overflowed: &accountingOverflow)
+                    accumulate(file.logicalBytes, into: &rootLogicalBytes, overflowed: &accountingOverflow)
+                    accumulate(file.allocatedBytes, into: &rootAllocatedBytes, overflowed: &accountingOverflow)
                     rootFileCount += 1
-                    addFileExtension(file, to: &extensionMetrics)
+                    addFileExtension(file, to: &extensionMetrics, overflowed: &accountingOverflow)
                 }
             } else {
                 let rootFD = root.path.withCString {
@@ -314,11 +316,11 @@ public enum FolderScanner {
                                     isNewFileObject = true
                                 }
                             } else if seenFileIdentities.insert(file.identity).inserted {
-                                addFile(file, to: directory.relativePath, metrics: &metrics)
-                                rootLogicalBytes += file.logicalBytes
-                                rootAllocatedBytes += file.allocatedBytes
+                                addFile(file, to: directory.relativePath, metrics: &metrics, overflowed: &accountingOverflow)
+                                accumulate(file.logicalBytes, into: &rootLogicalBytes, overflowed: &accountingOverflow)
+                                accumulate(file.allocatedBytes, into: &rootAllocatedBytes, overflowed: &accountingOverflow)
                                 rootFileCount += 1
-                                addFileExtension(file, to: &extensionMetrics)
+                                addFileExtension(file, to: &extensionMetrics, overflowed: &accountingOverflow)
                                 isNewFileObject = true
                             }
                             if isNewFileObject {
@@ -378,11 +380,11 @@ public enum FolderScanner {
                 utf8LessThan($0.relativePath, $1.relativePath)
             }
             for file in linkedFiles {
-                addFile(file, to: file.parentPath, metrics: &metrics)
-                rootLogicalBytes += file.logicalBytes
-                rootAllocatedBytes += file.allocatedBytes
+                addFile(file, to: file.parentPath, metrics: &metrics, overflowed: &accountingOverflow)
+                accumulate(file.logicalBytes, into: &rootLogicalBytes, overflowed: &accountingOverflow)
+                accumulate(file.allocatedBytes, into: &rootAllocatedBytes, overflowed: &accountingOverflow)
                 rootFileCount += 1
-                addFileExtension(file, to: &extensionMetrics)
+                addFileExtension(file, to: &extensionMetrics, overflowed: &accountingOverflow)
             }
 
             // Aggregate each directory into its parent once, deepest first.
@@ -396,8 +398,8 @@ public enum FolderScanner {
                 guard let child = metrics[path] else { continue }
                 let parent = parentPath(of: path)
                 var parentMetrics = metrics[parent, default: DirectoryMetrics()]
-                parentMetrics.logicalBytes += child.logicalBytes
-                parentMetrics.allocatedBytes += child.allocatedBytes
+                accumulate(child.logicalBytes, into: &parentMetrics.logicalBytes, overflowed: &accountingOverflow)
+                accumulate(child.allocatedBytes, into: &parentMetrics.allocatedBytes, overflowed: &accountingOverflow)
                 parentMetrics.fileCount += child.fileCount
                 parentMetrics.incompleteCount += child.incompleteCount
                 parentMetrics.excludedSymlinkCount += child.excludedSymlinkCount
@@ -435,11 +437,19 @@ public enum FolderScanner {
                 return $0.extensionName < $1.extensionName
             }
             let omittedExtensions = rankedExtensions.dropFirst(maximumFileExtensionSummaries)
+            var omittedLogicalBytes: Int64 = 0
+            var omittedAllocatedBytes: Int64 = 0
+            var omittedFileCount = 0
+            for extensionUsage in omittedExtensions {
+                accumulate(extensionUsage.logicalBytes, into: &omittedLogicalBytes, overflowed: &accountingOverflow)
+                accumulate(extensionUsage.allocatedBytes, into: &omittedAllocatedBytes, overflowed: &accountingOverflow)
+                omittedFileCount += extensionUsage.fileCount
+            }
             let otherExtensionUsage: FileExtensionUsage? = omittedExtensions.isEmpty ? nil : FileExtensionUsage(
                 extensionName: "other extensions",
-                logicalBytes: omittedExtensions.reduce(Int64(0)) { $0 + $1.logicalBytes },
-                allocatedBytes: omittedExtensions.reduce(Int64(0)) { $0 + $1.allocatedBytes },
-                fileCount: omittedExtensions.reduce(0) { $0 + $1.fileCount }
+                logicalBytes: omittedLogicalBytes,
+                allocatedBytes: omittedAllocatedBytes,
+                fileCount: omittedFileCount
             )
 
             results.append(FolderObservation(
@@ -453,7 +463,7 @@ public enum FolderScanner {
                 otherFileExtensionUsage: otherExtensionUsage,
                 otherFileExtensionCategoryCount: max(0, rankedExtensions.count - maximumFileExtensionSummaries),
                 inaccessibleCount: inaccessibleCount,
-                complete: scanComplete && inaccessibleCount == 0 && excludedSymlinkCount == 0
+                complete: scanComplete && !accountingOverflow && inaccessibleCount == 0 && excludedSymlinkCount == 0
                     && excludedSpecialFileCount == 0
                     && metrics[""]?.changedDuringScanCount == 0,
                 excludedSymlinkCount: excludedSymlinkCount,
@@ -509,12 +519,14 @@ public enum FolderScanner {
     }
 
     private static func fileRecord(metadata: stat, relativePath: String, parentPath: String) -> FileRecord {
-        FileRecord(
+        let allocated = CheckedByteCount.multiplying(Int64(max(0, metadata.st_blocks)), 512)
+        return FileRecord(
             relativePath: relativePath,
             parentPath: parentPath,
             identity: FileIdentity(device: UInt64(metadata.st_dev), inode: UInt64(metadata.st_ino)),
             logicalBytes: Int64(max(0, metadata.st_size)),
-            allocatedBytes: Int64(max(0, metadata.st_blocks)) * 512,
+            allocatedBytes: allocated.value,
+            allocatedBytesOverflowed: allocated.overflowed,
             extensionName: fileExtensionName(relativePath: relativePath)
         )
     }
@@ -533,23 +545,31 @@ public enum FolderScanner {
     }
 
     private static func addFileExtension(
-        _ file: FileRecord, to summaries: inout [String: FileExtensionMetrics]
+        _ file: FileRecord, to summaries: inout [String: FileExtensionMetrics], overflowed: inout Bool
     ) {
         var value = summaries[file.extensionName, default: FileExtensionMetrics()]
-        value.logicalBytes += file.logicalBytes
-        value.allocatedBytes += file.allocatedBytes
+        overflowed = overflowed || file.allocatedBytesOverflowed
+        accumulate(file.logicalBytes, into: &value.logicalBytes, overflowed: &overflowed)
+        accumulate(file.allocatedBytes, into: &value.allocatedBytes, overflowed: &overflowed)
         value.fileCount += 1
         summaries[file.extensionName] = value
     }
 
     private static func addFile(
-        _ file: FileRecord, to parentPath: String, metrics: inout [String: DirectoryMetrics]
+        _ file: FileRecord, to parentPath: String, metrics: inout [String: DirectoryMetrics], overflowed: inout Bool
     ) {
         var value = metrics[parentPath, default: DirectoryMetrics()]
-        value.logicalBytes += file.logicalBytes
-        value.allocatedBytes += file.allocatedBytes
+        overflowed = overflowed || file.allocatedBytesOverflowed
+        accumulate(file.logicalBytes, into: &value.logicalBytes, overflowed: &overflowed)
+        accumulate(file.allocatedBytes, into: &value.allocatedBytes, overflowed: &overflowed)
         value.fileCount += 1
         metrics[parentPath] = value
+    }
+
+    private static func accumulate(_ amount: Int64, into total: inout Int64, overflowed: inout Bool) {
+        let result = CheckedByteCount.adding(total, amount)
+        total = result.value
+        overflowed = overflowed || result.overflowed
     }
 
     private static func addCoverageEvent(

@@ -22,6 +22,7 @@ private struct DiskerCoreChecks {
 
         let checks: [(String, () throws -> Void)] = [
             ("capacity math", testCapacityMath),
+            ("checked byte accounting saturates on overflow", testCheckedByteAccounting),
             ("capacity clamping", testCapacityClamping),
             ("low available capacity warning threshold", testLowAvailableCapacityWarning),
             ("comparable capacity history", testCapacityHistoryComparison),
@@ -103,6 +104,18 @@ private struct DiskerCoreChecks {
     private static func testCapacityMath() throws {
         let sample = CapacityObservation(totalBytes: 100, availableBytes: 35)
         try expect(sample.notAvailableBytes == 65, "not-available bytes should be total minus available")
+    }
+
+    private static func testCheckedByteAccounting() throws {
+        let exact = CheckedByteCount.adding(Int64.max - 1, 1)
+        try expect(exact.value == Int64.max && !exact.overflowed,
+                   "a byte total at Int64.max should remain exact")
+        let addition = CheckedByteCount.adding(Int64.max, 1)
+        try expect(addition.value == Int64.max && addition.overflowed,
+                   "an overflowing byte sum should saturate and report overflow")
+        let allocation = CheckedByteCount.multiplying(Int64.max, 512)
+        try expect(allocation.value == Int64.max && allocation.overflowed,
+                   "an overflowing allocated-byte estimate should saturate and report overflow")
     }
 
     private static func testCapacityClamping() throws {
