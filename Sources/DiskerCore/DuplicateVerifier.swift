@@ -40,12 +40,13 @@ public struct DuplicateVerificationResult: Codable, Equatable, Sendable {
     public let excludedSymlinkCount: Int
     public let excludedSpecialFileCount: Int
     public let changedDuringCheckCount: Int
+    public let byteAccountingOverflowed: Bool
     public let cancelled: Bool
 
     public init(
         verifiedAt: Date? = .now, selectedRootPaths: [String], groups: [DuplicateGroup], checkedFileCount: Int,
         inaccessibleCount: Int, excludedSymlinkCount: Int, excludedSpecialFileCount: Int,
-        changedDuringCheckCount: Int, cancelled: Bool
+        changedDuringCheckCount: Int, cancelled: Bool, byteAccountingOverflowed: Bool = false
     ) {
         self.verifiedAt = verifiedAt
         self.selectedRootPaths = selectedRootPaths
@@ -55,12 +56,34 @@ public struct DuplicateVerificationResult: Codable, Equatable, Sendable {
         self.excludedSymlinkCount = excludedSymlinkCount
         self.excludedSpecialFileCount = excludedSpecialFileCount
         self.changedDuringCheckCount = changedDuringCheckCount
+        self.byteAccountingOverflowed = byteAccountingOverflowed
         self.cancelled = cancelled
     }
 
     public var complete: Bool {
         !cancelled && inaccessibleCount == 0 && excludedSymlinkCount == 0
             && excludedSpecialFileCount == 0 && changedDuringCheckCount == 0
+            && !byteAccountingOverflowed
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case verifiedAt, selectedRootPaths, groups, checkedFileCount, inaccessibleCount
+        case excludedSymlinkCount, excludedSpecialFileCount, changedDuringCheckCount
+        case byteAccountingOverflowed, cancelled
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        verifiedAt = try values.decodeIfPresent(Date.self, forKey: .verifiedAt)
+        selectedRootPaths = try values.decode([String].self, forKey: .selectedRootPaths)
+        groups = try values.decode([DuplicateGroup].self, forKey: .groups)
+        checkedFileCount = try values.decode(Int.self, forKey: .checkedFileCount)
+        inaccessibleCount = try values.decode(Int.self, forKey: .inaccessibleCount)
+        excludedSymlinkCount = try values.decode(Int.self, forKey: .excludedSymlinkCount)
+        excludedSpecialFileCount = try values.decode(Int.self, forKey: .excludedSpecialFileCount)
+        changedDuringCheckCount = try values.decode(Int.self, forKey: .changedDuringCheckCount)
+        byteAccountingOverflowed = try values.decodeIfPresent(Bool.self, forKey: .byteAccountingOverflowed) ?? false
+        cancelled = try values.decode(Bool.self, forKey: .cancelled)
     }
 }
 
@@ -132,6 +155,7 @@ public enum DuplicateVerifier {
         var excludedSymlinkCount = 0
         var excludedSpecialFileCount = 0
         var changedDuringCheckCount = 0
+        var byteAccountingOverflowed = false
         var cancelled = false
 
         for root in roots {
@@ -223,10 +247,12 @@ public enum DuplicateVerifier {
                     case S_IFREG:
                         let identity = fileIdentity(child)
                         let size = UInt64(max(0, child.st_size))
+                        let allocated = CheckedByteCount.multiplying(Int64(max(0, child.st_blocks)), 512)
+                        byteAccountingOverflowed = byteAccountingOverflowed || allocated.overflowed
                         candidatesBySize[size, default: []].append(Candidate(
                             rootDescriptor: rootDescriptor, components: components, path: path,
                             identity: identity, logicalBytes: size,
-                            allocatedBytes: UInt64(max(0, child.st_blocks)) * 512,
+                            allocatedBytes: UInt64(allocated.value),
                             metadata: child
                         ))
                     default:
@@ -363,7 +389,8 @@ public enum DuplicateVerifier {
             excludedSymlinkCount: excludedSymlinkCount,
             excludedSpecialFileCount: excludedSpecialFileCount,
             changedDuringCheckCount: changedDuringCheckCount,
-            cancelled: cancelled
+            cancelled: cancelled,
+            byteAccountingOverflowed: byteAccountingOverflowed
         )
     }
 

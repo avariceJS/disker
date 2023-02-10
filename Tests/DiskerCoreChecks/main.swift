@@ -24,6 +24,7 @@ private struct DiskerCoreChecks {
             ("capacity math", testCapacityMath),
             ("checked byte accounting saturates on overflow", testCheckedByteAccounting),
             ("overflow disclosure persists with folder history", testByteAccountingOverflowPersistence),
+            ("duplicate allocated-byte overflow marks verification partial", testDuplicateAccountingOverflow),
             ("capacity clamping", testCapacityClamping),
             ("low available capacity warning threshold", testLowAvailableCapacityWarning),
             ("comparable capacity history", testCapacityHistoryComparison),
@@ -130,6 +131,24 @@ private struct DiskerCoreChecks {
         let decoded = try JSONDecoder().decode(FolderObservation.self, from: encoded)
         try expect(decoded.byteAccountingOverflowed,
                    "a capped byte estimate must retain its overflow explanation after history reload")
+    }
+
+    private static func testDuplicateAccountingOverflow() throws {
+        let result = DuplicateVerificationResult(
+            selectedRootPaths: ["/synthetic"], groups: [], checkedFileCount: 0,
+            inaccessibleCount: 0, excludedSymlinkCount: 0, excludedSpecialFileCount: 0,
+            changedDuringCheckCount: 0, cancelled: false, byteAccountingOverflowed: true
+        )
+        try expect(!result.complete, "an overflowing allocated estimate must prevent claiming complete duplicate coverage")
+        let encoded = try JSONEncoder().encode(result)
+        let decoded = try JSONDecoder().decode(DuplicateVerificationResult.self, from: encoded)
+        try expect(decoded.byteAccountingOverflowed && !decoded.complete,
+                   "duplicate overflow disclosure must survive Codable round-trip")
+
+        let legacyJSON = #"{"verifiedAt":null,"selectedRootPaths":["/synthetic"],"groups":[],"checkedFileCount":0,"inaccessibleCount":0,"excludedSymlinkCount":0,"excludedSpecialFileCount":0,"changedDuringCheckCount":0,"cancelled":false}"#
+        let legacy = try JSONDecoder().decode(DuplicateVerificationResult.self, from: Data(legacyJSON.utf8))
+        try expect(!legacy.byteAccountingOverflowed && legacy.complete,
+                   "legacy duplicate results should default overflow disclosure to false")
     }
 
     private static func testCapacityClamping() throws {

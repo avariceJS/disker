@@ -1645,6 +1645,7 @@ struct DashboardView: View {
 
     private func duplicateCoverageSummary(_ result: DuplicateVerificationResult) -> String {
         var reasons: [String] = []
+        if result.byteAccountingOverflowed { reasons.append("allocated-byte estimate exceeded the supported range and was capped") }
         if result.inaccessibleCount > 0 { reasons.append("\(result.inaccessibleCount) inaccessible") }
         if result.excludedSymlinkCount > 0 { reasons.append("\(result.excludedSymlinkCount) symlinks skipped") }
         if result.excludedSpecialFileCount > 0 { reasons.append("\(result.excludedSpecialFileCount) special files skipped") }
