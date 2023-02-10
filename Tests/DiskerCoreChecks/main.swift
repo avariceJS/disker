@@ -56,6 +56,7 @@ private struct DiskerCoreChecks {
             ("old history JSON defaults new fields", testOldHistoryDecoding),
             ("sparse file size accounting", testSparseFileAccounting),
             ("missing root coverage", testMissingRootCoverage),
+            ("permission-denied subtree remains partial", testPermissionDeniedSubtreeCoverage),
             ("immediate cancellation", testImmediateCancellation),
             ("history persistence and bounded retention", testHistoryPersistenceAndRetention),
             ("history reset is limited to its own file", testHistoryClearIsScoped),
@@ -1337,6 +1338,32 @@ private struct DiskerCoreChecks {
         try expect(result.folders[0].logicalBytes == 0, "missing root has no measured bytes")
         try expect(!result.folders[0].complete, "missing root must be marked incomplete")
         try expect(result.folders[0].inaccessibleCount == 1, "missing root must count an access failure")
+    }
+
+    private static func testPermissionDeniedSubtreeCoverage() throws {
+        try withTemporaryDirectory { root in
+            let knownFile = root.appendingPathComponent("known.bin")
+            try Data([1, 2, 3, 4]).write(to: knownFile)
+            let restricted = root.appendingPathComponent("restricted", isDirectory: true)
+            try FileManager.default.createDirectory(at: restricted, withIntermediateDirectories: false)
+            try Data(repeating: 7, count: 32).write(to: restricted.appendingPathComponent("unavailable.bin"))
+            try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: restricted.path)
+            defer { _ = chmod(restricted.path, 0o700) }
+
+            let probe = restricted.path.withCString { open($0, O_RDONLY | O_DIRECTORY) }
+            let accessWasDenied = probe < 0 && errno == EACCES
+            if probe >= 0 { close(probe) }
+            try expect(accessWasDenied, "synthetic permissions must deny traversal before testing scan coverage")
+
+            let folder = FolderScanner.scan(roots: [root]).folders[0]
+            try expect(!folder.complete && folder.inaccessibleCount == 1,
+                       "an inaccessible subtree must make the selected root partial")
+            try expect(folder.logicalBytes == 4 && folder.fileCount == 1,
+                       "the scanner must retain measured data while excluding inaccessible child bytes")
+            let inaccessible = try requireSummary("restricted", in: folder)
+            try expect(inaccessible.logicalBytes == 0 && inaccessible.incompleteCount == 1 && !inaccessible.complete,
+                       "the inaccessible subtree must be disclosed as incomplete, not complete zero usage")
+        }
     }
 
     private static func testImmediateCancellation() throws {
