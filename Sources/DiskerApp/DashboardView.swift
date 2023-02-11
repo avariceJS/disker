@@ -1434,6 +1434,18 @@ struct DashboardView: View {
                                     .foregroundStyle(.orange)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
+                            DisclosureGroup("Verified scope · \(plan.selectedRootPaths.count) selected locations") {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    ForEach(Array(plan.selectedRootPaths.enumerated()), id: \.offset) { item in
+                                        Text(item.element)
+                                            .font(.caption.monospaced())
+                                            .textSelection(.enabled)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                                .padding(.top, 5)
+                            }
+                            .font(.caption.weight(.medium))
                             ForEach(plan.entries) { entry in
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text("Proposed candidate · risk unknown")
@@ -1466,6 +1478,11 @@ struct DashboardView: View {
                                     Text("Logical \(format(entry.logicalBytes)) · allocated ~\(format(entry.allocatedBytesEstimate)) · expected reclaimable space unknown")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
+                                    Text("Verified SHA-256 · \(entry.verifiedSHA256)")
+                                        .font(.caption2.monospaced())
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
                                 }
                                 .padding(.vertical, 7)
                                 Divider()
