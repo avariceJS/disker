@@ -339,20 +339,24 @@ public enum ObservationComparison {
               })
         else { return nil }
 
-        return history.observations[..<currentIndex].reversed().lazy
-            .compactMap { observation -> DirectoryUsage? in
-                guard let previousFolder = observation.folders.first(where: {
-                    $0.path == folder.path && $0.complete
-                }) else { return nil }
-                return previousFolder.projectDirectorySummaries.first(where: {
-                    $0.rootRelativePath == current.rootRelativePath && $0.complete
-                }) ?? previousFolder.subdirectorySummaries.first(where: {
-                    $0.rootRelativePath == current.rootRelativePath && $0.complete
-                }) ?? previousFolder.gitMetadataUsage.flatMap {
-                    $0.rootRelativePath == current.rootRelativePath && $0.complete ? $0 : nil
-                }
-            }
+        // Partial scans are skipped, but the immediately preceding complete
+        // observation of this selected root is authoritative. If the exact
+        // retained path is absent there, do not bridge across it to an older
+        // directory that may have been removed, recreated, or summarized away.
+        guard let previousFolder = history.observations[..<currentIndex].reversed().lazy
+            .compactMap({ observation in
+                observation.folders.first(where: { $0.path == folder.path && $0.complete })
+            })
             .first
+        else { return nil }
+
+        return previousFolder.projectDirectorySummaries.first(where: {
+            $0.rootRelativePath == current.rootRelativePath && $0.complete
+        }) ?? previousFolder.subdirectorySummaries.first(where: {
+            $0.rootRelativePath == current.rootRelativePath && $0.complete
+        }) ?? previousFolder.gitMetadataUsage.flatMap {
+            $0.rootRelativePath == current.rootRelativePath && $0.complete ? $0 : nil
+        }
     }
 
     public static func allocatedByteDelta(

@@ -415,6 +415,12 @@ final class DashboardModel {
         ObservationComparison.previousCompleteFolder(for: folder, in: history)
     }
 
+    func directoryHistoryLabel(for folder: FolderObservation) -> String {
+        previousCompleteObservation(for: folder) == nil
+            ? "First complete observation"
+            : "No comparable prior retained path"
+    }
+
     func previousCompleteDirectory(
         for directory: DirectoryUsage, in folder: FolderObservation
     ) -> DirectoryUsage? {
@@ -2017,7 +2023,7 @@ struct DashboardView: View {
                                 Text(changeDescription(delta))
                                     .foregroundStyle(delta >= 0 ? .orange : .green)
                             } else if gitUsage.complete {
-                                Text("First complete observation")
+                                Text(model.directoryHistoryLabel(for: folder))
                             }
                         }
                         .font(.caption2)
@@ -2089,7 +2095,7 @@ struct DashboardView: View {
                                             Text(changeDescription(delta))
                                                 .foregroundStyle(delta >= 0 ? .orange : .green)
                                         } else if directory.complete {
-                                            Text("First complete observation")
+                                            Text(model.directoryHistoryLabel(for: folder))
                                         }
                                     }
                                     .font(.caption2)
@@ -2183,7 +2189,7 @@ struct DashboardView: View {
                                 Text(changeDescription(delta))
                                     .foregroundStyle(delta >= 0 ? .orange : .green)
                             } else if directory.complete {
-                                Text("First complete observation")
+                                Text(model.directoryHistoryLabel(for: folder))
                                     .foregroundStyle(.secondary)
                             }
                         }

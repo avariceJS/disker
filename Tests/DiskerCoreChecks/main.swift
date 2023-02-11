@@ -66,6 +66,7 @@ private struct DiskerCoreChecks {
             ("same-path complete history comparison", testSamePathCompleteHistoryComparison),
             ("selected-folder growth highlights", testFolderGrowthHighlights),
             ("same-root complete directory growth comparison", testDirectoryGrowthComparison),
+            ("selected file root mutation remains partial", testSelectedFileRootMutationCoverage),
             ("scan progress callback", testScanProgressCallback),
             ("directory mutations make coverage partial", testDirectoryMutationCoverage),
             ("file mutations during enumeration make coverage partial", testFileMutationCoverage),
@@ -1780,6 +1781,25 @@ private struct DiskerCoreChecks {
         try expect(projectGrowth.count == 1 && projectGrowth[0].directory.rootRelativePath == "vendor/small-project"
                    && projectGrowth[0].growthBytes == 25,
                    "repository-marker summaries omitted from the ordinary leaderboard should still support growth history")
+
+        let completeWithoutPath = folderWithDirectory(
+            id: UUID(), path: "/selected", bytes: 200, complete: true,
+            directory: directory("Projects/Other", bytes: 200, complete: true)
+        )
+        let reappeared = folderWithDirectory(
+            id: UUID(), path: "/selected", bytes: 350, complete: true,
+            directory: directory("Projects/Example", bytes: 125, complete: true)
+        )
+        let reappearanceHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: .now, folders: [earlier], cancelled: false),
+            ScanObservation(startedAt: .now, folders: [completeWithoutPath], cancelled: false),
+            ScanObservation(startedAt: .now, folders: [reappeared], cancelled: false),
+        ])
+        try expect(ObservationComparison.previousCompleteDirectory(
+            for: reappeared.subdirectorySummaries[0], in: reappeared, history: reappearanceHistory
+        ) == nil, "directory comparisons must not bridge a complete observation where the retained path is absent")
+        try expect(ObservationComparison.growingDirectories(in: reappearanceHistory).isEmpty,
+                   "directory growth must not infer change across an absent complete observation")
     }
 
     private static func folderWithDirectory(
@@ -1944,6 +1964,35 @@ private struct DiskerCoreChecks {
             try expect(changedFileDuringEnumeration, "fixture should change a previously sampled file during enumeration")
             try expect(!folder.complete, "a file changed before parent-directory revalidation must not appear complete")
             try expect(folder.changedDuringScanCount > 0, "the changed file should have an explicit coverage count")
+        }
+    }
+
+    private static func testSelectedFileRootMutationCoverage() throws {
+        try withTemporaryDirectory { root in
+            let selectedFile = root.appendingPathComponent("selected.bin")
+            let laterDirectory = root.appendingPathComponent("later-root", isDirectory: true)
+            try Data([0x01, 0x02, 0x03, 0x04]).write(to: selectedFile)
+            try FileManager.default.createDirectory(at: laterDirectory, withIntermediateDirectories: false)
+            for index in 0..<256 {
+                try Data([UInt8(index % 255)]).write(
+                    to: laterDirectory.appendingPathComponent(String(format: "file-%03d.bin", index))
+                )
+            }
+
+            var changedSelectedFile = false
+            let result = FolderScanner.scan(roots: [selectedFile, laterDirectory], progress: { _ in
+                guard !changedSelectedFile else { return }
+                changedSelectedFile = true
+                try? Data(repeating: 0x7F, count: 8).write(to: selectedFile)
+            })
+            try expect(changedSelectedFile, "later selected-root progress should mutate the earlier file fixture")
+            guard result.folders.count == 2 else {
+                throw CheckFailure.assertion("both selected roots should produce observations")
+            }
+            let fileObservation = result.folders[0]
+            try expect(fileObservation.logicalBytes == 4, "the file root should retain its sampled metadata total")
+            try expect(!fileObservation.complete && fileObservation.changedDuringScanCount > 0,
+                       "a selected file changed during a later root scan must be marked partial (complete=\(fileObservation.complete), changed=\(fileObservation.changedDuringScanCount), callback=\(changedSelectedFile))")
         }
     }
 

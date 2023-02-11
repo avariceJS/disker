@@ -98,6 +98,7 @@ public enum FolderScanner {
     ) -> ScanObservation {
         let startedAt = Date.now
         var results: [FolderObservation] = []
+        var selectedFileRoots: [(index: Int, path: URL, metadata: ScannedFileMetadata)] = []
         var cancelled = false
 
         for root in roots {
@@ -136,6 +137,9 @@ public enum FolderScanner {
             var visitedEntryCountForProgress = 0
             var scanComplete = true
             var accountingOverflow = false
+            let selectedFileMetadata = rootType == S_IFREG
+                ? ScannedFileMetadata(name: root.lastPathComponent, metadata: rootMetadata)
+                : nil
             var rootLogicalBytes: Int64 = 0
             var rootAllocatedBytes: Int64 = 0
             var rootFileCount = 0
@@ -478,10 +482,87 @@ public enum FolderScanner {
                 projectDirectorySummariesTruncated: projectSummaries.count > maximumProjectDirectorySummaries
             ))
 
+            if let selectedFileMetadata {
+                selectedFileRoots.append((results.count - 1, root, selectedFileMetadata))
+            }
+
             if cancelled { break }
         }
 
+        // File roots have no containing directory whose enumeration can
+        // revalidate them. Recheck after all selected roots have been scanned,
+        // because callbacks or other work during a later root may coincide
+        // with changes to an earlier selected file.
+        for selected in selectedFileRoots {
+            let accessGranted = selected.path.startAccessingSecurityScopedResource()
+            var current = stat()
+            let result = selected.path.path.withCString { lstat($0, &current) }
+            let statError = result == 0 ? 0 : errno
+            if accessGranted { selected.path.stopAccessingSecurityScopedResource() }
+
+            if result != 0 {
+                if statError == ENOENT || statError == ENOTDIR || statError == ELOOP {
+                    results[selected.index] = markingChangedDuringScan(results[selected.index])
+                } else {
+                    results[selected.index] = markingInaccessible(results[selected.index])
+                }
+            } else if selected.metadata.differs(from: current) {
+                results[selected.index] = markingChangedDuringScan(results[selected.index])
+            }
+        }
+
         return ScanObservation(startedAt: startedAt, folders: results, cancelled: cancelled)
+    }
+
+    private static func markingChangedDuringScan(_ folder: FolderObservation) -> FolderObservation {
+        FolderObservation(
+            id: folder.id, path: folder.path, displayName: folder.displayName,
+            logicalBytes: folder.logicalBytes, allocatedBytes: folder.allocatedBytes, fileCount: folder.fileCount,
+            fileExtensionSummaries: folder.fileExtensionSummaries,
+            fileExtensionSummariesTruncated: folder.fileExtensionSummariesTruncated,
+            otherFileExtensionUsage: folder.otherFileExtensionUsage,
+            otherFileExtensionCategoryCount: folder.otherFileExtensionCategoryCount,
+            inaccessibleCount: folder.inaccessibleCount, finishedAt: folder.finishedAt, complete: false,
+            excludedSymlinkCount: folder.excludedSymlinkCount, excludedSpecialFileCount: folder.excludedSpecialFileCount,
+            changedDuringScanCount: folder.changedDuringScanCount + 1,
+            byteAccountingOverflowed: folder.byteAccountingOverflowed,
+            gitMetadataEntryDetected: folder.gitMetadataEntryDetected,
+            gitMetadataUsage: folder.gitMetadataUsage,
+            subdirectorySummaries: folder.subdirectorySummaries,
+            subdirectorySummariesTruncated: folder.subdirectorySummariesTruncated,
+            projectDirectorySummaries: folder.projectDirectorySummaries,
+            projectDirectorySummariesTruncated: folder.projectDirectorySummariesTruncated,
+            applicationBundleIdentifier: folder.applicationBundleIdentifier,
+            applicationGroupIdentifiers: folder.applicationGroupIdentifiers,
+            applicationSignatureValidated: folder.applicationSignatureValidated,
+            applicationSignedBundleIdentifier: folder.applicationSignedBundleIdentifier
+        )
+    }
+
+    private static func markingInaccessible(_ folder: FolderObservation) -> FolderObservation {
+        FolderObservation(
+            id: folder.id, path: folder.path, displayName: folder.displayName,
+            logicalBytes: folder.logicalBytes, allocatedBytes: folder.allocatedBytes, fileCount: folder.fileCount,
+            fileExtensionSummaries: folder.fileExtensionSummaries,
+            fileExtensionSummariesTruncated: folder.fileExtensionSummariesTruncated,
+            otherFileExtensionUsage: folder.otherFileExtensionUsage,
+            otherFileExtensionCategoryCount: folder.otherFileExtensionCategoryCount,
+            inaccessibleCount: folder.inaccessibleCount + 1, finishedAt: folder.finishedAt, complete: false,
+            excludedSymlinkCount: folder.excludedSymlinkCount,
+            excludedSpecialFileCount: folder.excludedSpecialFileCount,
+            changedDuringScanCount: folder.changedDuringScanCount,
+            byteAccountingOverflowed: folder.byteAccountingOverflowed,
+            gitMetadataEntryDetected: folder.gitMetadataEntryDetected,
+            gitMetadataUsage: folder.gitMetadataUsage,
+            subdirectorySummaries: folder.subdirectorySummaries,
+            subdirectorySummariesTruncated: folder.subdirectorySummariesTruncated,
+            projectDirectorySummaries: folder.projectDirectorySummaries,
+            projectDirectorySummariesTruncated: folder.projectDirectorySummariesTruncated,
+            applicationBundleIdentifier: folder.applicationBundleIdentifier,
+            applicationGroupIdentifiers: folder.applicationGroupIdentifiers,
+            applicationSignatureValidated: folder.applicationSignatureValidated,
+            applicationSignedBundleIdentifier: folder.applicationSignedBundleIdentifier
+        )
     }
 
     private static func directoryUsage(
