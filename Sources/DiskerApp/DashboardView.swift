@@ -2019,9 +2019,9 @@ struct DashboardView: View {
                                 ))
                                 .foregroundStyle(.orange)
                             } else if let previous = model.previousCompleteDirectory(for: gitUsage, in: folder),
-                                      let delta = ObservationComparison.allocatedByteDelta(current: gitUsage, previous: previous) {
-                                Text(changeDescription(delta))
-                                    .foregroundStyle(delta >= 0 ? .orange : .green)
+                                      let delta = ObservationComparison.allocatedByteDelta(current: gitUsage, previous: previous),
+                                      let previousFolder = model.previousCompleteObservation(for: folder) {
+                                directoryChangeLabel(delta, previous: previousFolder, current: folder)
                             } else if gitUsage.complete {
                                 Text(model.directoryHistoryLabel(for: folder))
                             }
@@ -2091,9 +2091,8 @@ struct DashboardView: View {
                                             for: directory, in: folder
                                         ), let delta = ObservationComparison.allocatedByteDelta(
                                             current: directory, previous: previous
-                                        ) {
-                                            Text(changeDescription(delta))
-                                                .foregroundStyle(delta >= 0 ? .orange : .green)
+                                        ), let previousFolder = model.previousCompleteObservation(for: folder) {
+                                            directoryChangeLabel(delta, previous: previousFolder, current: folder)
                                         } else if directory.complete {
                                             Text(model.directoryHistoryLabel(for: folder))
                                         }
@@ -2185,9 +2184,8 @@ struct DashboardView: View {
                                 for: directory, in: folder
                             ), let delta = ObservationComparison.allocatedByteDelta(
                                 current: directory, previous: previous
-                            ) {
-                                Text(changeDescription(delta))
-                                    .foregroundStyle(delta >= 0 ? .orange : .green)
+                            ), let previousFolder = model.previousCompleteObservation(for: folder) {
+                                directoryChangeLabel(delta, previous: previousFolder, current: folder)
                             } else if directory.complete {
                                 Text(model.directoryHistoryLabel(for: folder))
                                     .foregroundStyle(.secondary)
@@ -2351,6 +2349,19 @@ struct DashboardView: View {
 
     private func changeDescription(_ bytes: Int64) -> String {
         bytes == 0 ? "No allocated-size change" : "Since previous \(formattedDelta(bytes))"
+    }
+
+    private func directoryChangeLabel(
+        _ bytes: Int64, previous: FolderObservation, current: FolderObservation
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(changeDescription(bytes))
+                .foregroundStyle(bytes >= 0 ? .orange : .green)
+            Text("Complete scans: \(previous.finishedAt.formatted(date: .abbreviated, time: .shortened)) → \(current.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
     }
 
     private func coverageSummary(
