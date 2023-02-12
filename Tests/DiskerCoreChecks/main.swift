@@ -33,6 +33,7 @@ private struct DiskerCoreChecks {
             ("evidence-scoped application container attribution", testApplicationPathAttribution),
             ("explicit app-folder associations", testApplicationFolderAssociations),
             ("bounded read-only selected-scope bookmarks", testSelectedScopeBookmarks),
+            ("local stores reject symlinks", testLocalStoresRejectSymlinks),
             ("zero important-usage fallback", testImportantUsageFallback),
             ("live root volume capacity", testLiveCapacitySource),
             ("live RAM and process sample", testLiveRAMSample),
@@ -639,6 +640,61 @@ private struct DiskerCoreChecks {
             let rejectedBookmarks = try SelectedScopeBookmarkStore.load(from: crowdedStore)
             try expect(rejectedBookmarks.isEmpty,
                        "a rejected over-limit selection must not partially persist permissions")
+        }
+    }
+
+    private static func testLocalStoresRejectSymlinks() throws {
+        try withTemporaryDirectory { root in
+            let historyTarget = root.appendingPathComponent("history-target.json")
+            let historyLink = root.appendingPathComponent("history-link.json")
+            let historyBytes = Data("{}".utf8)
+            try historyBytes.write(to: historyTarget)
+            try FileManager.default.createSymbolicLink(atPath: historyLink.path, withDestinationPath: historyTarget.path)
+            var historyRejected = false
+            do {
+                _ = try ObservationStore.load(from: historyLink)
+            } catch {
+                historyRejected = error.localizedDescription.contains("not a regular file")
+            }
+            try expect(historyRejected, "history loading must reject a symlink instead of reading its target")
+            let historyAfterRejection = try Data(contentsOf: historyTarget)
+            try expect(historyAfterRejection == historyBytes,
+                       "rejecting a history symlink must leave its target unchanged")
+
+            let bookmarkTarget = root.appendingPathComponent("bookmark-target.json")
+            let bookmarkLink = root.appendingPathComponent("bookmark-link.json")
+            let bookmarkBytes = Data("[]".utf8)
+            try bookmarkBytes.write(to: bookmarkTarget)
+            try FileManager.default.createSymbolicLink(atPath: bookmarkLink.path, withDestinationPath: bookmarkTarget.path)
+            var bookmarkRejected = false
+            do {
+                _ = try SelectedScopeBookmarkStore.load(from: bookmarkLink)
+            } catch {
+                bookmarkRejected = error.localizedDescription.contains("not a regular file")
+            }
+            try expect(bookmarkRejected, "bookmark loading must reject a symlink instead of reading its target")
+            let bookmarkAfterRejection = try Data(contentsOf: bookmarkTarget)
+            try expect(bookmarkAfterRejection == bookmarkBytes,
+                       "rejecting a bookmark symlink must leave its target unchanged")
+
+            let oversizedBookmark = root.appendingPathComponent("oversized-bookmarks.json")
+            guard FileManager.default.createFile(atPath: oversizedBookmark.path, contents: Data()) else {
+                throw CheckFailure.assertion("synthetic oversized bookmark file should be created")
+            }
+            let descriptor = open(oversizedBookmark.path, O_WRONLY | O_CLOEXEC)
+            guard descriptor >= 0 else {
+                throw CheckFailure.assertion("synthetic oversized bookmark file should open")
+            }
+            let truncateResult = ftruncate(descriptor, off_t(8 * 1024 * 1024 + 1))
+            close(descriptor)
+            try expect(truncateResult == 0, "synthetic oversized bookmark fixture should remain sparse")
+            var sizeRejected = false
+            do {
+                _ = try SelectedScopeBookmarkStore.load(from: oversizedBookmark)
+            } catch {
+                sizeRejected = error.localizedDescription.contains("size limit")
+            }
+            try expect(sizeRejected, "bookmark stores should reject files above their bounded read size")
         }
     }
 

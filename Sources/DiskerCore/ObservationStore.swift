@@ -49,11 +49,13 @@ public struct LocalHistory: Codable, Sendable {
 public enum ObservationStore {
     private static let fileName = "observations.json"
     private static let maximumObservationCount = 180
+    private static let maximumHistoryFileSize = 256 * 1024 * 1024
 
     public static func load(from fileURL: URL? = nil) throws -> LocalHistory {
         guard let url = fileURL ?? historyURL() else { throw StorageReadError.historyLocationUnavailable }
-        guard FileManager.default.fileExists(atPath: url.path) else { return LocalHistory() }
-        let data = try Data(contentsOf: url)
+        guard let data = try LocalStoreFile.read(at: url, maximumBytes: maximumHistoryFileSize) else {
+            return LocalHistory()
+        }
         do {
             return try JSONDecoder().decode(LocalHistory.self, from: data)
         } catch {
@@ -161,6 +163,9 @@ public enum ObservationStore {
             [.posixPermissions: 0o700], ofItemAtPath: directoryURL.path
         )
         let data = try JSONEncoder().encode(history)
+        guard data.count <= maximumHistoryFileSize else {
+            throw LocalStoreFileError.exceedsSizeLimit
+        }
         try data.write(to: url, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }

@@ -35,11 +35,12 @@ public enum SelectedScopeBookmarkError: Error, LocalizedError {
 public enum SelectedScopeBookmarkStore {
     public static let maximumBookmarkCount = 20
     private static let fileName = "selected-scopes.json"
+    private static let maximumBookmarkFileSize = 8 * 1024 * 1024
 
     public static func load(from fileURL: URL? = nil) throws -> [SelectedScopeBookmark] {
         guard let url = fileURL ?? storageURL() else { return [] }
-        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
-        let bookmarks = try JSONDecoder().decode([SelectedScopeBookmark].self, from: Data(contentsOf: url))
+        guard let data = try LocalStoreFile.read(at: url, maximumBytes: maximumBookmarkFileSize) else { return [] }
+        let bookmarks = try JSONDecoder().decode([SelectedScopeBookmark].self, from: data)
         let bounded = Array(bookmarks.sorted {
             if $0.savedAt == $1.savedAt { return $0.path < $1.path }
             return $0.savedAt < $1.savedAt
@@ -135,7 +136,11 @@ public enum SelectedScopeBookmarkStore {
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]
         )
-        try JSONEncoder().encode(bookmarks).write(to: url, options: .atomic)
+        let data = try JSONEncoder().encode(bookmarks)
+        guard data.count <= maximumBookmarkFileSize else {
+            throw LocalStoreFileError.exceedsSizeLimit
+        }
+        try data.write(to: url, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
