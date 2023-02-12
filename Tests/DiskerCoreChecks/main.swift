@@ -695,6 +695,29 @@ private struct DiskerCoreChecks {
                 sizeRejected = error.localizedDescription.contains("size limit")
             }
             try expect(sizeRejected, "bookmark stores should reject files above their bounded read size")
+
+            let storeTargetDirectory = root.appendingPathComponent("real-store", isDirectory: true)
+            let storeDirectoryLink = root.appendingPathComponent("linked-store", isDirectory: true)
+            try FileManager.default.createDirectory(at: storeTargetDirectory, withIntermediateDirectories: false)
+            let targetHistory = storeTargetDirectory.appendingPathComponent("observations.json")
+            let targetHistoryBytes = Data("{}".utf8)
+            try targetHistoryBytes.write(to: targetHistory)
+            try FileManager.default.createSymbolicLink(
+                atPath: storeDirectoryLink.path, withDestinationPath: storeTargetDirectory.path
+            )
+            let linkedHistory = storeDirectoryLink.appendingPathComponent("observations.json")
+            var directoryRejected = false
+            do {
+                _ = try ObservationStore.append(
+                    ScanObservation(startedAt: .now, folders: [], cancelled: false), to: linkedHistory
+                )
+            } catch {
+                directoryRejected = error.localizedDescription.contains("private data folder")
+            }
+            try expect(directoryRejected, "local stores must reject a symlinked private-data directory")
+            let targetHistoryAfterRejection = try Data(contentsOf: targetHistory)
+            try expect(targetHistoryAfterRejection == targetHistoryBytes,
+                       "rejecting a symlinked store directory must leave its contents unchanged")
         }
     }
 

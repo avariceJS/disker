@@ -154,14 +154,7 @@ public enum ObservationStore {
     private static func save(_ history: LocalHistory, fileURL: URL?) throws {
         guard let url = fileURL ?? historyURL() else { throw StorageReadError.historyLocationUnavailable }
         let directoryURL = url.deletingLastPathComponent()
-        try FileManager.default.createDirectory(
-            at: directoryURL,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o700], ofItemAtPath: directoryURL.path
-        )
+        try LocalStoreFile.ensurePrivateDirectory(at: directoryURL)
         let data = try JSONEncoder().encode(history)
         guard data.count <= maximumHistoryFileSize else {
             throw LocalStoreFileError.exceedsSizeLimit

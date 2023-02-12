@@ -131,11 +131,7 @@ public enum SelectedScopeBookmarkStore {
 
     private static func save(_ bookmarks: [SelectedScopeBookmark], at fileURL: URL?) throws {
         guard let url = fileURL ?? storageURL() else { return }
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
+        try LocalStoreFile.ensurePrivateDirectory(at: url.deletingLastPathComponent())
         let data = try JSONEncoder().encode(bookmarks)
         guard data.count <= maximumBookmarkFileSize else {
             throw LocalStoreFileError.exceedsSizeLimit
