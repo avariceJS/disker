@@ -125,8 +125,7 @@ public enum SelectedScopeBookmarkStore {
 
     public static func clear(at fileURL: URL? = nil) throws {
         guard let url = fileURL ?? storageURL() else { return }
-        guard FileManager.default.fileExists(atPath: url.path) else { return }
-        try FileManager.default.removeItem(at: url)
+        try LocalStoreFile.remove(at: url)
     }
 
     private static func save(_ bookmarks: [SelectedScopeBookmark], at fileURL: URL?) throws {

@@ -660,6 +660,12 @@ private struct DiskerCoreChecks {
             let historyAfterRejection = try Data(contentsOf: historyTarget)
             try expect(historyAfterRejection == historyBytes,
                        "rejecting a history symlink must leave its target unchanged")
+            try ObservationStore.clear(at: historyLink)
+            try expect(!FileManager.default.fileExists(atPath: historyLink.path),
+                       "clearing a local history symlink should remove only the link")
+            let historyAfterClear = try Data(contentsOf: historyTarget)
+            try expect(historyAfterClear == historyBytes,
+                       "clearing a local history symlink must never remove or change its target")
 
             let bookmarkTarget = root.appendingPathComponent("bookmark-target.json")
             let bookmarkLink = root.appendingPathComponent("bookmark-link.json")
@@ -676,6 +682,12 @@ private struct DiskerCoreChecks {
             let bookmarkAfterRejection = try Data(contentsOf: bookmarkTarget)
             try expect(bookmarkAfterRejection == bookmarkBytes,
                        "rejecting a bookmark symlink must leave its target unchanged")
+            try SelectedScopeBookmarkStore.clear(at: bookmarkLink)
+            try expect(!FileManager.default.fileExists(atPath: bookmarkLink.path),
+                       "clearing a local bookmark symlink should remove only the link")
+            let bookmarkAfterClear = try Data(contentsOf: bookmarkTarget)
+            try expect(bookmarkAfterClear == bookmarkBytes,
+                       "clearing a local bookmark symlink must never remove or change its target")
 
             let oversizedBookmark = root.appendingPathComponent("oversized-bookmarks.json")
             guard FileManager.default.createFile(atPath: oversizedBookmark.path, contents: Data()) else {
@@ -715,6 +727,13 @@ private struct DiskerCoreChecks {
                 directoryRejected = error.localizedDescription.contains("private data folder")
             }
             try expect(directoryRejected, "local stores must reject a symlinked private-data directory")
+            var clearDirectoryRejected = false
+            do {
+                try ObservationStore.clear(at: linkedHistory)
+            } catch {
+                clearDirectoryRejected = error.localizedDescription.contains("private data folder")
+            }
+            try expect(clearDirectoryRejected, "history reset must reject a symlinked private-data directory")
             let targetHistoryAfterRejection = try Data(contentsOf: targetHistory)
             try expect(targetHistoryAfterRejection == targetHistoryBytes,
                        "rejecting a symlinked store directory must leave its contents unchanged")

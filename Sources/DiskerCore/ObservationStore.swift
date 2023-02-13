@@ -165,8 +165,7 @@ public enum ObservationStore {
 
     public static func clear(at fileURL: URL? = nil) throws {
         guard let url = fileURL ?? historyURL() else { throw StorageReadError.historyLocationUnavailable }
-        guard FileManager.default.fileExists(atPath: url.path) else { return }
-        try FileManager.default.removeItem(at: url)
+        try LocalStoreFile.remove(at: url)
     }
 
     private static func historyURL() -> URL? {

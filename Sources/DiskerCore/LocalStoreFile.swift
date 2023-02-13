@@ -5,6 +5,7 @@ enum LocalStoreFileError: Error, LocalizedError {
     case unsafeDirectory
     case notRegularFile
     case exceedsSizeLimit
+    case removalFailed
 
     var errorDescription: String? {
         switch self {
@@ -14,6 +15,8 @@ enum LocalStoreFileError: Error, LocalizedError {
             return "Disker's local data file is not a regular file and was not read."
         case .exceedsSizeLimit:
             return "Disker's local data file exceeds the supported size limit and was not read."
+        case .removalFailed:
+            return "Disker's local data file could not be removed."
         }
     }
 }
@@ -91,6 +94,32 @@ enum LocalStoreFile {
               fchmod(descriptor, 0o700) == 0
         else {
             throw LocalStoreFileError.unsafeDirectory
+        }
+    }
+
+    static func remove(at url: URL) throws {
+        let directoryURL = url.deletingLastPathComponent()
+        let directoryDescriptor = directoryURL.path.withCString {
+            open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        }
+        guard directoryDescriptor >= 0 else {
+            if errno == ENOENT { return }
+            throw LocalStoreFileError.unsafeDirectory
+        }
+        defer { close(directoryDescriptor) }
+
+        var directoryMetadata = stat()
+        guard fstat(directoryDescriptor, &directoryMetadata) == 0,
+              directoryMetadata.st_mode & S_IFMT == S_IFDIR
+        else {
+            throw LocalStoreFileError.unsafeDirectory
+        }
+
+        let result = url.lastPathComponent.withCString {
+            unlinkat(directoryDescriptor, $0, 0)
+        }
+        if result != 0 && errno != ENOENT {
+            throw LocalStoreFileError.removalFailed
         }
     }
 }
