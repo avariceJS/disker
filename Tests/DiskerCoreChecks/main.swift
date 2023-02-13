@@ -712,6 +712,7 @@ private struct DiskerCoreChecks {
             let storeTargetDirectory = root.appendingPathComponent("real-store", isDirectory: true)
             let storeDirectoryLink = root.appendingPathComponent("linked-store", isDirectory: true)
             try FileManager.default.createDirectory(at: storeTargetDirectory, withIntermediateDirectories: false)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: storeTargetDirectory.path)
             let targetHistory = storeTargetDirectory.appendingPathComponent("observations.json")
             let targetHistoryBytes = Data("{}".utf8)
             try targetHistoryBytes.write(to: targetHistory)
@@ -738,6 +739,11 @@ private struct DiskerCoreChecks {
             let targetHistoryAfterRejection = try Data(contentsOf: targetHistory)
             try expect(targetHistoryAfterRejection == targetHistoryBytes,
                        "rejecting a symlinked store directory must leave its contents unchanged")
+            let targetDirectoryPermissions = try FileManager.default.attributesOfItem(
+                atPath: storeTargetDirectory.path
+            )[.posixPermissions] as? NSNumber
+            try expect(targetDirectoryPermissions?.intValue == 0o755,
+                       "rejecting a symlinked store directory must not alter the target directory's permissions")
         }
     }
 
