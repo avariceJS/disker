@@ -61,6 +61,7 @@ private struct DiskerCoreChecks {
             ("permission-denied subtree remains partial", testPermissionDeniedSubtreeCoverage),
             ("immediate cancellation", testImmediateCancellation),
             ("history persistence and bounded retention", testHistoryPersistenceAndRetention),
+            ("loaded history obeys retention bounds", testLoadedHistoryRetentionBounds),
             ("history reset is limited to its own file", testHistoryClearIsScoped),
             ("history reset invalidates stale async work", testHistoryGeneration),
             ("corrupt history fails closed and can be reset", testCorruptHistoryIsLeftUntouched),
@@ -1599,6 +1600,33 @@ private struct DiskerCoreChecks {
                 let reset = try ObservationStore.load(from: fileURL)
                 try expect(reset.observations.isEmpty, "explicit history reset should recover from a corrupt store")
             }
+        }
+    }
+
+    private static func testLoadedHistoryRetentionBounds() throws {
+        try withTemporaryDirectory { root in
+            let fileURL = root.appendingPathComponent("history.json")
+            let observations = (0...180).map { index in
+                let timestamp = Date(timeIntervalSince1970: TimeInterval(index))
+                let folder = FolderObservation(
+                    path: "/synthetic/\(index)", displayName: "fixture",
+                    logicalBytes: Int64(index), allocatedBytes: Int64(index),
+                    fileCount: 1, inaccessibleCount: 0, finishedAt: timestamp, complete: true
+                )
+                return ScanObservation(startedAt: timestamp, folders: [folder], cancelled: false)
+            }
+            let originalData = try JSONEncoder().encode(LocalHistory(observations: observations))
+            try originalData.write(to: fileURL)
+
+            let loaded = try ObservationStore.load(from: fileURL)
+            try expect(loaded.observations.count == 180,
+                       "loading a larger but valid legacy history must retain only the configured latest observations")
+            try expect(loaded.observations.first?.startedAt == Date(timeIntervalSince1970: 1)
+                       && loaded.observations.last?.startedAt == Date(timeIntervalSince1970: 180),
+                       "history loading should discard only observations older than the retention window")
+            let persistedData = try Data(contentsOf: fileURL)
+            try expect(persistedData == originalData,
+                       "bounded loading must not rewrite a user's local history without a later save")
         }
     }
 

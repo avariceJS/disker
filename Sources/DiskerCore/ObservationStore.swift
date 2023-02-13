@@ -57,7 +57,17 @@ public enum ObservationStore {
             return LocalHistory()
         }
         do {
-            return try JSONDecoder().decode(LocalHistory.self, from: data)
+            var history = try JSONDecoder().decode(LocalHistory.self, from: data)
+            history.observations = Array(history.observations.suffix(maximumObservationCount))
+            history.ramObservations = Array(history.ramObservations.suffix(maximumObservationCount))
+            history.memoryPressureObservations = Array(
+                history.memoryPressureObservations.suffix(maximumObservationCount)
+            )
+            history.capacityObservations = Array(history.capacityObservations.suffix(maximumObservationCount))
+            history.applicationAssociations = Array(
+                history.applicationAssociations.suffix(maximumObservationCount)
+            )
+            return history
         } catch {
             throw HistoryDecodeError.invalidHistory(error.localizedDescription)
         }

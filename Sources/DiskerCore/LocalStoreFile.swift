@@ -10,7 +10,7 @@ enum LocalStoreFileError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unsafeDirectory:
-            return "Disker's private data folder is not a real directory and was left untouched."
+            return "Disker's private data folder could not be opened safely and was left untouched."
         case .notRegularFile:
             return "Disker's local data file is not a regular file and was not read."
         case .exceedsSizeLimit:
