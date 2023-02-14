@@ -437,6 +437,40 @@ private struct DiskerCoreChecks {
         try expect(unclaimedGroup.evidence == .userSelectedOnly
                    && nearbyGroup.evidence == .userSelectedOnly,
                    "unclaimed and near-miss App Group paths must remain user-selected only")
+
+        let suggestions = ApplicationDataLocationCandidates.suggestions(
+            bundleIdentifier: identifier, homeDirectoryPath: home,
+            claimedGroupIdentifiers: [groupIdentifier, groupIdentifier, "bad/group"]
+        )
+        try expect(suggestions.map(\.path) == [container, groupContainer],
+                   "app-data suggestions should be exact, deduplicated conventional paths")
+        try expect(suggestions[0].evidence == .probableAppContainer
+                   && suggestions[1].evidence == .declaredSharedGroupClaim,
+                   "suggested paths should retain probable and shared-claim evidence without overstating ownership")
+        try expect(suggestions.allSatisfy({ $0.explanation.contains("not been checked")
+                                           || $0.explanation.contains("shared by design") }),
+                   "location suggestions should explicitly remain unmeasured and confidence-limited")
+
+        let validatedSuggestions = ApplicationDataLocationCandidates.suggestions(
+            bundleIdentifier: identifier, homeDirectoryPath: home,
+            claimedGroupIdentifiers: [groupIdentifier], signatureValidated: true,
+            signedBundleIdentifier: identifier
+        )
+        try expect(validatedSuggestions.map(\.evidence) == [
+            .validatedAppContainerIdentifier, .signatureCoveredSharedGroupClaim,
+        ], "matching local signature evidence should refine the candidate labels")
+        let mismatchedSuggestions = ApplicationDataLocationCandidates.suggestions(
+            bundleIdentifier: identifier, homeDirectoryPath: home,
+            claimedGroupIdentifiers: [groupIdentifier], signatureValidated: true,
+            signedBundleIdentifier: "com.example.Other"
+        )
+        try expect(mismatchedSuggestions.map(\.evidence) == [
+            .probableAppContainer, .declaredSharedGroupClaim,
+        ], "a mismatched signed ID must not strengthen suggested path evidence")
+        try expect(ApplicationDataLocationCandidates.suggestions(
+            bundleIdentifier: "../Other", homeDirectoryPath: home,
+            claimedGroupIdentifiers: [groupIdentifier]
+        ).isEmpty, "invalid identifiers must not generate app-data paths")
     }
 
     private static func testApplicationBundleMetadata() throws {

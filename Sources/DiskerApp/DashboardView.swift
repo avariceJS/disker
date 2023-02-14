@@ -221,12 +221,13 @@ final class DashboardModel {
         scan(panel.urls, inspectSelectedAppBundles: true)
     }
 
-    func chooseRelatedFolders(for bundlePath: String) {
+    func chooseRelatedFolders(for bundlePath: String, startingAt directory: URL? = nil) {
         guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
         let panel = NSOpenPanel()
         panel.title = "Choose folders associated with this app"
         panel.prompt = "Associate and Scan"
         panel.message = "Choose up to 50 folders to associate. Exact container paths may match the selected app's bundle ID or App Groups claim. Disker checks the app's local code signature but does not verify notarization, current use, or exclusive ownership; group data is shared and measurements stay separate."
+        panel.directoryURL = directory
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
@@ -952,6 +953,7 @@ struct DashboardView: View {
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             applicationIdentityRow(for: bundle)
+                            applicationDataLocationSuggestions(for: bundle)
                             HStack(spacing: 12) {
                                 Text("Logical \(format(bundle.logicalBytes))")
                                 Text("Allocated estimate \(format(bundle.allocatedBytes))")
@@ -1545,6 +1547,56 @@ struct DashboardView: View {
                     .font(.caption2.monospaced())
                     .foregroundStyle(.orange)
                     .textSelection(.enabled)
+            }
+        }
+    }
+
+    private func applicationDataLocationSuggestions(for bundle: FolderObservation) -> some View {
+        let suggestions = ApplicationDataLocationCandidates.suggestions(
+            bundleIdentifier: bundle.applicationBundleIdentifier,
+            homeDirectoryPath: NSHomeDirectory(),
+            claimedGroupIdentifiers: bundle.applicationGroupIdentifiers,
+            signatureValidated: bundle.applicationSignatureValidated,
+            signedBundleIdentifier: bundle.applicationSignedBundleIdentifier
+        )
+        return Group {
+            if !suggestions.isEmpty {
+                DisclosureGroup("Possible data locations · not measured") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("These conventional paths come from the selected app's bundle ID and embedded group claims. Disker has not checked whether they exist or who uses them. Choose a path to open the folder picker; only folders you select will be measured.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        ForEach(suggestions) { suggestion in
+                            HStack(alignment: .top, spacing: 12) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(suggestion.title)
+                                        .font(.caption.weight(.medium))
+                                    Text(suggestion.path)
+                                        .font(.caption2.monospaced())
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Text(suggestion.explanation)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer(minLength: 4)
+                                Button("Select…") {
+                                    model.chooseRelatedFolders(
+                                        for: bundle.path,
+                                        startingAt: URL(fileURLWithPath: suggestion.path).deletingLastPathComponent()
+                                    )
+                                }
+                                .controlSize(.small)
+                                .disabled(model.isScanning)
+                            }
+                            if suggestion.id != suggestions.last?.id { Divider() }
+                        }
+                    }
+                    .padding(.top, 6)
+                }
+                .font(.caption.weight(.medium))
             }
         }
     }

@@ -201,7 +201,7 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
         self.groupIdentifier = groupIdentifier
     }
 
-    private static func isValidBundleIdentifier(_ value: String) -> Bool {
+    fileprivate static func isValidBundleIdentifier(_ value: String) -> Bool {
         guard !value.isEmpty,
               value.unicodeScalars.allSatisfy({
                   (48...57).contains($0.value)
@@ -215,5 +215,80 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
 
     private static func isWithin(_ candidate: String, root: String) -> Bool {
         candidate == root || candidate.hasPrefix(root + "/")
+    }
+}
+
+public struct ApplicationDataLocationCandidate: Equatable, Sendable, Identifiable {
+    public enum Evidence: Equatable, Sendable {
+        case probableAppContainer
+        case validatedAppContainerIdentifier
+        case declaredSharedGroupClaim
+        case signatureCoveredSharedGroupClaim
+    }
+
+    public let path: String
+    public let evidence: Evidence
+    public let identifier: String
+
+    public var id: String { path }
+
+    public var title: String {
+        switch evidence {
+        case .probableAppContainer: "Probable per-app container path"
+        case .validatedAppContainerIdentifier: "Validated identifier · per-app container path"
+        case .declaredSharedGroupClaim: "Declared App Group path · shared"
+        case .signatureCoveredSharedGroupClaim: "Signature-covered App Group path · shared"
+        }
+    }
+
+    public var explanation: String {
+        switch evidence {
+        case .probableAppContainer:
+            "This is the standard path pattern for the selected bundle ID. Its presence, use, and exclusive ownership have not been checked."
+        case .validatedAppContainerIdentifier:
+            "The selected bundle's locally validated signature carries this identifier. The candidate path has not been checked for presence or exclusive use."
+        case .declaredSharedGroupClaim:
+            "The selected bundle declares this App Group. The path is shared by design; signature validity and OS-granted access are not established."
+        case .signatureCoveredSharedGroupClaim:
+            "The selected bundle's locally valid signature covers this App Group claim. The path is shared by design; publisher trust and OS-granted access are not established."
+        }
+    }
+}
+
+public enum ApplicationDataLocationCandidates {
+    /// Builds conventional path suggestions from the explicitly selected app's
+    /// stored identity. It performs no filesystem lookup and grants no access.
+    public static func suggestions(
+        bundleIdentifier: String?, homeDirectoryPath: String,
+        claimedGroupIdentifiers: [String] = [],
+        signatureValidated: Bool = false, signedBundleIdentifier: String? = nil
+    ) -> [ApplicationDataLocationCandidate] {
+        guard let bundleIdentifier,
+              ApplicationPathAttribution.isValidBundleIdentifier(bundleIdentifier)
+        else { return [] }
+
+        let libraryRoot = URL(fileURLWithPath: homeDirectoryPath, isDirectory: true)
+            .appendingPathComponent("Library", isDirectory: true)
+            .standardizedFileURL
+        let validatedIdentity = signatureValidated && signedBundleIdentifier == bundleIdentifier
+        var candidates = [ApplicationDataLocationCandidate(
+            path: libraryRoot.appendingPathComponent("Containers", isDirectory: true)
+                .appendingPathComponent(bundleIdentifier, isDirectory: true).standardizedFileURL.path,
+            evidence: validatedIdentity ? .validatedAppContainerIdentifier : .probableAppContainer,
+            identifier: bundleIdentifier
+        )]
+
+        for groupIdentifier in Set(claimedGroupIdentifiers.filter {
+            ApplicationPathAttribution.isValidBundleIdentifier($0)
+        }).sorted() {
+            candidates.append(ApplicationDataLocationCandidate(
+                path: libraryRoot.appendingPathComponent("Group Containers", isDirectory: true)
+                    .appendingPathComponent(groupIdentifier, isDirectory: true).standardizedFileURL.path,
+                evidence: validatedIdentity
+                    ? .signatureCoveredSharedGroupClaim : .declaredSharedGroupClaim,
+                identifier: groupIdentifier
+            ))
+        }
+        return candidates
     }
 }
