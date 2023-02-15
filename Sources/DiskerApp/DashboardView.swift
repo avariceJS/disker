@@ -2294,6 +2294,13 @@ struct DashboardView: View {
                     Text(item.extensionName == "no extension" ? "No extension" : ".\(item.extensionName)")
                         .font(.caption2.monospaced())
                         .lineLimit(1)
+                    if let hint = FileArtifactHint.matching(extensionName: item.extensionName) {
+                        Label(hint.title, systemImage: "tag")
+                            .font(.caption2)
+                            .foregroundStyle(.blue)
+                            .lineLimit(1)
+                            .help("Filename-based clue only. Disker does not inspect this category's contents or determine whether it is safe to remove.")
+                    }
                     Text("\(item.fileCount) files")
                         .font(.caption2)
                         .foregroundStyle(.secondary)

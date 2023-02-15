@@ -50,6 +50,7 @@ private struct DiskerCoreChecks {
             ("duplicate files are revalidated after hashing", testDuplicateFileRevalidation),
             ("nested directory usage summaries", testNestedDirectorySummaries),
             ("cautious development storage hints", testStorageAreaHints),
+            ("cautious file artifact hints", testFileArtifactHints),
             ("Git metadata marker detection", testGitMetadataMarkerDetection),
             ("Git metadata footprint survives summary cap", testGitMetadataUsageSurvivesSummaryCap),
             ("selected symlink root is incomplete", testSelectedSymlinkRootIsIncomplete),
@@ -1276,6 +1277,21 @@ private struct DiskerCoreChecks {
                    "unrecognized directory names must remain unclassified")
         try expect(StorageAreaHint.matching(relativePath: "project/.git/objects") == nil,
                    "Git metadata should keep its dedicated marker and footprint presentation")
+    }
+
+    private static func testFileArtifactHints() throws {
+        let examples: [(String, FileArtifactHint)] = [
+            ("sqlite", .database), ("sqlite-wal", .database), ("db", .database),
+            ("log", .log), ("dmg", .archiveOrInstaller), ("zip", .archiveOrInstaller),
+            ("gguf", .modelOrCheckpoint), ("safetensors", .modelOrCheckpoint),
+            ("parquet", .structuredData), ("jsonl", .structuredData),
+        ]
+        for (name, expected) in examples {
+            try expect(FileArtifactHint.matching(extensionName: name) == expected,
+                       "known extension should get a filename-only artifact hint")
+        }
+        try expect(FileArtifactHint.matching(extensionName: "unknown") == nil,
+                   "unknown file extensions must remain unclassified")
     }
 
     private static func testGitMetadataMarkerDetection() throws {
