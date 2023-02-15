@@ -1621,6 +1621,8 @@ struct DashboardView: View {
             attributionSymbol = "folder.badge.checkmark"
         case .probableContainerPathMatch:
             attributionSymbol = "folder.badge.questionmark"
+        case .probableNamedSupportPathMatch:
+            attributionSymbol = "folder.badge.questionmark"
         case .userSelectedOnly:
             attributionSymbol = "person.crop.circle.badge.questionmark"
         }

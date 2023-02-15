@@ -319,6 +319,8 @@ private struct DiskerCoreChecks {
         let home = "/Users/synthetic"
         let identifier = "com.example.Sample"
         let container = "\(home)/Library/Containers/\(identifier)"
+        let appSupport = "\(home)/Library/Application Support/\(identifier)"
+        let appCaches = "\(home)/Library/Caches/\(identifier)"
         let exact = ApplicationPathAttribution.classify(
             bundleIdentifier: identifier, associatedFolderPath: container,
             homeDirectoryPath: home
@@ -352,6 +354,15 @@ private struct DiskerCoreChecks {
 
         let groupIdentifier = "TEAMID.group.shared"
         let groupContainer = "\(home)/Library/Group Containers/\(groupIdentifier)"
+        for path in [appSupport, appCaches, appSupport + "-other"] {
+            let namedSupport = ApplicationPathAttribution.classify(
+                bundleIdentifier: identifier, associatedFolderPath: path,
+                homeDirectoryPath: home
+            )
+            try expect(namedSupport.evidence == (path.hasSuffix("-other")
+                ? .userSelectedOnly : .probableNamedSupportPathMatch),
+                "only exact bundle-ID directory names under conventional support/cache roots get weak name evidence")
+        }
         let exactSharedGroup = ApplicationPathAttribution.classify(
             bundleIdentifier: identifier,
             associatedFolderPath: groupContainer,
@@ -443,10 +454,12 @@ private struct DiskerCoreChecks {
             bundleIdentifier: identifier, homeDirectoryPath: home,
             claimedGroupIdentifiers: [groupIdentifier, groupIdentifier, "bad/group"]
         )
-        try expect(suggestions.map(\.path) == [container, groupContainer],
+        try expect(suggestions.map(\.path) == [container, appSupport, appCaches, groupContainer],
                    "app-data suggestions should be exact, deduplicated conventional paths")
         try expect(suggestions[0].evidence == .probableAppContainer
-                   && suggestions[1].evidence == .declaredSharedGroupClaim,
+                   && suggestions[1].evidence == .probableNamedSupportDirectory
+                   && suggestions[2].evidence == .probableNamedSupportDirectory
+                   && suggestions[3].evidence == .declaredSharedGroupClaim,
                    "suggested paths should retain probable and shared-claim evidence without overstating ownership")
         try expect(suggestions.allSatisfy({ $0.explanation.contains("not been checked")
                                            || $0.explanation.contains("shared by design") }),
@@ -458,15 +471,17 @@ private struct DiskerCoreChecks {
             signedBundleIdentifier: identifier
         )
         try expect(validatedSuggestions.map(\.evidence) == [
-            .validatedAppContainerIdentifier, .signatureCoveredSharedGroupClaim,
-        ], "matching local signature evidence should refine the candidate labels")
+            .validatedAppContainerIdentifier, .probableNamedSupportDirectory,
+            .probableNamedSupportDirectory, .signatureCoveredSharedGroupClaim,
+        ], "matching local signature evidence should refine only evidence it actually covers")
         let mismatchedSuggestions = ApplicationDataLocationCandidates.suggestions(
             bundleIdentifier: identifier, homeDirectoryPath: home,
             claimedGroupIdentifiers: [groupIdentifier], signatureValidated: true,
             signedBundleIdentifier: "com.example.Other"
         )
         try expect(mismatchedSuggestions.map(\.evidence) == [
-            .probableAppContainer, .declaredSharedGroupClaim,
+            .probableAppContainer, .probableNamedSupportDirectory,
+            .probableNamedSupportDirectory, .declaredSharedGroupClaim,
         ], "a mismatched signed ID must not strengthen suggested path evidence")
         try expect(ApplicationDataLocationCandidates.suggestions(
             bundleIdentifier: "../Other", homeDirectoryPath: home,

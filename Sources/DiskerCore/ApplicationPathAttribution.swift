@@ -112,6 +112,9 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
         /// The exact selected bundle ID matches macOS's per-app container path.
         /// Code-signing identity and exclusive use have not been checked.
         case probableContainerPathMatch
+        /// Exact directory-name match under conventional support/cache roots.
+        /// This weak clue does not establish ownership.
+        case probableNamedSupportPathMatch
         /// The user selected this relationship, but Disker found no known path evidence.
         case userSelectedOnly
     }
@@ -126,6 +129,7 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
         case .declaredSharedGroupContainerClaim: "Declared shared App Group path"
         case .validatedBundleIdentifierPathMatch: "Signed bundle identifier matches path"
         case .probableContainerPathMatch: "Probable app container path"
+        case .probableNamedSupportPathMatch: "Possible app data path · name match"
         case .userSelectedOnly: "User-selected association"
         }
     }
@@ -140,6 +144,8 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
             "The selected app's locally validated signature carries this bundle identifier, which matches this exact per-app container path. Current use and exclusive ownership are not established."
         case .probableContainerPathMatch:
             "This path matches the selected app's CFBundleIdentifier under ~/Library/Containers. Disker has not verified the app's signing identity or exclusive use of the data."
+        case .probableNamedSupportPathMatch:
+            "This path's exact directory name matches the selected app's CFBundleIdentifier under Application Support or Caches. This is a name match only; app ownership, current use, and exclusive use are not established."
         case .userSelectedOnly:
             "You selected this folder for the app. Disker found no verified ownership relationship; the folder may be shared or unrelated."
         }
@@ -186,6 +192,19 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
                     groupIdentifier: nil
                 )
             }
+            for directory in ["Application Support", "Caches"] {
+                let namedRoot = libraryRoot
+                    .appendingPathComponent(directory, isDirectory: true)
+                    .appendingPathComponent(bundleIdentifier, isDirectory: true)
+                    .standardizedFileURL.path
+                if isWithin(candidate, root: namedRoot) {
+                    return ApplicationPathAttribution(
+                        evidence: .probableNamedSupportPathMatch,
+                        bundleIdentifier: bundleIdentifier,
+                        groupIdentifier: nil
+                    )
+                }
+            }
         }
 
         return ApplicationPathAttribution(
@@ -222,6 +241,7 @@ public struct ApplicationDataLocationCandidate: Equatable, Sendable, Identifiabl
     public enum Evidence: Equatable, Sendable {
         case probableAppContainer
         case validatedAppContainerIdentifier
+        case probableNamedSupportDirectory
         case declaredSharedGroupClaim
         case signatureCoveredSharedGroupClaim
     }
@@ -236,6 +256,7 @@ public struct ApplicationDataLocationCandidate: Equatable, Sendable, Identifiabl
         switch evidence {
         case .probableAppContainer: "Probable per-app container path"
         case .validatedAppContainerIdentifier: "Validated identifier · per-app container path"
+        case .probableNamedSupportDirectory: "Possible app support or cache · name match"
         case .declaredSharedGroupClaim: "Declared App Group path · shared"
         case .signatureCoveredSharedGroupClaim: "Signature-covered App Group path · shared"
         }
@@ -247,6 +268,8 @@ public struct ApplicationDataLocationCandidate: Equatable, Sendable, Identifiabl
             "This is the standard path pattern for the selected bundle ID. Its presence, use, and exclusive ownership have not been checked."
         case .validatedAppContainerIdentifier:
             "The selected bundle's locally validated signature carries this identifier. The candidate path has not been checked for presence or exclusive use."
+        case .probableNamedSupportDirectory:
+            "The candidate directory name exactly matches the selected bundle ID under Application Support or Caches. This is only a naming clue; presence, app ownership, and exclusive use have not been checked."
         case .declaredSharedGroupClaim:
             "The selected bundle declares this App Group. The path is shared by design; signature validity and OS-granted access are not established."
         case .signatureCoveredSharedGroupClaim:
@@ -277,6 +300,16 @@ public enum ApplicationDataLocationCandidates {
             evidence: validatedIdentity ? .validatedAppContainerIdentifier : .probableAppContainer,
             identifier: bundleIdentifier
         )]
+
+        for directory in ["Application Support", "Caches"] {
+            candidates.append(ApplicationDataLocationCandidate(
+                path: libraryRoot.appendingPathComponent(directory, isDirectory: true)
+                    .appendingPathComponent(bundleIdentifier, isDirectory: true)
+                    .standardizedFileURL.path,
+                evidence: .probableNamedSupportDirectory,
+                identifier: bundleIdentifier
+            ))
+        }
 
         for groupIdentifier in Set(claimedGroupIdentifiers.filter {
             ApplicationPathAttribution.isValidBundleIdentifier($0)
