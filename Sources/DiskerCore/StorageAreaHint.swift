@@ -17,6 +17,9 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
     case carthageDependencies
     case simulatorData
     case dockerData
+    case modelDataDirectory
+    case datasetDirectory
+    case logDirectory
 
     public var title: String {
         switch self {
@@ -36,6 +39,9 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
         case .carthageDependencies: "Carthage dependencies · name match"
         case .simulatorData: "Simulator data · name match"
         case .dockerData: "Docker data · name match"
+        case .modelDataDirectory: "Model or checkpoint data · name match"
+        case .datasetDirectory: "Dataset directory · name match"
+        case .logDirectory: "Log directory · name match"
         }
     }
 
@@ -46,7 +52,8 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
         case .pythonEnvironment, .pythonBytecode: "curlybraces"
         case .gradleData, .mavenData, .cargoData, .buildOutputCandidate: "hammer"
         case .cocoaPodsDependencies, .carthageDependencies: "shippingbox"
-        case .simulatorData, .dockerData: "externaldrive"
+        case .simulatorData, .dockerData, .modelDataDirectory, .datasetDirectory: "externaldrive"
+        case .logDirectory: "doc.text"
         }
     }
 
@@ -71,6 +78,9 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
             case "Carthage": return .carthageDependencies
             case "CoreSimulator": return .simulatorData
             case "Docker": return .dockerData
+            case "models", "checkpoints", "checkpoint": return .modelDataDirectory
+            case "datasets", "dataset": return .datasetDirectory
+            case "logs": return .logDirectory
             default: continue
             }
         }

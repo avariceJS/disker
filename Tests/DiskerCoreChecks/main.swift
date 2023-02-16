@@ -1281,6 +1281,9 @@ private struct DiskerCoreChecks {
             ("ios/Carthage/Build", .carthageDependencies),
             ("Library/Developer/CoreSimulator/Devices", .simulatorData),
             ("Library/Containers/Docker/Data", .dockerData),
+            ("research/checkpoints", .modelDataDirectory),
+            ("training/datasets", .datasetDirectory),
+            ("service/logs", .logDirectory),
         ]
         for (path, expectedHint) in projectHints {
             try expect(StorageAreaHint.matching(relativePath: path) == expectedHint,
@@ -1294,6 +1297,8 @@ private struct DiskerCoreChecks {
                    "Git metadata should keep its dedicated marker and footprint presentation")
         try expect(StorageAreaHint.matchingDirectory(relativePath: "project/node_modules") == .javascriptDependencies,
                    "a directly named development folder should get an independent summary")
+        try expect(StorageAreaHint.matchingDirectory(relativePath: "research/checkpoints") == .modelDataDirectory,
+                   "a directly named model/checkpoint folder should become a separate candidate")
         try expect(StorageAreaHint.matchingDirectory(relativePath: "project/.build/debug") == nil,
                    "a recognized ancestor must not classify every descendant as an independent candidate")
     }
