@@ -2214,14 +2214,14 @@ struct DashboardView: View {
         for folder: FolderObservation, scanCancelled: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: 9) {
-            Label("Folders with direct Git markers", systemImage: "chevron.left.forwardslash.chevron.right")
+            Label("Project and development-data candidates", systemImage: "chevron.left.forwardslash.chevron.right")
                 .font(.subheadline.weight(.semibold))
-            Text("Each path contains a direct `.git` file or directory. These are repository-marker candidates, not verified project ownership. Folder totals overlap when paths are nested.")
+            Text("Entries have a direct `.git` marker or an exact development-data directory name. These are candidates, not verified project ownership or safe cleanup targets. Name matches do not inspect contents; nested folder totals overlap.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if folder.projectDirectorySummariesTruncated {
-                Text("Showing the 20 largest marker folders; additional paths were omitted.")
+                Text("Showing the 20 largest candidates; additional matching paths were omitted.")
                     .font(.caption2)
                     .foregroundStyle(.orange)
             }
@@ -2233,9 +2233,16 @@ struct DashboardView: View {
                             .font(.subheadline.weight(.medium))
                             .lineLimit(1)
                             .truncationMode(.middle)
-                        Label("Direct `.git` marker · name match", systemImage: "folder.badge.questionmark")
-                            .font(.caption2)
-                            .foregroundStyle(.blue)
+                        if directory.gitMetadataEntryDetected {
+                            Label("Direct `.git` marker · candidate", systemImage: "folder.badge.questionmark")
+                                .font(.caption2)
+                                .foregroundStyle(.blue)
+                        }
+                        if let hint = StorageAreaHint.matchingDirectory(relativePath: directory.rootRelativePath) {
+                            Label("\(hint.title) · exact directory-name match", systemImage: "tag")
+                                .font(.caption2)
+                                .foregroundStyle(.blue)
+                        }
                         HStack(spacing: 8) {
                             Text("Logical \(format(directory.logicalBytes))")
                             Text("Allocated ~\(format(directory.allocatedBytes))")

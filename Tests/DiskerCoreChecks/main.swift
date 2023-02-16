@@ -1292,6 +1292,10 @@ private struct DiskerCoreChecks {
                    "unrecognized directory names must remain unclassified")
         try expect(StorageAreaHint.matching(relativePath: "project/.git/objects") == nil,
                    "Git metadata should keep its dedicated marker and footprint presentation")
+        try expect(StorageAreaHint.matchingDirectory(relativePath: "project/node_modules") == .javascriptDependencies,
+                   "a directly named development folder should get an independent summary")
+        try expect(StorageAreaHint.matchingDirectory(relativePath: "project/.build/debug") == nil,
+                   "a recognized ancestor must not classify every descendant as an independent candidate")
     }
 
     private static func testFileArtifactHints() throws {
@@ -1374,14 +1378,21 @@ private struct DiskerCoreChecks {
                 try Data("synthetic".utf8).write(to: project.appendingPathComponent("main.swift"))
                 try Data().write(to: projectGit.appendingPathComponent("HEAD"))
             }
+            let buildOutput = root.appendingPathComponent(".build", isDirectory: true)
+            try FileManager.default.createDirectory(at: buildOutput, withIntermediateDirectories: false)
+            try Data(repeating: 0x42, count: 512).write(to: buildOutput.appendingPathComponent("module.o"))
             let folder = FolderScanner.scan(roots: [root]).folders[0]
             try expect(folder.subdirectorySummaries.count == 100 && folder.subdirectorySummariesTruncated, "the ordinary leaderboard should remain capped at 100 entries")
             try expect(!folder.subdirectorySummaries.contains(where: { $0.rootRelativePath == ".git" }), "small Git metadata may fall below the largest-folder cutoff")
             try expect(folder.gitMetadataUsage?.logicalBytes == 0, "the direct Git metadata measurement should survive outside the capped leaderboard")
             try expect(folder.projectDirectorySummaries.count == 20 && folder.projectDirectorySummariesTruncated,
-                       "nested Git-marker folders should have an independent 20-entry bounded summary")
-            try expect(folder.projectDirectorySummaries.allSatisfy(\.gitMetadataEntryDetected),
-                       "dedicated project summaries should retain direct Git marker evidence")
+                       "project and named development-data candidates should share an independent 20-entry summary")
+            try expect(folder.projectDirectorySummaries.contains(where: {
+                $0.rootRelativePath == ".build" && !$0.gitMetadataEntryDetected
+            }), "a named build-data folder should survive outside the ordinary 100 largest-folder cap")
+            try expect(folder.projectDirectorySummaries.allSatisfy({
+                $0.gitMetadataEntryDetected || StorageAreaHint.matchingDirectory(relativePath: $0.rootRelativePath) != nil
+            }), "dedicated project summaries should contain only direct Git markers or exact named-folder candidates")
             try expect(!folder.subdirectorySummaries.contains(where: { $0.rootRelativePath == "project-020" }),
                        "small repository folders should remain available even below the ordinary largest-folder cutoff")
             let restored = try JSONDecoder().decode(FolderObservation.self, from: JSONEncoder().encode(folder))

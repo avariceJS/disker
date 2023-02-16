@@ -133,7 +133,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     public let subdirectorySummaries: [DirectoryUsage]
     public let subdirectorySummariesTruncated: Bool
     /// Bounded summaries for nested directories with a direct non-symlink
-    /// `.git` directory or file entry, independent of the largest-folder cap.
+    /// `.git` entry or an exact recognized development-data directory name,
+    /// independent of the largest-folder cap.
     public let projectDirectorySummaries: [DirectoryUsage]
     public let projectDirectorySummariesTruncated: Bool
     /// Identifier read from the Info.plist of an explicitly selected app bundle.

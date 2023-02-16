@@ -76,4 +76,14 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
         }
         return nil
     }
+
+    /// Returns a hint only when the directory's own final component is a
+    /// recognized name. Unlike `matching(relativePath:)`, ancestors do not
+    /// cause every descendant to become an independent candidate.
+    public static func matchingDirectory(relativePath: String) -> StorageAreaHint? {
+        guard let component = relativePath.split(separator: "/", omittingEmptySubsequences: true).last else {
+            return nil
+        }
+        return matching(relativePath: String(component))
+    }
 }

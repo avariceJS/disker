@@ -420,7 +420,10 @@ public enum FolderScanner {
                 return utf8LessThan($0.rootRelativePath, $1.rootRelativePath)
             }
             let wasTruncated = summaries.count > maximumDirectorySummaries
-            let projectSummaries = summaries.filter(\.gitMetadataEntryDetected)
+            let projectSummaries = summaries.filter {
+                $0.gitMetadataEntryDetected
+                    || StorageAreaHint.matchingDirectory(relativePath: $0.rootRelativePath) != nil
+            }
             // Keep the direct repository metadata component independently of
             // the leaderboard cap; `.git` itself remains an explicitly
             // selected-root-relative measurement, not proof of project ownership.
