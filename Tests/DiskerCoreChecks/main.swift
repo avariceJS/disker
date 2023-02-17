@@ -1305,7 +1305,8 @@ private struct DiskerCoreChecks {
 
     private static func testFileArtifactHints() throws {
         let examples: [(String, FileArtifactHint)] = [
-            ("sqlite", .database), ("sqlite-wal", .database), ("db", .database),
+            ("sqlite", .database), ("sqlite-wal", .database), ("sqlite3-journal", .database),
+            ("db", .database), ("db-wal", .database), ("db-shm", .database),
             ("log", .log), ("dmg", .archiveOrInstaller), ("zip", .archiveOrInstaller),
             ("gguf", .modelOrCheckpoint), ("safetensors", .modelOrCheckpoint),
             ("parquet", .structuredData), ("jsonl", .structuredData),

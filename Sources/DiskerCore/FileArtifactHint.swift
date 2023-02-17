@@ -21,7 +21,10 @@ public enum FileArtifactHint: String, CaseIterable, Sendable {
 
     public static func matching(extensionName: String) -> FileArtifactHint? {
         switch extensionName.lowercased() {
-        case "db", "sqlite", "sqlite3", "sqlite-wal", "sqlite-shm": .database
+        case "db", "sqlite", "sqlite3",
+             "db-wal", "db-shm", "db-journal",
+             "sqlite-wal", "sqlite-shm", "sqlite-journal",
+             "sqlite3-wal", "sqlite3-shm", "sqlite3-journal": .database
         case "log": .log
         case "zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "dmg", "pkg": .archiveOrInstaller
         case "gguf", "safetensors", "onnx", "pt", "pth", "ckpt", "model": .modelOrCheckpoint
