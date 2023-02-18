@@ -1996,6 +1996,38 @@ private struct DiskerCoreChecks {
                    && projectGrowth[0].growthBytes == 25,
                    "repository-marker summaries omitted from the ordinary leaderboard should still support growth history")
 
+        let oldModelData = DirectoryUsage(
+            rootRelativePath: "research/checkpoints", logicalBytes: 80,
+            allocatedBytes: 64, fileCount: 2, incompleteCount: 0,
+            excludedSymlinkCount: 0, gitMetadataEntryDetected: false, complete: true
+        )
+        let newModelData = DirectoryUsage(
+            rootRelativePath: "research/checkpoints", logicalBytes: 180,
+            allocatedBytes: 128, fileCount: 3, incompleteCount: 0,
+            excludedSymlinkCount: 0, gitMetadataEntryDetected: false, complete: true
+        )
+        let oldDataFolder = FolderObservation(
+            id: UUID(), path: "/selected-data", displayName: "selected-data",
+            logicalBytes: 80, allocatedBytes: 64, fileCount: 2,
+            inaccessibleCount: 0, complete: true,
+            projectDirectorySummaries: [oldModelData]
+        )
+        let newDataFolder = FolderObservation(
+            id: UUID(), path: "/selected-data", displayName: "selected-data",
+            logicalBytes: 180, allocatedBytes: 128, fileCount: 3,
+            inaccessibleCount: 0, complete: true,
+            projectDirectorySummaries: [newModelData]
+        )
+        let dataHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: .now, folders: [oldDataFolder], cancelled: false),
+            ScanObservation(startedAt: .now, folders: [newDataFolder], cancelled: false),
+        ])
+        let dataGrowth = ObservationComparison.growingDirectories(in: dataHistory)
+        try expect(dataGrowth.count == 1
+                   && dataGrowth[0].directory.rootRelativePath == "research/checkpoints"
+                   && dataGrowth[0].growthBytes == 64,
+                   "exact-name model-data candidates should participate in same-path complete growth comparisons without Git markers")
+
         let completeWithoutPath = folderWithDirectory(
             id: UUID(), path: "/selected", bytes: 200, complete: true,
             directory: directory("Projects/Other", bytes: 200, complete: true)
