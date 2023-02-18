@@ -111,7 +111,6 @@ public enum FolderScanner {
             defer {
                 if accessGranted { root.stopAccessingSecurityScopedResource() }
             }
-
             var rootMetadata = stat()
             guard root.path.withCString({ lstat($0, &rootMetadata) }) == 0 else {
                 results.append(emptyObservation(root: root, inaccessibleCount: 1))
@@ -125,6 +124,7 @@ public enum FolderScanner {
                 results.append(emptyObservation(root: root, excludedSymlinkCount: 1))
                 continue
             }
+            let rootVolumeDeviceID = UInt64(truncatingIfNeeded: rootMetadata.st_dev)
 
             var linkedFilesByIdentity: [FileIdentity: FileRecord] = [:]
             // Keep the scanner's prior identity-only dedup set. Path-bearing
@@ -148,7 +148,7 @@ public enum FolderScanner {
 
             if rootType != S_IFDIR {
                 guard rootType == S_IFREG else {
-                    results.append(emptyObservation(root: root, excludedSpecialFileCount: 1))
+                    results.append(emptyObservation(root: root, volumeDeviceID: rootVolumeDeviceID, excludedSpecialFileCount: 1))
                     continue
                 }
                 let file = fileRecord(metadata: rootMetadata, relativePath: root.lastPathComponent, parentPath: "")
@@ -167,18 +167,18 @@ public enum FolderScanner {
                     open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
                 }
                 guard rootFD >= 0 else {
-                    results.append(emptyObservation(root: root, inaccessibleCount: 1))
+                    results.append(emptyObservation(root: root, volumeDeviceID: rootVolumeDeviceID, inaccessibleCount: 1))
                     continue
                 }
                 defer { close(rootFD) }
 
                 var openedRootMetadata = stat()
                 guard fstat(rootFD, &openedRootMetadata) == 0 else {
-                    results.append(emptyObservation(root: root, inaccessibleCount: 1))
+                    results.append(emptyObservation(root: root, volumeDeviceID: rootVolumeDeviceID, inaccessibleCount: 1))
                     continue
                 }
                 guard sameIdentity(rootMetadata, openedRootMetadata) else {
-                    results.append(emptyObservation(root: root, changedDuringScanCount: 1))
+                    results.append(emptyObservation(root: root, volumeDeviceID: rootVolumeDeviceID, changedDuringScanCount: 1))
                     continue
                 }
 
@@ -459,31 +459,62 @@ public enum FolderScanner {
                 fileCount: omittedFileCount
             )
 
-            results.append(FolderObservation(
+            if rootType == S_IFDIR {
+                var finalRootMetadata = stat()
+                let finalRootResult = root.path.withCString { lstat($0, &finalRootMetadata) }
+                if finalRootResult == 0 {
+                    if !sameIdentity(rootMetadata, finalRootMetadata) {
+                        scanComplete = false
+                        var rootMetrics = metrics["", default: DirectoryMetrics()]
+                        rootMetrics.changedDuringScanCount += 1
+                        metrics[""] = rootMetrics
+                    }
+                } else if errno == ENOENT || errno == ENOTDIR || errno == ELOOP {
+                    scanComplete = false
+                    var rootMetrics = metrics["", default: DirectoryMetrics()]
+                    rootMetrics.changedDuringScanCount += 1
+                    metrics[""] = rootMetrics
+                } else {
+                    scanComplete = false
+                    inaccessibleCount += 1
+                    var rootMetrics = metrics["", default: DirectoryMetrics()]
+                    rootMetrics.incompleteCount += 1
+                    metrics[""] = rootMetrics
+                }
+            }
+
+            let folderComplete = scanComplete && !accountingOverflow && inaccessibleCount == 0
+                && excludedSymlinkCount == 0 && excludedSpecialFileCount == 0
+                && metrics[""]?.changedDuringScanCount == 0
+            let retainedExtensions = Array(rankedExtensions.prefix(maximumFileExtensionSummaries))
+            let retainedSubdirectories = Array(summaries.prefix(maximumDirectorySummaries))
+            let retainedProjectDirectories = Array(projectSummaries.prefix(maximumProjectDirectorySummaries))
+            let rootMetrics = metrics["", default: DirectoryMetrics()]
+            let folderResult = FolderObservation(
                 path: root.path,
+                volumeDeviceID: rootVolumeDeviceID,
                 displayName: root.lastPathComponent,
                 logicalBytes: rootLogicalBytes,
                 allocatedBytes: rootAllocatedBytes,
                 fileCount: rootFileCount,
-                fileExtensionSummaries: Array(rankedExtensions.prefix(maximumFileExtensionSummaries)),
+                fileExtensionSummaries: retainedExtensions,
                 fileExtensionSummariesTruncated: rankedExtensions.count > maximumFileExtensionSummaries,
                 otherFileExtensionUsage: otherExtensionUsage,
                 otherFileExtensionCategoryCount: max(0, rankedExtensions.count - maximumFileExtensionSummaries),
                 inaccessibleCount: inaccessibleCount,
-                complete: scanComplete && !accountingOverflow && inaccessibleCount == 0 && excludedSymlinkCount == 0
-                    && excludedSpecialFileCount == 0
-                    && metrics[""]?.changedDuringScanCount == 0,
+                complete: folderComplete,
                 excludedSymlinkCount: excludedSymlinkCount,
                 excludedSpecialFileCount: excludedSpecialFileCount,
-                changedDuringScanCount: metrics[""]?.changedDuringScanCount ?? 0,
+                changedDuringScanCount: rootMetrics.changedDuringScanCount,
                 byteAccountingOverflowed: accountingOverflow,
-                gitMetadataEntryDetected: metrics[""]?.gitMetadataEntryDetected ?? false,
+                gitMetadataEntryDetected: rootMetrics.gitMetadataEntryDetected,
                 gitMetadataUsage: gitMetadataUsage,
-                subdirectorySummaries: Array(summaries.prefix(maximumDirectorySummaries)),
+                subdirectorySummaries: retainedSubdirectories,
                 subdirectorySummariesTruncated: wasTruncated,
-                projectDirectorySummaries: Array(projectSummaries.prefix(maximumProjectDirectorySummaries)),
+                projectDirectorySummaries: retainedProjectDirectories,
                 projectDirectorySummariesTruncated: projectSummaries.count > maximumProjectDirectorySummaries
-            ))
+            )
+            results.append(folderResult)
 
             if let selectedFileMetadata {
                 selectedFileRoots.append((results.count - 1, root, selectedFileMetadata))
@@ -519,7 +550,7 @@ public enum FolderScanner {
 
     private static func markingChangedDuringScan(_ folder: FolderObservation) -> FolderObservation {
         FolderObservation(
-            id: folder.id, path: folder.path, displayName: folder.displayName,
+            id: folder.id, path: folder.path, volumeDeviceID: folder.volumeDeviceID, displayName: folder.displayName,
             logicalBytes: folder.logicalBytes, allocatedBytes: folder.allocatedBytes, fileCount: folder.fileCount,
             fileExtensionSummaries: folder.fileExtensionSummaries,
             fileExtensionSummariesTruncated: folder.fileExtensionSummariesTruncated,
@@ -544,7 +575,7 @@ public enum FolderScanner {
 
     private static func markingInaccessible(_ folder: FolderObservation) -> FolderObservation {
         FolderObservation(
-            id: folder.id, path: folder.path, displayName: folder.displayName,
+            id: folder.id, path: folder.path, volumeDeviceID: folder.volumeDeviceID, displayName: folder.displayName,
             logicalBytes: folder.logicalBytes, allocatedBytes: folder.allocatedBytes, fileCount: folder.fileCount,
             fileExtensionSummaries: folder.fileExtensionSummaries,
             fileExtensionSummariesTruncated: folder.fileExtensionSummariesTruncated,
@@ -588,11 +619,11 @@ public enum FolderScanner {
     }
 
     private static func emptyObservation(
-        root: URL, inaccessibleCount: Int = 0, excludedSymlinkCount: Int = 0,
+        root: URL, volumeDeviceID: UInt64? = nil, inaccessibleCount: Int = 0, excludedSymlinkCount: Int = 0,
         excludedSpecialFileCount: Int = 0, changedDuringScanCount: Int = 0
     ) -> FolderObservation {
         FolderObservation(
-            path: root.path,
+            path: root.path, volumeDeviceID: volumeDeviceID,
             displayName: root.lastPathComponent,
             logicalBytes: 0,
             allocatedBytes: 0,

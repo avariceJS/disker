@@ -72,6 +72,7 @@ private struct DiskerCoreChecks {
             ("selected file root mutation remains partial", testSelectedFileRootMutationCoverage),
             ("scan progress callback", testScanProgressCallback),
             ("directory mutations make coverage partial", testDirectoryMutationCoverage),
+            ("selected directory root mutations make coverage partial", testSelectedDirectoryRootMutationCoverage),
             ("file mutations during enumeration make coverage partial", testFileMutationCoverage),
             ("cancellation preserves partial coverage", testCancellationPreservesPartialCoverage),
         ]
@@ -942,6 +943,12 @@ private struct DiskerCoreChecks {
 
             let result = FolderScanner.scan(roots: [root])
             try expect(result.folders.count == 1, "one selected root should yield one result")
+            var rootMetadata = stat()
+            try expect(root.path.withCString({ lstat($0, &rootMetadata) }) == 0,
+                       "selected root should remain available for volume metadata validation")
+            let expectedVolumeDeviceID = UInt64(truncatingIfNeeded: rootMetadata.st_dev)
+            try expect(result.folders[0].volumeDeviceID == expectedVolumeDeviceID,
+                       "folder observations should retain the selected root's no-follow device identity")
             try expect(result.folders[0].logicalBytes == Int64(data.count + 1024), "nested files should count while symlink targets remain excluded")
             try expect(result.folders[0].fileCount == 2, "both regular files should be counted once")
             try expect(result.folders[0].excludedSymlinkCount == 2, "root coverage should count nested symlinks separately")
@@ -1450,6 +1457,7 @@ private struct DiskerCoreChecks {
         guard let folder = history.observations.first?.folders.first else {
             throw CheckFailure.assertion("old history JSON should decode one folder")
         }
+        try expect(folder.volumeDeviceID == nil, "legacy folder history should default to unknown volume identity")
         try expect(folder.excludedSymlinkCount == 0, "old folder history should default symlink count to zero")
         try expect(folder.excludedSpecialFileCount == 0, "old folder history should default special-file count to zero")
         try expect(folder.changedDuringScanCount == 0, "old folder history should default mutation count to zero")
@@ -1535,6 +1543,8 @@ private struct DiskerCoreChecks {
             try expect(!result.folders[0].complete, "selected symlink must not appear as a complete zero-byte scan")
             try expect(result.folders[0].inaccessibleCount == 0, "excluded symlink root should not look like a metadata access failure")
             try expect(result.folders[0].excludedSymlinkCount == 1, "selected symlink root should be separately counted")
+            try expect(result.folders[0].volumeDeviceID == nil,
+                       "selected symlinks must not trigger volume identity lookup on their targets")
         }
     }
 
@@ -1780,6 +1790,21 @@ private struct DiskerCoreChecks {
         try expect(ObservationComparison.allocatedByteDelta(current: current, previous: earlierComplete) == 35, "allocated-size delta should use the matching complete path")
         let otherPath = syntheticFolder(path: "/other", bytes: 135, complete: true)
         try expect(ObservationComparison.allocatedByteDelta(current: current, previous: otherPath) == nil, "different paths must not be compared")
+        let volumeAFirst = syntheticFolder(path: "/Volumes/Data/project", bytes: 100, complete: true, volumeDeviceID: 101)
+        let volumeB = syntheticFolder(path: "/Volumes/Data/project", bytes: 900, complete: true, volumeDeviceID: 202)
+        let volumeAReturned = syntheticFolder(path: "/Volumes/Data/project", bytes: 150, complete: true, volumeDeviceID: 101)
+        let volumeHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: .now, folders: [volumeAFirst], cancelled: false),
+            ScanObservation(startedAt: .now, folders: [volumeB], cancelled: false),
+            ScanObservation(startedAt: .now, folders: [volumeAReturned], cancelled: false),
+        ])
+        try expect(ObservationComparison.previousCompleteFolder(for: volumeAReturned, in: volumeHistory) == nil,
+                   "a different immediately preceding volume must not be selected as a prior folder observation")
+        try expect(ObservationComparison.allocatedByteDelta(current: volumeAReturned, previous: volumeB) == nil,
+                   "the same path on a different or reattached volume must not be compared")
+        try expect(ObservationComparison.completeFolderSeries(for: volumeAReturned, in: volumeHistory).map(\.id)
+                   == [volumeAReturned.id],
+                   "folder history must start a new series after the mounted volume identity changes")
         try expect(ObservationComparison.previousCompleteFolder(for: laterIncomplete, in: history) == nil, "incomplete current observations must not produce a growth comparison")
         try expect(ObservationComparison.completeFolderSeries(for: laterIncomplete, in: history).isEmpty,
                    "an incomplete current observation must not be plotted as a complete growth series")
@@ -2079,9 +2104,12 @@ private struct DiskerCoreChecks {
         )
     }
 
-    private static func syntheticFolder(path: String, bytes: Int64, complete: Bool) -> FolderObservation {
+    private static func syntheticFolder(
+        path: String, bytes: Int64, complete: Bool, volumeDeviceID: UInt64? = nil
+    ) -> FolderObservation {
         FolderObservation(
-            path: path, displayName: URL(fileURLWithPath: path).lastPathComponent,
+            path: path, volumeDeviceID: volumeDeviceID,
+            displayName: URL(fileURLWithPath: path).lastPathComponent,
             logicalBytes: bytes, allocatedBytes: bytes, fileCount: 1,
             inaccessibleCount: complete ? 0 : 1, complete: complete
         )
@@ -2186,6 +2214,32 @@ private struct DiskerCoreChecks {
             try expect(changedDirectory, "fixture should mutate the directory during the scan")
             try expect(!folder.complete, "a directory that changes while being enumerated must not look like a complete snapshot")
             try expect(folder.changedDuringScanCount > 0, "the changed directory should have an explicit coverage count")
+        }
+    }
+
+    private static func testSelectedDirectoryRootMutationCoverage() throws {
+        try withTemporaryDirectory { temporaryRoot in
+            let selectedRoot = temporaryRoot.appendingPathComponent("selected-root", isDirectory: true)
+            let movedRoot = temporaryRoot.appendingPathComponent("moved-root", isDirectory: true)
+            try FileManager.default.createDirectory(at: selectedRoot, withIntermediateDirectories: false)
+            for index in 0..<256 {
+                try Data([UInt8(index % 255)]).write(
+                    to: selectedRoot.appendingPathComponent(String(format: "file-%03d.bin", index))
+                )
+            }
+            var rootReplaced = false
+            let result = FolderScanner.scan(roots: [selectedRoot], progress: { _ in
+                guard !rootReplaced else { return }
+                rootReplaced = true
+                try? FileManager.default.moveItem(at: selectedRoot, to: movedRoot)
+                try? FileManager.default.createDirectory(at: selectedRoot, withIntermediateDirectories: false)
+            })
+            guard let folder = result.folders.first else {
+                throw CheckFailure.assertion("replaced root fixture should produce a folder observation")
+            }
+            try expect(rootReplaced, "fixture should replace the selected root during its scan")
+            try expect(!folder.complete && folder.changedDuringScanCount > 0,
+                       "a selected directory replaced during enumeration must not look like a complete snapshot")
         }
     }
 

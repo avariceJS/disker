@@ -417,9 +417,27 @@ final class DashboardModel {
     }
 
     func directoryHistoryLabel(for folder: FolderObservation) -> String {
-        previousCompleteObservation(for: folder) == nil
-            ? "First complete observation"
-            : "No comparable prior retained path"
+        if previousCompleteObservation(for: folder) != nil {
+            return "No comparable prior retained path"
+        }
+        guard let currentIndex = history.observations.firstIndex(where: { observation in
+            observation.folders.contains(where: { $0.id == folder.id })
+        }) else { return "First complete observation" }
+        let earlierComplete = history.observations[..<currentIndex].reversed().lazy
+            .compactMap { observation in
+                observation.folders.first(where: { $0.path == folder.path && $0.complete })
+            }
+            .first
+        guard let earlierComplete else { return "First complete observation" }
+        if let previousDeviceID = earlierComplete.volumeDeviceID,
+           let currentDeviceID = folder.volumeDeviceID,
+           previousDeviceID != currentDeviceID {
+            return "Mounted volume changed; comparison unavailable"
+        }
+        if earlierComplete.volumeDeviceID == nil || folder.volumeDeviceID == nil {
+            return "Volume identity unavailable; comparison omitted"
+        }
+        return "No comparable prior retained path"
     }
 
     func previousCompleteDirectory(
@@ -2036,7 +2054,7 @@ struct DashboardView: View {
                                         .foregroundStyle(.secondary)
                                 }
                             } else if folder.complete {
-                                Text("First complete observation")
+                                Text(model.directoryHistoryLabel(for: folder))
                                     .foregroundStyle(.secondary)
                             }
                         }

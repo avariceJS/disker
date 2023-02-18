@@ -106,6 +106,10 @@ public struct FileExtensionUsage: Codable, Equatable, Identifiable, Sendable {
 public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     public let id: UUID
     public let path: String
+    /// Device identifier from lstat on the selected root. It never follows a
+    /// symlink and prevents history from crossing a different mounted volume
+    /// at the same path while this identifier remains stable.
+    public let volumeDeviceID: UInt64?
     public let displayName: String
     public let logicalBytes: Int64
     public let allocatedBytes: Int64
@@ -147,7 +151,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     public let applicationSignedBundleIdentifier: String?
 
     public init(
-        id: UUID = UUID(), path: String, displayName: String,
+        id: UUID = UUID(), path: String, volumeDeviceID: UInt64? = nil, displayName: String,
         logicalBytes: Int64, allocatedBytes: Int64, fileCount: Int,
         fileExtensionSummaries: [FileExtensionUsage] = [],
         fileExtensionSummariesTruncated: Bool = false,
@@ -171,6 +175,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     ) {
         self.id = id
         self.path = path
+        self.volumeDeviceID = volumeDeviceID
         self.displayName = displayName
         self.logicalBytes = logicalBytes
         self.allocatedBytes = allocatedBytes
@@ -199,7 +204,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, path, displayName, logicalBytes, allocatedBytes, fileCount
+        case id, path, volumeDeviceID, displayName, logicalBytes, allocatedBytes, fileCount
         case fileExtensionSummaries, fileExtensionSummariesTruncated
         case otherFileExtensionUsage, otherFileExtensionCategoryCount
         case inaccessibleCount, excludedSymlinkCount, excludedSpecialFileCount
@@ -216,6 +221,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
         path = try values.decode(String.self, forKey: .path)
+        volumeDeviceID = try values.decodeIfPresent(UInt64.self, forKey: .volumeDeviceID)
         displayName = try values.decode(String.self, forKey: .displayName)
         logicalBytes = try values.decode(Int64.self, forKey: .logicalBytes)
         allocatedBytes = try values.decode(Int64.self, forKey: .allocatedBytes)
@@ -247,6 +253,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         var values = encoder.container(keyedBy: CodingKeys.self)
         try values.encode(id, forKey: .id)
         try values.encode(path, forKey: .path)
+        try values.encodeIfPresent(volumeDeviceID, forKey: .volumeDeviceID)
         try values.encode(displayName, forKey: .displayName)
         try values.encode(logicalBytes, forKey: .logicalBytes)
         try values.encode(allocatedBytes, forKey: .allocatedBytes)
@@ -276,7 +283,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
 
     public func includingApplicationBundleIdentity(_ identity: ApplicationBundleIdentity) -> FolderObservation {
         FolderObservation(
-            id: id, path: path, displayName: displayName,
+            id: id, path: path, volumeDeviceID: volumeDeviceID, displayName: displayName,
             logicalBytes: logicalBytes, allocatedBytes: allocatedBytes,
             fileCount: fileCount, fileExtensionSummaries: fileExtensionSummaries,
             fileExtensionSummariesTruncated: fileExtensionSummariesTruncated,

@@ -139,6 +139,16 @@ public enum ObservationComparison {
         }
     }
 
+    private static func sameFolderVolume(
+        _ lhs: FolderObservation, _ rhs: FolderObservation
+    ) -> Bool {
+        switch (lhs.volumeDeviceID, rhs.volumeDeviceID) {
+        case let (left?, right?): return left == right
+        case (nil, nil): return true
+        default: return false
+        }
+    }
+
     /// Complete observations of the same selected root through the specified
     /// current result. Partial scans and future observations are excluded.
     public static func completeFolderSeries(
@@ -149,10 +159,16 @@ public enum ObservationComparison {
                   observation.folders.contains(where: { $0.id == current.id })
               }) else { return [] }
 
-        let prior = history.observations[..<currentIndex].compactMap { observation in
-            observation.folders.first(where: { $0.path == current.path && $0.complete })
+        var prior: [FolderObservation] = []
+        for observation in history.observations[..<currentIndex].reversed() {
+            guard let candidate = observation.folders.first(where: { $0.path == current.path }) else {
+                continue
+            }
+            guard candidate.complete else { continue }
+            guard sameFolderVolume(candidate, current) else { break }
+            prior.append(candidate)
         }
-        return Array((prior + [current]).suffix(24))
+        return Array((prior.reversed() + [current]).suffix(24))
     }
 
     public static func previousCompleteFolder(
@@ -165,13 +181,15 @@ public enum ObservationComparison {
               })
         else { return nil }
 
-        return history.observations[..<currentIndex].reversed().lazy
+        let previous = history.observations[..<currentIndex].reversed().lazy
             .compactMap { observation in
                 observation.folders.first(where: {
                     $0.path == current.path && $0.complete
                 })
             }
             .first
+        guard let previous, sameFolderVolume(previous, current) else { return nil }
+        return previous
     }
 
     /// Positive allocated-byte changes for the latest complete observation of
@@ -323,7 +341,8 @@ public enum ObservationComparison {
         current: FolderObservation,
         previous: FolderObservation
     ) -> Int64? {
-        guard current.complete, previous.complete, current.path == previous.path else { return nil }
+        guard current.complete, previous.complete, current.path == previous.path,
+              sameFolderVolume(current, previous) else { return nil }
         let (delta, overflow) = current.allocatedBytes.subtractingReportingOverflow(previous.allocatedBytes)
         return overflow ? nil : delta
     }
@@ -349,6 +368,8 @@ public enum ObservationComparison {
             })
             .first
         else { return nil }
+
+        guard sameFolderVolume(folder, previousFolder) else { return nil }
 
         return previousFolder.projectDirectorySummaries.first(where: {
             $0.rootRelativePath == current.rootRelativePath && $0.complete
