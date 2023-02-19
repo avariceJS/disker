@@ -432,7 +432,7 @@ final class DashboardModel {
         if let previousDeviceID = earlierComplete.volumeDeviceID,
            let currentDeviceID = folder.volumeDeviceID,
            previousDeviceID != currentDeviceID {
-            return "Mounted volume changed; comparison unavailable"
+            return "Volume identity changed; comparison unavailable"
         }
         if earlierComplete.volumeDeviceID == nil || folder.volumeDeviceID == nil {
             return "Volume identity unavailable; comparison omitted"
