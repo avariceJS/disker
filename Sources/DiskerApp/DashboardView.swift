@@ -434,8 +434,11 @@ final class DashboardModel {
            previousDeviceID != currentDeviceID {
             return "Volume identity changed; comparison unavailable"
         }
-        if earlierComplete.volumeDeviceID == nil || folder.volumeDeviceID == nil {
-            return "Volume identity unavailable; comparison omitted"
+        if earlierComplete.volumeDeviceID == nil, folder.volumeDeviceID != nil {
+            return "Earlier volume identity unavailable; comparison omitted"
+        }
+        if earlierComplete.volumeDeviceID != nil, folder.volumeDeviceID == nil {
+            return "Current volume identity unavailable; comparison omitted"
         }
         return "No comparable prior retained path"
     }
