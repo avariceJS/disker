@@ -23,6 +23,9 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
     case xcodeArchives
     case xcodeArchiveBundle
     case debugSymbols
+    case webBuildOutput
+    case webBuildCache
+    case testCoverageOutput
 
     public var title: String {
         switch self {
@@ -48,6 +51,9 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
         case .xcodeArchives: "Xcode archives directory · name match"
         case .xcodeArchiveBundle: "Xcode archive bundle · name match"
         case .debugSymbols: "Debug symbols · name match"
+        case .webBuildOutput: "Web build output · name match"
+        case .webBuildCache: "Web build cache · name match"
+        case .testCoverageOutput: "Test coverage output · name match"
         }
     }
 
@@ -62,6 +68,8 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
              .xcodeArchiveBundle: "externaldrive"
         case .logDirectory: "doc.text"
         case .debugSymbols: "hammer"
+        case .webBuildOutput, .testCoverageOutput: "hammer"
+        case .webBuildCache: "shippingbox"
         }
     }
 
@@ -93,6 +101,9 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
             case let component where component.hasSuffix(".xcarchive"): return .xcodeArchiveBundle
             case "dSYMs": return .debugSymbols
             case let component where component.hasSuffix(".dSYM"): return .debugSymbols
+            case "dist", "build", "out", ".next", ".nuxt": return .webBuildOutput
+            case ".turbo": return .webBuildCache
+            case "coverage": return .testCoverageOutput
             default: continue
             }
         }

@@ -1294,6 +1294,9 @@ private struct DiskerCoreChecks {
             ("Library/Developer/Xcode/Archives", .xcodeArchives),
             ("archive/App.xcarchive", .xcodeArchiveBundle),
             ("App.dSYM", .debugSymbols),
+            ("web/.next", .webBuildOutput),
+            ("web/.turbo", .webBuildCache),
+            ("web/coverage", .testCoverageOutput),
         ]
         for (path, expectedHint) in projectHints {
             try expect(StorageAreaHint.matching(relativePath: path) == expectedHint,
@@ -1311,6 +1314,8 @@ private struct DiskerCoreChecks {
                    "a directly named model/checkpoint folder should become a separate candidate")
         try expect(StorageAreaHint.matchingDirectory(relativePath: "archive/App.xcarchive") == .xcodeArchiveBundle,
                    "an Xcode archive bundle should become a separate candidate")
+        try expect(StorageAreaHint.matchingDirectory(relativePath: "web/dist") == .webBuildOutput,
+                   "a directly named web build output should become a separate candidate")
         try expect(StorageAreaHint.matchingDirectory(relativePath: "project/.build/debug") == nil,
                    "a recognized ancestor must not classify every descendant as an independent candidate")
     }
