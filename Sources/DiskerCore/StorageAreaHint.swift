@@ -20,6 +20,9 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
     case modelDataDirectory
     case datasetDirectory
     case logDirectory
+    case xcodeArchives
+    case xcodeArchiveBundle
+    case debugSymbols
 
     public var title: String {
         switch self {
@@ -42,6 +45,9 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
         case .modelDataDirectory: "Model or checkpoint data · name match"
         case .datasetDirectory: "Dataset directory · name match"
         case .logDirectory: "Log directory · name match"
+        case .xcodeArchives: "Xcode archives directory · name match"
+        case .xcodeArchiveBundle: "Xcode archive bundle · name match"
+        case .debugSymbols: "Debug symbols · name match"
         }
     }
 
@@ -52,8 +58,10 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
         case .pythonEnvironment, .pythonBytecode: "curlybraces"
         case .gradleData, .mavenData, .cargoData, .buildOutputCandidate: "hammer"
         case .cocoaPodsDependencies, .carthageDependencies: "shippingbox"
-        case .simulatorData, .dockerData, .modelDataDirectory, .datasetDirectory: "externaldrive"
+        case .simulatorData, .dockerData, .modelDataDirectory, .datasetDirectory, .xcodeArchives,
+             .xcodeArchiveBundle: "externaldrive"
         case .logDirectory: "doc.text"
+        case .debugSymbols: "hammer"
         }
     }
 
@@ -81,6 +89,10 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
             case "models", "checkpoints", "checkpoint": return .modelDataDirectory
             case "datasets", "dataset": return .datasetDirectory
             case "logs": return .logDirectory
+            case "Archives": return .xcodeArchives
+            case let component where component.hasSuffix(".xcarchive"): return .xcodeArchiveBundle
+            case "dSYMs": return .debugSymbols
+            case let component where component.hasSuffix(".dSYM"): return .debugSymbols
             default: continue
             }
         }
