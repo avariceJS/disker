@@ -1852,40 +1852,47 @@ struct DashboardView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("RAM history")
                             .font(.title3.weight(.semibold))
-                        Text("Free and compressed pages, plus swap use when macOS reports it, across your last 24 manual or automatic samples. These snapshots are not a memory-pressure or leak diagnosis.")
+                        let allRAMSamples = model.history.ramObservations
+                        let latestRAMDate = allRAMSamples.last?.observedAt ?? .now
+                        let ramSamples = allRAMSamples.filter {
+                            historyChartRange.includes($0.observedAt, relativeTo: latestRAMDate)
+                        }
+                        historyRangePicker
+                        Text("Free and compressed pages, plus reported swap use, across \(ramSamples.count) samples in the selected \(historyChartRange.title.lowercased()) range. Sampling follows the manual or active-session setting above; gaps mean no observation. This is not a pressure or leak diagnosis.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
-                        Chart(Array(model.history.ramObservations.suffix(24)), id: \.observedAt) { sample in
-                            LineMark(
-                                x: .value("Sample time", sample.observedAt),
-                                y: .value("MiB", Double(sample.freeBytes) / 1_048_576),
-                                series: .value("Metric", "Free pages")
-                            )
-                            .foregroundStyle(by: .value("Metric", "Free pages"))
-                            LineMark(
-                                x: .value("Sample time", sample.observedAt),
-                                y: .value("MiB", Double(sample.compressedBytes) / 1_048_576),
-                                series: .value("Metric", "Compressed pages")
-                            )
-                            .foregroundStyle(by: .value("Metric", "Compressed pages"))
-                            if let swap = sample.swapUsage {
+                        if ramSamples.count > 1 {
+                            Chart(ramSamples, id: \.observedAt) { sample in
                                 LineMark(
                                     x: .value("Sample time", sample.observedAt),
-                                    y: .value("MiB", Double(swap.usedBytes) / 1_048_576),
-                                    series: .value("Metric", "Swap used")
+                                    y: .value("MiB", Double(sample.freeBytes) / 1_048_576),
+                                    series: .value("Metric", "Free pages")
                                 )
-                                .foregroundStyle(by: .value("Metric", "Swap used"))
+                                .foregroundStyle(by: .value("Metric", "Free pages"))
+                                LineMark(
+                                    x: .value("Sample time", sample.observedAt),
+                                    y: .value("MiB", Double(sample.compressedBytes) / 1_048_576),
+                                    series: .value("Metric", "Compressed pages")
+                                )
+                                .foregroundStyle(by: .value("Metric", "Compressed pages"))
+                                if let swap = sample.swapUsage {
+                                    LineMark(
+                                        x: .value("Sample time", sample.observedAt),
+                                        y: .value("MiB", Double(swap.usedBytes) / 1_048_576),
+                                        series: .value("Metric", "Swap used")
+                                    )
+                                    .foregroundStyle(by: .value("Metric", "Swap used"))
+                                }
                             }
-                        }
-                        .chartLegend(position: .bottom, alignment: .leading)
-                        .chartYAxisLabel("MiB")
-                        .frame(height: 180)
-                        .accessibilityLabel("Recent RAM history of free and compressed pages and reported swap use")
-                        if model.history.ramObservations.count < 2 {
-                            Text(isAutomaticRAMSamplingEnabled
-                                 ? "More samples will arrive every five minutes while Disker is active."
-                                 : "Take another sample later to begin comparing observations.")
+                            .chartLegend(position: .bottom, alignment: .leading)
+                            .chartYAxisLabel("MiB")
+                            .frame(height: 180)
+                            .accessibilityLabel("RAM history for \(historyChartRange.title), \(ramSamples.count) samples of free and compressed pages and reported swap use")
+                        } else {
+                            Text(ramSamples.isEmpty
+                                 ? "No RAM samples fall within this period. Choose a longer range or take a sample."
+                                 : "One sample falls within this period; another is needed to draw a history chart.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
