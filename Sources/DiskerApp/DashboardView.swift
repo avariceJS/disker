@@ -462,6 +462,18 @@ struct DashboardView: View {
 
     private let sections = ["Overview", "Applications", "Folders", "Duplicates", "History", "RAM", "About"]
 
+    private var hasApplicationHistoryChart: Bool {
+        model.measuredApplicationBundles.contains {
+            ObservationComparison.completeFolderSeries(for: $0, in: model.history).count > 1
+        }
+    }
+
+    private var hasSelectedFolderHistoryChart: Bool {
+        (model.latestScan?.folders ?? []).contains {
+            ObservationComparison.completeFolderSeries(for: $0, in: model.history).count > 1
+        }
+    }
+
     var body: some View {
         NavigationSplitView {
             List(sections, id: \.self, selection: $selectedSection) { section in
@@ -662,10 +674,10 @@ struct DashboardView: View {
                     .background(.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
                 }
                 let fullCapacitySeries = ObservationComparison.comparableCapacitySeries(in: model.history)
-                let latestCapacityDate = fullCapacitySeries.last?.observedAt ?? .now
+                let latestCapacityDate = fullCapacitySeries.map(\.observedAt).max() ?? .now
                 let capacitySeries = fullCapacitySeries.filter {
                     historyChartRange.includes($0.observedAt, relativeTo: latestCapacityDate)
-                }
+                }.sorted { $0.observedAt < $1.observedAt }
                 if capacitySeries.count > 1 {
                     let values = capacitySeries.map { Double($0.availableBytes) / 1_073_741_824 }
                     let minimum = values.min() ?? 0
@@ -689,13 +701,13 @@ struct DashboardView: View {
                         .chartYAxisLabel("Available (GiB)")
                         .frame(height: 120)
                         .accessibilityLabel("Available-space history for \(historyChartRange.title), \(capacitySeries.count) comparable observations")
-                        Text("\(capacitySeries.count) comparable observations · focused vertical scale · not attributed to folders")
+                        Text("\(capacitySeries.count) comparable observations · \(historyRangeCaption(endingAt: latestCapacityDate)) · focused vertical scale · not attributed to folders")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
                 } else if !fullCapacitySeries.isEmpty {
                     historyRangePicker
-                    Text("Fewer than two comparable capacity observations in this period.")
+                    Text("Fewer than two comparable capacity observations in \(historyRangeCaption(endingAt: latestCapacityDate)).")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -920,7 +932,7 @@ struct DashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header("Application bundles", subtitle: "Measure the selected .app bundle; associated data is outside this measurement.")
-                historyRangePicker
+                if hasApplicationHistoryChart { historyRangePicker }
                 Label {
                     Text("Disker does not infer support folders, caches, containers, or shared files. Those locations are not included unless you measure them separately, and a bundle total alone is not an uninstall plan.")
                 } icon: {
@@ -1058,7 +1070,7 @@ struct DashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 header("Selected folders", subtitle: "Measure only locations you choose. Saved read-only access lets you rescan them on demand.")
-                historyRangePicker
+                if hasSelectedFolderHistoryChart { historyRangePicker }
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Disker remembers up to 20 folders or application bundles you selected so you can rescan without reopening the picker. Scans remain manual; removing a location forgets its permission and does not touch files.")
@@ -1853,12 +1865,12 @@ struct DashboardView: View {
                         Text("RAM history")
                             .font(.title3.weight(.semibold))
                         let allRAMSamples = model.history.ramObservations
-                        let latestRAMDate = allRAMSamples.last?.observedAt ?? .now
+                        let latestRAMDate = allRAMSamples.map(\.observedAt).max() ?? .now
                         let ramSamples = allRAMSamples.filter {
                             historyChartRange.includes($0.observedAt, relativeTo: latestRAMDate)
-                        }
-                        historyRangePicker
-                        Text("Free and compressed pages, plus reported swap use, across \(ramSamples.count) samples in the selected \(historyChartRange.title.lowercased()) range. Sampling follows the manual or active-session setting above; gaps mean no observation. This is not a pressure or leak diagnosis.")
+                        }.sorted { $0.observedAt < $1.observedAt }
+                        if !allRAMSamples.isEmpty { historyRangePicker }
+                        Text("Free and compressed pages, plus reported swap use, across \(ramSamples.count) samples in the \(historyRangeCaption(endingAt: latestRAMDate)). Sampling follows the manual or active-session setting above; gaps mean no observation. This is not a pressure or leak diagnosis.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -1870,10 +1882,20 @@ struct DashboardView: View {
                                     series: .value("Metric", "Free pages")
                                 )
                                 .foregroundStyle(by: .value("Metric", "Free pages"))
+                                PointMark(
+                                    x: .value("Sample time", sample.observedAt),
+                                    y: .value("MiB", Double(sample.freeBytes) / 1_048_576)
+                                )
+                                .foregroundStyle(by: .value("Metric", "Free pages"))
                                 LineMark(
                                     x: .value("Sample time", sample.observedAt),
                                     y: .value("MiB", Double(sample.compressedBytes) / 1_048_576),
                                     series: .value("Metric", "Compressed pages")
+                                )
+                                .foregroundStyle(by: .value("Metric", "Compressed pages"))
+                                PointMark(
+                                    x: .value("Sample time", sample.observedAt),
+                                    y: .value("MiB", Double(sample.compressedBytes) / 1_048_576)
                                 )
                                 .foregroundStyle(by: .value("Metric", "Compressed pages"))
                                 if let swap = sample.swapUsage {
@@ -1881,6 +1903,11 @@ struct DashboardView: View {
                                         x: .value("Sample time", sample.observedAt),
                                         y: .value("MiB", Double(swap.usedBytes) / 1_048_576),
                                         series: .value("Metric", "Swap used")
+                                    )
+                                    .foregroundStyle(by: .value("Metric", "Swap used"))
+                                    PointMark(
+                                        x: .value("Sample time", sample.observedAt),
+                                        y: .value("MiB", Double(swap.usedBytes) / 1_048_576)
                                     )
                                     .foregroundStyle(by: .value("Metric", "Swap used"))
                                 }
@@ -1891,8 +1918,8 @@ struct DashboardView: View {
                             .accessibilityLabel("RAM history for \(historyChartRange.title), \(ramSamples.count) samples of free and compressed pages and reported swap use")
                         } else {
                             Text(ramSamples.isEmpty
-                                 ? "No RAM samples fall within this period. Choose a longer range or take a sample."
-                                 : "One sample falls within this period; another is needed to draw a history chart.")
+                                 ? "No RAM sample is available. Take a sample to begin RAM history."
+                                 : "One sample falls within \(historyRangeCaption(endingAt: latestRAMDate)); another is needed to draw a history chart.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -2434,10 +2461,10 @@ struct DashboardView: View {
     @ViewBuilder
     private func folderHistoryChart(for folder: FolderObservation) -> some View {
         let fullSeries = ObservationComparison.completeFolderSeries(for: folder, in: model.history)
-        let latestDate = fullSeries.last?.finishedAt ?? .now
+        let latestDate = fullSeries.map(\.finishedAt).max() ?? .now
         let samples = fullSeries.filter {
             historyChartRange.includes($0.finishedAt, relativeTo: latestDate)
-        }
+        }.sorted { $0.finishedAt < $1.finishedAt }
         if samples.count > 1 {
             let visibleSamples = samples
             let values = visibleSamples.map { Double($0.allocatedBytes) / 1_073_741_824 }
@@ -2460,11 +2487,11 @@ struct DashboardView: View {
             .chartYAxisLabel("Allocated (GiB)")
             .frame(height: 112)
             .accessibilityLabel("Allocated-size history from \(visibleSamples.count) complete scans of \(folder.path)")
-            Text("\(visibleSamples.count) complete scans of this selected path · focused vertical scale")
+            Text("\(visibleSamples.count) complete scans of this selected path · \(historyRangeCaption(endingAt: latestDate)) · focused vertical scale")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         } else if !fullSeries.isEmpty {
-            Text("Fewer than two complete observations of this path in this period.")
+            Text("Fewer than two complete observations of this path in \(historyRangeCaption(endingAt: latestDate)).")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -2472,13 +2499,17 @@ struct DashboardView: View {
 
     private var historyRangePicker: some View {
         Picker("History range", selection: $historyChartRange) {
-        ForEach(ObservationTimeRange.allCases) { range in
+            ForEach(ObservationTimeRange.allCases) { range in
                 Text(range.title).tag(range)
             }
         }
         .pickerStyle(.segmented)
         .labelsHidden()
         .accessibilityLabel("History chart range")
+    }
+
+    private func historyRangeCaption(endingAt date: Date) -> String {
+        "\(historyChartRange.title) ending \(date.formatted(date: .abbreviated, time: .shortened))"
     }
 
     private func format(_ bytes: Int64) -> String {

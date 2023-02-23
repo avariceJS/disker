@@ -168,7 +168,10 @@ public enum ObservationComparison {
             guard sameFolderVolume(candidate, current) else { break }
             prior.append(candidate)
         }
-        return Array((prior.reversed() + [current]).suffix(24))
+        // The persisted observation list is already bounded. Keep the whole
+        // comparable run so the UI's "All saved" range can show every retained
+        // complete observation for this exact selected path and volume.
+        return prior.reversed() + [current]
     }
 
     public static func previousCompleteFolder(

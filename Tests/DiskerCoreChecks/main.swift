@@ -1839,6 +1839,17 @@ private struct DiskerCoreChecks {
         try expect(ObservationComparison.previousCompleteFolder(for: laterIncomplete, in: history) == nil, "incomplete current observations must not produce a growth comparison")
         try expect(ObservationComparison.completeFolderSeries(for: laterIncomplete, in: history).isEmpty,
                    "an incomplete current observation must not be plotted as a complete growth series")
+
+        let retainedFolders = (0..<40).map { index in
+            syntheticFolder(path: "/selected/long-history", bytes: Int64(index), complete: true)
+        }
+        let retainedHistory = LocalHistory(observations: retainedFolders.map { folder in
+            ScanObservation(startedAt: folder.finishedAt, folders: [folder], cancelled: false)
+        })
+        try expect(ObservationComparison.completeFolderSeries(
+            for: retainedFolders[retainedFolders.count - 1], in: retainedHistory
+        ).count == 40,
+                   "folder chart series should include every complete observation retained by history")
     }
 
     private static func testFolderGrowthHighlights() throws {
