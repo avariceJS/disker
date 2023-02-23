@@ -455,6 +455,7 @@ final class DashboardModel {
 struct DashboardView: View {
     @State private var model = DashboardModel()
     @State private var selectedSection: String? = "Overview"
+    @State private var historyChartRange: ObservationTimeRange = .week
     @State private var isConfirmingHistoryClear = false
     @State private var isAutomaticRAMSamplingEnabled = false
     @Environment(\.scenePhase) private var scenePhase
@@ -660,30 +661,42 @@ struct DashboardView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
                 }
-                let capacitySeries = Array(ObservationComparison.comparableCapacitySeries(in: model.history).suffix(24))
+                let fullCapacitySeries = ObservationComparison.comparableCapacitySeries(in: model.history)
+                let latestCapacityDate = fullCapacitySeries.last?.observedAt ?? .now
+                let capacitySeries = fullCapacitySeries.filter {
+                    historyChartRange.includes($0.observedAt, relativeTo: latestCapacityDate)
+                }
                 if capacitySeries.count > 1 {
                     let values = capacitySeries.map { Double($0.availableBytes) / 1_073_741_824 }
                     let minimum = values.min() ?? 0
                     let maximum = values.max() ?? minimum
                     let padding = max((maximum - minimum) * 0.15, max(Double(capacity.totalBytes) / 1_073_741_824 * 0.005, 0.25))
-                    Chart(capacitySeries, id: \.observedAt) { sample in
-                        LineMark(
-                            x: .value("Observed", sample.observedAt),
-                            y: .value("Available GiB", Double(sample.availableBytes) / 1_073_741_824)
-                        )
-                        .foregroundStyle(.blue)
-                        PointMark(
-                            x: .value("Observed", sample.observedAt),
-                            y: .value("Available GiB", Double(sample.availableBytes) / 1_073_741_824)
-                        )
-                        .foregroundStyle(.blue)
+                    VStack(alignment: .leading, spacing: 8) {
+                        historyRangePicker
+                        Chart(capacitySeries, id: \.observedAt) { sample in
+                            LineMark(
+                                x: .value("Observed", sample.observedAt),
+                                y: .value("Available GiB", Double(sample.availableBytes) / 1_073_741_824)
+                            )
+                            .foregroundStyle(.blue)
+                            PointMark(
+                                x: .value("Observed", sample.observedAt),
+                                y: .value("Available GiB", Double(sample.availableBytes) / 1_073_741_824)
+                            )
+                            .foregroundStyle(.blue)
+                        }
+                        .chartYScale(domain: max(0, minimum - padding)...(maximum + padding))
+                        .chartYAxisLabel("Available (GiB)")
+                        .frame(height: 120)
+                        .accessibilityLabel("Available-space history for \(historyChartRange.title), \(capacitySeries.count) comparable observations")
+                        Text("\(capacitySeries.count) comparable observations · focused vertical scale · not attributed to folders")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
-                    .chartYScale(domain: max(0, minimum - padding)...(maximum + padding))
-                    .chartYAxisLabel("Available (GiB)")
-                    .frame(height: 120)
-                    .accessibilityLabel("Available-space history for the latest \(capacitySeries.count) comparable observations")
-                    Text("Latest comparable observations · focused vertical scale · not attributed to folders")
-                        .font(.caption2)
+                } else if !fullCapacitySeries.isEmpty {
+                    historyRangePicker
+                    Text("Fewer than two comparable capacity observations in this period.")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 if let previous = ObservationComparison.previousComparableCapacity(for: capacity, in: model.history),
@@ -907,6 +920,7 @@ struct DashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header("Application bundles", subtitle: "Measure the selected .app bundle; associated data is outside this measurement.")
+                historyRangePicker
                 Label {
                     Text("Disker does not infer support folders, caches, containers, or shared files. Those locations are not included unless you measure them separately, and a bundle total alone is not an uninstall plan.")
                 } icon: {
@@ -1044,6 +1058,7 @@ struct DashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 header("Selected folders", subtitle: "Measure only locations you choose. Saved read-only access lets you rescan them on demand.")
+                historyRangePicker
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Disker remembers up to 20 folders or application bundles you selected so you can rescan without reopening the picker. Scans remain manual; removing a location forgets its permission and does not touch files.")
@@ -2411,9 +2426,13 @@ struct DashboardView: View {
 
     @ViewBuilder
     private func folderHistoryChart(for folder: FolderObservation) -> some View {
-        let samples = ObservationComparison.completeFolderSeries(for: folder, in: model.history)
+        let fullSeries = ObservationComparison.completeFolderSeries(for: folder, in: model.history)
+        let latestDate = fullSeries.last?.finishedAt ?? .now
+        let samples = fullSeries.filter {
+            historyChartRange.includes($0.finishedAt, relativeTo: latestDate)
+        }
         if samples.count > 1 {
-            let visibleSamples = Array(samples.suffix(24))
+            let visibleSamples = samples
             let values = visibleSamples.map { Double($0.allocatedBytes) / 1_073_741_824 }
             let minimum = values.min() ?? 0
             let maximum = values.max() ?? minimum
@@ -2434,10 +2453,25 @@ struct DashboardView: View {
             .chartYAxisLabel("Allocated (GiB)")
             .frame(height: 112)
             .accessibilityLabel("Allocated-size history from \(visibleSamples.count) complete scans of \(folder.path)")
-            Text("Complete scans of this selected path only · focused vertical scale")
+            Text("\(visibleSamples.count) complete scans of this selected path · focused vertical scale")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        } else if !fullSeries.isEmpty {
+            Text("Fewer than two complete observations of this path in this period.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private var historyRangePicker: some View {
+        Picker("History range", selection: $historyChartRange) {
+        ForEach(ObservationTimeRange.allCases) { range in
+                Text(range.title).tag(range)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .accessibilityLabel("History chart range")
     }
 
     private func format(_ bytes: Int64) -> String {

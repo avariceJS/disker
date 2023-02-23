@@ -28,6 +28,7 @@ private struct DiskerCoreChecks {
             ("capacity clamping", testCapacityClamping),
             ("low available capacity warning threshold", testLowAvailableCapacityWarning),
             ("comparable capacity history", testCapacityHistoryComparison),
+            ("bounded history chart ranges", testObservationTimeRanges),
             ("explicit application bundle history index", testApplicationBundleIndex),
             ("explicitly selected app bundle identity read", testApplicationBundleMetadata),
             ("evidence-scoped application container attribution", testApplicationPathAttribution),
@@ -257,6 +258,26 @@ private struct DiskerCoreChecks {
         )
         try expect(legacyCapacity.volumeUUID == nil && legacyCapacity.volumeName == nil,
                    "older capacity observations should decode without volume identity fields")
+    }
+
+    private static func testObservationTimeRanges() throws {
+        let latest = Date(timeIntervalSince1970: 1_000_000)
+        try expect(ObservationTimeRange.day.includes(latest.addingTimeInterval(-86_400), relativeTo: latest),
+                   "24-hour chart range should include its exact lower boundary")
+        try expect(!ObservationTimeRange.day.includes(latest.addingTimeInterval(-86_401), relativeTo: latest),
+                   "24-hour chart range should exclude older observations")
+        try expect(ObservationTimeRange.week.includes(latest.addingTimeInterval(-7 * 86_400), relativeTo: latest),
+                   "7-day chart range should include its exact lower boundary")
+        try expect(!ObservationTimeRange.week.includes(latest.addingTimeInterval(-7 * 86_400 - 1), relativeTo: latest),
+                   "7-day chart range should exclude older observations")
+        try expect(ObservationTimeRange.month.includes(latest.addingTimeInterval(-30 * 86_400), relativeTo: latest),
+                   "30-day chart range should include its exact lower boundary")
+        try expect(!ObservationTimeRange.month.includes(latest.addingTimeInterval(-30 * 86_400 - 1), relativeTo: latest),
+                   "30-day chart range should exclude older observations")
+        try expect(ObservationTimeRange.all.includes(Date(timeIntervalSince1970: 0), relativeTo: latest),
+                   "all-saved chart range should retain the full bounded series")
+        try expect(!ObservationTimeRange.all.includes(latest.addingTimeInterval(1), relativeTo: latest),
+                   "chart ranges should exclude observations later than their anchor")
     }
 
     private static func testApplicationBundleIndex() throws {
