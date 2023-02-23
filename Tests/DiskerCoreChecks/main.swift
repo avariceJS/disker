@@ -1840,6 +1840,25 @@ private struct DiskerCoreChecks {
         try expect(ObservationComparison.completeFolderSeries(for: laterIncomplete, in: history).isEmpty,
                    "an incomplete current observation must not be plotted as a complete growth series")
 
+        let futureDatedEarlierEntry = syntheticFolder(
+            path: "/selected/clock-change", bytes: 500, complete: true,
+            finishedAt: Date(timeIntervalSince1970: 2_000)
+        )
+        let currentAfterClockChange = syntheticFolder(
+            path: "/selected/clock-change", bytes: 250, complete: true,
+            finishedAt: Date(timeIntervalSince1970: 1_000)
+        )
+        let clockChangeHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: futureDatedEarlierEntry.finishedAt,
+                            folders: [futureDatedEarlierEntry], cancelled: false),
+            ScanObservation(startedAt: currentAfterClockChange.finishedAt,
+                            folders: [currentAfterClockChange], cancelled: false),
+        ])
+        try expect(ObservationComparison.completeFolderSeries(
+            for: currentAfterClockChange, in: clockChangeHistory
+        ) == [currentAfterClockChange],
+                   "folder history must exclude an earlier-insertion scan timestamped after the current result")
+
         let retainedFolders = (0..<40).map { index in
             syntheticFolder(path: "/selected/long-history", bytes: Int64(index), complete: true)
         }
@@ -2147,13 +2166,14 @@ private struct DiskerCoreChecks {
     }
 
     private static func syntheticFolder(
-        path: String, bytes: Int64, complete: Bool, volumeDeviceID: UInt64? = nil
+        path: String, bytes: Int64, complete: Bool, volumeDeviceID: UInt64? = nil,
+        finishedAt: Date = .now
     ) -> FolderObservation {
         FolderObservation(
             path: path, volumeDeviceID: volumeDeviceID,
             displayName: URL(fileURLWithPath: path).lastPathComponent,
             logicalBytes: bytes, allocatedBytes: bytes, fileCount: 1,
-            inaccessibleCount: complete ? 0 : 1, complete: complete
+            inaccessibleCount: complete ? 0 : 1, finishedAt: finishedAt, complete: complete
         )
     }
 

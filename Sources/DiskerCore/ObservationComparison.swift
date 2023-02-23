@@ -165,6 +165,7 @@ public enum ObservationComparison {
                 continue
             }
             guard candidate.complete else { continue }
+            guard candidate.finishedAt <= current.finishedAt else { continue }
             guard sameFolderVolume(candidate, current) else { break }
             prior.append(candidate)
         }
