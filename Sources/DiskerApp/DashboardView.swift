@@ -1870,41 +1870,23 @@ struct DashboardView: View {
                             historyChartRange.includes($0.observedAt, relativeTo: latestRAMDate)
                         }.sorted { $0.observedAt < $1.observedAt }
                         if !allRAMSamples.isEmpty { historyRangePicker }
-                        Text("Free and compressed pages, plus reported swap use, across \(ramSamples.count) samples in the \(historyRangeCaption(endingAt: latestRAMDate)). Sampling follows the manual or active-session setting above; gaps mean no observation. This is not a pressure or leak diagnosis.")
+                        Text("Free and compressed pages, plus reported swap use, across \(ramSamples.count) samples in the \(historyRangeCaption(endingAt: latestRAMDate)). Dots are observed snapshots; nothing is interpolated between them, and gaps mean no observation. This is not a pressure or leak diagnosis.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if ramSamples.count > 1 {
                             Chart(ramSamples, id: \.observedAt) { sample in
-                                LineMark(
-                                    x: .value("Sample time", sample.observedAt),
-                                    y: .value("MiB", Double(sample.freeBytes) / 1_048_576),
-                                    series: .value("Metric", "Free pages")
-                                )
-                                .foregroundStyle(by: .value("Metric", "Free pages"))
                                 PointMark(
                                     x: .value("Sample time", sample.observedAt),
                                     y: .value("MiB", Double(sample.freeBytes) / 1_048_576)
                                 )
                                 .foregroundStyle(by: .value("Metric", "Free pages"))
-                                LineMark(
-                                    x: .value("Sample time", sample.observedAt),
-                                    y: .value("MiB", Double(sample.compressedBytes) / 1_048_576),
-                                    series: .value("Metric", "Compressed pages")
-                                )
-                                .foregroundStyle(by: .value("Metric", "Compressed pages"))
                                 PointMark(
                                     x: .value("Sample time", sample.observedAt),
                                     y: .value("MiB", Double(sample.compressedBytes) / 1_048_576)
                                 )
                                 .foregroundStyle(by: .value("Metric", "Compressed pages"))
                                 if let swap = sample.swapUsage {
-                                    LineMark(
-                                        x: .value("Sample time", sample.observedAt),
-                                        y: .value("MiB", Double(swap.usedBytes) / 1_048_576),
-                                        series: .value("Metric", "Swap used")
-                                    )
-                                    .foregroundStyle(by: .value("Metric", "Swap used"))
                                     PointMark(
                                         x: .value("Sample time", sample.observedAt),
                                         y: .value("MiB", Double(swap.usedBytes) / 1_048_576)
@@ -1915,7 +1897,7 @@ struct DashboardView: View {
                             .chartLegend(position: .bottom, alignment: .leading)
                             .chartYAxisLabel("MiB")
                             .frame(height: 180)
-                            .accessibilityLabel("RAM history for \(historyChartRange.title), \(ramSamples.count) samples of free and compressed pages and reported swap use")
+                            .accessibilityLabel("RAM snapshot points for \(historyChartRange.title), \(ramSamples.count) observations of free and compressed pages and reported swap use")
                         } else {
                             Text(ramSamples.isEmpty
                                  ? "No RAM sample is available. Take a sample to begin RAM history."
