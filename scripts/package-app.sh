@@ -58,6 +58,8 @@ if [ "$SANDBOXED" = true ]; then
     codesign --force --sign - --timestamp=none \
         --entitlements "$PROJECT_ROOT/config/Disker-Sandboxed.entitlements" \
         "$APP_PATH"
-    codesign --verify --strict --deep "$APP_PATH"
+else
+    codesign --force --sign - --timestamp=none "$APP_PATH"
 fi
+codesign --verify --strict --deep "$APP_PATH"
 printf 'Created %s\n' "$APP_PATH"
