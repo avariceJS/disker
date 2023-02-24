@@ -99,6 +99,10 @@ public enum ObservationComparison {
         guard let latest = history.capacityObservations.last else { return [] }
         var series: [CapacityObservation] = []
         for sample in history.capacityObservations.reversed() {
+            // A system-clock rollback can leave an earlier stored sample with
+            // a timestamp after the latest observation. Do not plot it as
+            // future capacity history or let it anchor the visible range.
+            guard sample.observedAt <= latest.observedAt else { continue }
             guard sample.totalBytes == latest.totalBytes,
                   sample.availabilityBasis == latest.availabilityBasis,
                   sameVolumeIdentity(sample, latest) else { break }

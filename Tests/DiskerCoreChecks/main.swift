@@ -252,6 +252,21 @@ private struct DiskerCoreChecks {
         try expect(ObservationComparison.comparableCapacitySeries(in: transitionHistory) == [identifiedCurrent],
                    "capacity history should begin a fresh run when volume identity first becomes available")
 
+        let futureDatedCapacity = CapacityObservation(
+            observedAt: Date(timeIntervalSince1970: 600), totalBytes: 1_000,
+            availableBytes: 800, availabilityBasis: .importantUsage, volumeUUID: "volume-clock"
+        )
+        let capacityAfterClockRollback = CapacityObservation(
+            observedAt: Date(timeIntervalSince1970: 500), totalBytes: 1_000,
+            availableBytes: 750, availabilityBasis: .importantUsage, volumeUUID: "volume-clock"
+        )
+        let clockRollbackCapacityHistory = LocalHistory(capacityObservations: [
+            futureDatedCapacity, capacityAfterClockRollback,
+        ])
+        try expect(ObservationComparison.comparableCapacitySeries(in: clockRollbackCapacityHistory)
+                   == [capacityAfterClockRollback],
+                   "capacity history should exclude an earlier-insertion sample timestamped after the latest sample")
+
         let legacyCapacityJSON = #"{"observedAt":1,"totalBytes":1000,"availableBytes":500,"availabilityBasis":"importantUsage"}"#
         let legacyCapacity = try JSONDecoder().decode(
             CapacityObservation.self, from: Data(legacyCapacityJSON.utf8)

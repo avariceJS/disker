@@ -1865,7 +1865,7 @@ struct DashboardView: View {
                         Text("RAM history")
                             .font(.title3.weight(.semibold))
                         let allRAMSamples = model.history.ramObservations
-                        let latestRAMDate = allRAMSamples.map(\.observedAt).max() ?? .now
+                        let latestRAMDate = allRAMSamples.last?.observedAt ?? .now
                         let ramSamples = allRAMSamples.filter {
                             historyChartRange.includes($0.observedAt, relativeTo: latestRAMDate)
                         }.sorted { $0.observedAt < $1.observedAt }
