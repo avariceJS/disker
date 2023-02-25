@@ -46,6 +46,7 @@ private struct DiskerCoreChecks {
             ("metadata-only filename extension summaries", testFileExtensionSummaries),
             ("Disker own-footprint scan stays in app-owned scope", testDiskerFootprintScope),
             ("selected-scope duplicate verification", testDuplicateVerification),
+            ("duplicate verification root limit", testDuplicateVerificationRootLimit),
             ("duplicate verification cancellation", testDuplicateVerificationCancellation),
             ("duplicate directory mutation coverage", testDuplicateDirectoryMutationCoverage),
             ("duplicate files are revalidated after hashing", testDuplicateFileRevalidation),
@@ -153,8 +154,8 @@ private struct DiskerCoreChecks {
 
         let legacyJSON = #"{"verifiedAt":null,"selectedRootPaths":["/synthetic"],"groups":[],"checkedFileCount":0,"inaccessibleCount":0,"excludedSymlinkCount":0,"excludedSpecialFileCount":0,"changedDuringCheckCount":0,"cancelled":false}"#
         let legacy = try JSONDecoder().decode(DuplicateVerificationResult.self, from: Data(legacyJSON.utf8))
-        try expect(!legacy.byteAccountingOverflowed && legacy.complete,
-                   "legacy duplicate results should default overflow disclosure to false")
+        try expect(!legacy.byteAccountingOverflowed && !legacy.selectedRootLimitExceeded && legacy.complete,
+                   "legacy duplicate results should default newer coverage flags to false")
     }
 
     private static func testCapacityClamping() throws {
@@ -1228,6 +1229,19 @@ private struct DiskerCoreChecks {
             try expect(result.cancelled && !result.complete, "cancelled duplicate verification must stay explicitly incomplete")
             try expect(result.groups.isEmpty && result.checkedFileCount == 0, "immediate cancellation must not read or report file content")
         }
+    }
+
+    private static func testDuplicateVerificationRootLimit() throws {
+        let roots = (0...DuplicateVerifier.maximumSelectedRootCount).map {
+            URL(fileURLWithPath: "/synthetic/duplicate-root-\($0)")
+        }
+        let result = DuplicateVerifier.verify(roots: roots)
+        try expect(result.selectedRootLimitExceeded && !result.complete,
+                   "duplicate verification must reject over-limit root sets explicitly")
+        try expect(result.verifiedAt == nil && result.selectedRootPaths.isEmpty,
+                   "a rejected request must not claim a verification time or accepted scope")
+        try expect(result.checkedFileCount == 0 && result.groups.isEmpty,
+                   "over-limit rejection must happen before opening roots or reading file contents")
     }
 
     private static func testDuplicateDirectoryMutationCoverage() throws {

@@ -344,6 +344,10 @@ final class DashboardModel {
 
     func verifyDuplicates(in roots: [URL]) {
         guard !roots.isEmpty, !isVerifyingDuplicates, !isScanning, !isMeasuringOwnFootprint else { return }
+        guard roots.count <= DuplicateVerifier.maximumSelectedRootCount else {
+            errorMessage = "Choose no more than \(DuplicateVerifier.maximumSelectedRootCount) locations for duplicate verification. No file contents were read."
+            return
+        }
         duplicateResult = nil
         preservedDuplicatePaths = [:]
         duplicateCurrentPath = ""
@@ -1758,6 +1762,10 @@ struct DashboardView: View {
         panel.allowsMultipleSelection = true
         panel.canCreateDirectories = false
         guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        guard panel.urls.count <= DuplicateVerifier.maximumSelectedRootCount else {
+            model.errorMessage = "Choose no more than \(DuplicateVerifier.maximumSelectedRootCount) locations for duplicate verification. No file contents were read."
+            return
+        }
 
         let confirmation = NSAlert()
         confirmation.messageText = "Read selected files to verify duplicates?"
@@ -1770,6 +1778,9 @@ struct DashboardView: View {
 
     private func duplicateCoverageSummary(_ result: DuplicateVerificationResult) -> String {
         var reasons: [String] = []
+        if result.selectedRootLimitExceeded {
+            return "Not run · choose no more than \(DuplicateVerifier.maximumSelectedRootCount) locations; no file contents were read"
+        }
         if result.byteAccountingOverflowed { reasons.append("allocated-byte estimate exceeded the supported range and was capped") }
         if result.inaccessibleCount > 0 { reasons.append("\(result.inaccessibleCount) inaccessible") }
         if result.excludedSymlinkCount > 0 { reasons.append("\(result.excludedSymlinkCount) symlinks skipped") }

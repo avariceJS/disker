@@ -42,11 +42,14 @@ public struct DuplicateVerificationResult: Codable, Equatable, Sendable {
     public let changedDuringCheckCount: Int
     public let byteAccountingOverflowed: Bool
     public let cancelled: Bool
+    /// The requested root count exceeded the supported bound; no files were read.
+    public let selectedRootLimitExceeded: Bool
 
     public init(
         verifiedAt: Date? = .now, selectedRootPaths: [String], groups: [DuplicateGroup], checkedFileCount: Int,
         inaccessibleCount: Int, excludedSymlinkCount: Int, excludedSpecialFileCount: Int,
-        changedDuringCheckCount: Int, cancelled: Bool, byteAccountingOverflowed: Bool = false
+        changedDuringCheckCount: Int, cancelled: Bool, byteAccountingOverflowed: Bool = false,
+        selectedRootLimitExceeded: Bool = false
     ) {
         self.verifiedAt = verifiedAt
         self.selectedRootPaths = selectedRootPaths
@@ -58,10 +61,11 @@ public struct DuplicateVerificationResult: Codable, Equatable, Sendable {
         self.changedDuringCheckCount = changedDuringCheckCount
         self.byteAccountingOverflowed = byteAccountingOverflowed
         self.cancelled = cancelled
+        self.selectedRootLimitExceeded = selectedRootLimitExceeded
     }
 
     public var complete: Bool {
-        !cancelled && inaccessibleCount == 0 && excludedSymlinkCount == 0
+        !selectedRootLimitExceeded && !cancelled && inaccessibleCount == 0 && excludedSymlinkCount == 0
             && excludedSpecialFileCount == 0 && changedDuringCheckCount == 0
             && !byteAccountingOverflowed
     }
@@ -69,7 +73,7 @@ public struct DuplicateVerificationResult: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case verifiedAt, selectedRootPaths, groups, checkedFileCount, inaccessibleCount
         case excludedSymlinkCount, excludedSpecialFileCount, changedDuringCheckCount
-        case byteAccountingOverflowed, cancelled
+        case byteAccountingOverflowed, cancelled, selectedRootLimitExceeded
     }
 
     public init(from decoder: Decoder) throws {
@@ -84,6 +88,7 @@ public struct DuplicateVerificationResult: Codable, Equatable, Sendable {
         changedDuringCheckCount = try values.decode(Int.self, forKey: .changedDuringCheckCount)
         byteAccountingOverflowed = try values.decodeIfPresent(Bool.self, forKey: .byteAccountingOverflowed) ?? false
         cancelled = try values.decode(Bool.self, forKey: .cancelled)
+        selectedRootLimitExceeded = try values.decodeIfPresent(Bool.self, forKey: .selectedRootLimitExceeded) ?? false
     }
 }
 
@@ -91,6 +96,8 @@ public struct DuplicateVerificationResult: Codable, Equatable, Sendable {
 /// operation. Metadata filters candidates before any file content is read.
 /// This reports identical bytes, not safe-to-delete files or reclaimable space.
 public enum DuplicateVerifier {
+    public static let maximumSelectedRootCount = ApplicationFolderAssociation.maximumRelatedFolderCount
+
     private struct FileIdentity: Hashable {
         let device: UInt64
         let inode: UInt64
@@ -142,6 +149,14 @@ public enum DuplicateVerifier {
         shouldCancel: () -> Bool = { Task.isCancelled },
         progress: (DuplicateVerificationProgress) -> Void = { _ in }
     ) -> DuplicateVerificationResult {
+        guard roots.count <= maximumSelectedRootCount else {
+            return DuplicateVerificationResult(
+                verifiedAt: nil, selectedRootPaths: [], groups: [], checkedFileCount: 0,
+                inaccessibleCount: 0, excludedSymlinkCount: 0, excludedSpecialFileCount: 0,
+                changedDuringCheckCount: 0, cancelled: false, selectedRootLimitExceeded: true
+            )
+        }
+
         var rootDescriptors: [Int32] = []
         var scopedURLs: [URL] = []
         defer {
