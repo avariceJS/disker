@@ -299,18 +299,21 @@ private struct DiskerCoreChecks {
     private static func testApplicationBundleIndex() throws {
         func folder(
             _ path: String, _ bytes: Int64, _ complete: Bool = true,
-            bundleIdentifier: String? = nil
+            bundleIdentifier: String? = nil, selectedAsApplicationBundle: Bool = false
         ) -> FolderObservation {
             FolderObservation(
                 path: path, displayName: URL(fileURLWithPath: path).lastPathComponent,
                 logicalBytes: bytes, allocatedBytes: bytes, fileCount: 1,
                 inaccessibleCount: 0, complete: complete,
-                applicationBundleIdentifier: bundleIdentifier
+                applicationBundleIdentifier: bundleIdentifier,
+                selectedAsApplicationBundle: selectedAsApplicationBundle
             )
         }
-        let firstBundle = folder("/Applications/Example.app", 900, true, bundleIdentifier: "com.example.App")
-        let laterBundle = folder("/Applications/Example.app", 500, false, bundleIdentifier: "com.example.App")
-        let otherBundle = folder("/Applications/Other.app", 700)
+        let firstBundle = folder("/Applications/Example.app", 900, true, bundleIdentifier: "com.example.App", selectedAsApplicationBundle: true)
+        let laterBundle = folder("/Applications/Example.app", 500, false, bundleIdentifier: "com.example.App", selectedAsApplicationBundle: true)
+        let otherBundle = folder("/Applications/Other.app", 700, selectedAsApplicationBundle: true)
+        let unreadableBundle = folder("/Applications/Unknown.app", 600)
+        let genericAppDirectory = folder("/Projects/Example.app", 1000)
         let notBundle = folder("/Projects/Example.app-cache", 10)
         let enriched = ScanObservation(
             startedAt: Date(timeIntervalSince1970: 3),
@@ -322,7 +325,7 @@ private struct DiskerCoreChecks {
                 signatureValidated: true,
                 signedBundleIdentifier: "com.example.App"
             )
-        ])
+        ], selectedApplicationBundlePaths: [firstBundle.path])
         try expect(enriched.folders[0].applicationBundleIdentifier == "com.example.App",
                    "explicit bundle identity should be attached to the matching selected root")
         try expect(enriched.folders[0].applicationGroupIdentifiers == ["TEAMID.group.example.shared"],
@@ -330,20 +333,33 @@ private struct DiskerCoreChecks {
         try expect(enriched.folders[0].applicationSignatureValidated
                    && enriched.folders[0].applicationSignedBundleIdentifier == "com.example.App",
                    "signature validation and its signed bundle ID should persist with the selected app root")
+        try expect(enriched.folders[0].selectedAsApplicationBundle,
+                   "explicit app-picker provenance should attach to the selected root")
         try expect(enriched.folders[1].applicationBundleIdentifier == nil,
                    "bundle identity must not leak to other selected roots")
+        let unreadableSelection = ScanObservation(
+            startedAt: Date(timeIntervalSince1970: 4), folders: [unreadableBundle], cancelled: false
+        ).includingApplicationBundleIdentities([:], selectedApplicationBundlePaths: [unreadableBundle.path])
+        try expect(unreadableSelection.folders[0].selectedAsApplicationBundle
+                   && unreadableSelection.folders[0].applicationBundleIdentifier == nil,
+                   "explicit app selections must remain identifiable even when bundle metadata is unavailable")
         let history = LocalHistory(observations: [
-            ScanObservation(startedAt: Date(timeIntervalSince1970: 1), folders: [firstBundle, notBundle], cancelled: false),
-            ScanObservation(startedAt: Date(timeIntervalSince1970: 2), folders: [laterBundle, otherBundle], cancelled: false)
+            ScanObservation(startedAt: Date(timeIntervalSince1970: 1), folders: [firstBundle, notBundle, genericAppDirectory], cancelled: false),
+            ScanObservation(startedAt: Date(timeIntervalSince1970: 2), folders: [laterBundle, otherBundle, unreadableSelection.folders[0]], cancelled: false),
+            ScanObservation(startedAt: Date(timeIntervalSince1970: 3), folders: [
+                folder("/Applications/Example.app", 450, false)
+            ], cancelled: false)
         ])
         let indexed = ApplicationBundleIndex.latestMeasurements(in: history)
-        try expect(indexed.count == 2, "the application index should include only selected .app root paths")
-        try expect(indexed.first?.path == otherBundle.path && indexed.last?.path == laterBundle.path,
-                   "latest bundle measurements should be sorted by allocated estimate")
-        try expect(indexed.last?.complete == false && indexed.last?.allocatedBytes == 500,
-                   "the latest partial observation should replace an older complete bundle measurement")
-        try expect(indexed.last?.applicationBundleIdentifier == "com.example.App",
-                   "the selected app identifier should travel with its measured bundle history")
+        try expect(indexed.count == 3 && !indexed.contains(where: { $0.path == genericAppDirectory.path }),
+                   "a generic folder ending in .app must not be classified as an application bundle")
+        try expect(indexed.map(\.path) == [otherBundle.path, unreadableBundle.path, laterBundle.path],
+                   "explicit app selections, even without readable IDs, should be sorted by measured size")
+        try expect(indexed.last?.complete == false && indexed.last?.allocatedBytes == 450,
+                   "a later saved-folder scan should replace the older app-picker measurement")
+        try expect(indexed.last?.applicationBundleIdentifier == nil
+                   && indexed.last?.applicationSignatureValidated == false,
+                   "saved-folder scans must not inherit stale app identity or signature evidence")
         let encodedBundle = try JSONEncoder().encode(enriched.folders[0])
         let decodedBundle = try JSONDecoder().decode(FolderObservation.self, from: encodedBundle)
         try expect(decodedBundle.applicationBundleIdentifier == "com.example.App",
@@ -351,6 +367,19 @@ private struct DiskerCoreChecks {
         try expect(decodedBundle.applicationSignatureValidated
                    && decodedBundle.applicationSignedBundleIdentifier == "com.example.App",
                    "validated signature identity should survive observation encoding")
+        try expect(decodedBundle.selectedAsApplicationBundle,
+                   "app-picker provenance should survive observation encoding")
+        guard var legacyBundleObject = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(firstBundle)
+        ) as? [String: Any] else {
+            throw CheckFailure.assertion("encoded app observation should be a JSON object")
+        }
+        legacyBundleObject.removeValue(forKey: "selectedAsApplicationBundle")
+        let legacySelectedBundle = try JSONDecoder().decode(
+            FolderObservation.self, from: JSONSerialization.data(withJSONObject: legacyBundleObject)
+        )
+        try expect(legacySelectedBundle.selectedAsApplicationBundle,
+                   "legacy app observations with stored bundle IDs should retain their explicit-app classification")
     }
 
     private static func testApplicationPathAttribution() throws {
@@ -374,6 +403,9 @@ private struct DiskerCoreChecks {
         )
         try expect(validatedContainer.evidence == .validatedBundleIdentifierPathMatch,
                    "a locally validated signed bundle ID should receive stronger exact-container evidence")
+        try expect(validatedContainer.title.contains("ownership unverified")
+                   && validatedContainer.explanation.contains("origin"),
+                   "a valid signature match must not imply the selected folder's provenance")
         let mismatchedSignatureID = ApplicationPathAttribution.classify(
             bundleIdentifier: identifier, associatedFolderPath: container,
             homeDirectoryPath: home, signatureValidated: true,
@@ -389,6 +421,19 @@ private struct DiskerCoreChecks {
         )
         try expect(descendant.evidence == .probableContainerPathMatch,
                    "a selected descendant inside the exact app container should retain the path evidence")
+        let normalizedDescendant = ApplicationPathAttribution.classify(
+            bundleIdentifier: identifier,
+            associatedFolderPath: container + "/Data/../Library",
+            homeDirectoryPath: home
+        )
+        let escapedContainer = ApplicationPathAttribution.classify(
+            bundleIdentifier: identifier,
+            associatedFolderPath: container + "/../../Containers/\(identifier)-other",
+            homeDirectoryPath: home
+        )
+        try expect(normalizedDescendant.evidence == .probableContainerPathMatch
+                   && escapedContainer.evidence == .userSelectedOnly,
+                   "standardized dot segments may remain within the exact root but cannot escape its boundary")
 
         let groupIdentifier = "TEAMID.group.shared"
         let groupContainer = "\(home)/Library/Group Containers/\(groupIdentifier)"
@@ -1526,6 +1571,8 @@ private struct DiskerCoreChecks {
         try expect(folder.gitMetadataUsage == nil, "old folder history should default retained Git metrics to absent")
         try expect(folder.applicationBundleIdentifier == nil,
                    "legacy folder observations should remain without an inferred bundle identifier")
+        try expect(!folder.selectedAsApplicationBundle,
+                   "legacy generic folder observations should not be inferred as app-picker selections")
         try expect(folder.applicationGroupIdentifiers.isEmpty,
                    "legacy folder observations should not gain inferred App Groups claims")
         try expect(!folder.applicationSignatureValidated && folder.applicationSignedBundleIdentifier == nil,

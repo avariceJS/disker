@@ -127,7 +127,7 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
         switch evidence {
         case .signatureCoveredSharedGroupClaim: "Signature-covered shared App Group claim"
         case .declaredSharedGroupContainerClaim: "Declared shared App Group path"
-        case .validatedBundleIdentifierPathMatch: "Signed bundle identifier matches path"
+        case .validatedBundleIdentifierPathMatch: "Signed ID + conventional container path · ownership unverified"
         case .probableContainerPathMatch: "Probable app container path"
         case .probableNamedSupportPathMatch: "Possible app data path · name match"
         case .userSelectedOnly: "User-selected association"
@@ -141,7 +141,7 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
         case .declaredSharedGroupContainerClaim:
             "The selected app's embedded App Groups claim names this exact path. Disker has not matched a locally validated signed identifier to the declared bundle ID or established OS-granted access. This container is shared with other group members."
         case .validatedBundleIdentifierPathMatch:
-            "The selected app's locally validated signature carries this bundle identifier, which matches this exact per-app container path. Current use and exclusive ownership are not established."
+            "The selected app's locally validated signature carries this bundle identifier, which matches the conventional per-app container path. Disker has not established this folder's origin, current use, or exclusive ownership."
         case .probableContainerPathMatch:
             "This path matches the selected app's CFBundleIdentifier under ~/Library/Containers. Disker has not verified the app's signing identity or exclusive use of the data."
         case .probableNamedSupportPathMatch:
@@ -255,7 +255,7 @@ public struct ApplicationDataLocationCandidate: Equatable, Sendable, Identifiabl
     public var title: String {
         switch evidence {
         case .probableAppContainer: "Probable per-app container path"
-        case .validatedAppContainerIdentifier: "Validated identifier · per-app container path"
+        case .validatedAppContainerIdentifier: "Signed identifier · conventional per-app container path"
         case .probableNamedSupportDirectory: "Possible app support or cache · name match"
         case .declaredSharedGroupClaim: "Declared App Group path · shared"
         case .signatureCoveredSharedGroupClaim: "Signature-covered App Group path · shared"
@@ -267,7 +267,7 @@ public struct ApplicationDataLocationCandidate: Equatable, Sendable, Identifiabl
         case .probableAppContainer:
             "This is the standard path pattern for the selected bundle ID. Its presence, use, and exclusive ownership have not been checked."
         case .validatedAppContainerIdentifier:
-            "The selected bundle's locally validated signature carries this identifier. The candidate path has not been checked for presence or exclusive use."
+            "The selected bundle's locally validated signature carries this identifier. This conventional path has not been checked for presence, origin, or exclusive use."
         case .probableNamedSupportDirectory:
             "The candidate directory name exactly matches the selected bundle ID under Application Support or Caches. This is only a naming clue; presence, app ownership, and exclusive use have not been checked."
         case .declaredSharedGroupClaim:

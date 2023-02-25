@@ -149,6 +149,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     public let applicationGroupIdentifiers: [String]
     public let applicationSignatureValidated: Bool
     public let applicationSignedBundleIdentifier: String?
+    /// True only for a scan initiated through the application-bundle picker.
+    public let selectedAsApplicationBundle: Bool
 
     public init(
         id: UUID = UUID(), path: String, volumeDeviceID: UInt64? = nil, displayName: String,
@@ -171,7 +173,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         applicationBundleIdentifier: String? = nil,
         applicationGroupIdentifiers: [String] = [],
         applicationSignatureValidated: Bool = false,
-        applicationSignedBundleIdentifier: String? = nil
+        applicationSignedBundleIdentifier: String? = nil,
+        selectedAsApplicationBundle: Bool = false
     ) {
         self.id = id
         self.path = path
@@ -201,6 +204,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         self.applicationGroupIdentifiers = applicationGroupIdentifiers
         self.applicationSignatureValidated = applicationSignatureValidated
         self.applicationSignedBundleIdentifier = applicationSignedBundleIdentifier
+        self.selectedAsApplicationBundle = selectedAsApplicationBundle
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -215,6 +219,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         case applicationBundleIdentifier
         case applicationGroupIdentifiers
         case applicationSignatureValidated, applicationSignedBundleIdentifier
+        case selectedAsApplicationBundle
     }
 
     public init(from decoder: Decoder) throws {
@@ -247,6 +252,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         applicationGroupIdentifiers = try values.decodeIfPresent([String].self, forKey: .applicationGroupIdentifiers) ?? []
         applicationSignatureValidated = try values.decodeIfPresent(Bool.self, forKey: .applicationSignatureValidated) ?? false
         applicationSignedBundleIdentifier = try values.decodeIfPresent(String.self, forKey: .applicationSignedBundleIdentifier)
+        selectedAsApplicationBundle = try values.decodeIfPresent(Bool.self, forKey: .selectedAsApplicationBundle)
+            ?? (applicationBundleIdentifier != nil && URL(fileURLWithPath: path).pathExtension.lowercased() == "app")
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -279,9 +286,12 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         try values.encode(applicationGroupIdentifiers, forKey: .applicationGroupIdentifiers)
         try values.encode(applicationSignatureValidated, forKey: .applicationSignatureValidated)
         try values.encodeIfPresent(applicationSignedBundleIdentifier, forKey: .applicationSignedBundleIdentifier)
+        try values.encode(selectedAsApplicationBundle, forKey: .selectedAsApplicationBundle)
     }
 
-    public func includingApplicationBundleIdentity(_ identity: ApplicationBundleIdentity) -> FolderObservation {
+    public func includingApplicationBundleIdentity(
+        _ identity: ApplicationBundleIdentity?, selectedAsApplicationBundle: Bool
+    ) -> FolderObservation {
         FolderObservation(
             id: id, path: path, volumeDeviceID: volumeDeviceID, displayName: displayName,
             logicalBytes: logicalBytes, allocatedBytes: allocatedBytes,
@@ -300,10 +310,11 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
             subdirectorySummariesTruncated: subdirectorySummariesTruncated,
             projectDirectorySummaries: projectDirectorySummaries,
             projectDirectorySummariesTruncated: projectDirectorySummariesTruncated,
-            applicationBundleIdentifier: identity.bundleIdentifier,
-            applicationGroupIdentifiers: identity.claimedGroupIdentifiers,
-            applicationSignatureValidated: identity.signatureValidated,
-            applicationSignedBundleIdentifier: identity.signedBundleIdentifier
+            applicationBundleIdentifier: identity?.bundleIdentifier,
+            applicationGroupIdentifiers: identity?.claimedGroupIdentifiers ?? [],
+            applicationSignatureValidated: identity?.signatureValidated ?? false,
+            applicationSignedBundleIdentifier: identity?.signedBundleIdentifier,
+            selectedAsApplicationBundle: selectedAsApplicationBundle
         )
     }
 }
@@ -384,12 +395,17 @@ public struct ScanObservation: Codable, Equatable, Identifiable, Sendable {
     }
 
     public func includingApplicationBundleIdentities(
-        _ identitiesByPath: [String: ApplicationBundleIdentity]
+        _ identitiesByPath: [String: ApplicationBundleIdentity],
+        selectedApplicationBundlePaths: Set<String> = []
     ) -> ScanObservation {
-        guard !identitiesByPath.isEmpty else { return self }
+        guard !identitiesByPath.isEmpty || !selectedApplicationBundlePaths.isEmpty else { return self }
         let identifiedFolders = folders.map { folder in
-            guard let identity = identitiesByPath[folder.path] else { return folder }
-            return folder.includingApplicationBundleIdentity(identity)
+            let selected = selectedApplicationBundlePaths.contains(folder.path)
+                || identitiesByPath[folder.path] != nil
+            guard selected else { return folder }
+            return folder.includingApplicationBundleIdentity(
+                identitiesByPath[folder.path], selectedAsApplicationBundle: true
+            )
         }
         return ScanObservation(
             id: id, startedAt: startedAt, finishedAt: finishedAt,

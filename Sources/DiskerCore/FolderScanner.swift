@@ -569,7 +569,8 @@ public enum FolderScanner {
             applicationBundleIdentifier: folder.applicationBundleIdentifier,
             applicationGroupIdentifiers: folder.applicationGroupIdentifiers,
             applicationSignatureValidated: folder.applicationSignatureValidated,
-            applicationSignedBundleIdentifier: folder.applicationSignedBundleIdentifier
+            applicationSignedBundleIdentifier: folder.applicationSignedBundleIdentifier,
+            selectedAsApplicationBundle: folder.selectedAsApplicationBundle
         )
     }
 
@@ -595,7 +596,8 @@ public enum FolderScanner {
             applicationBundleIdentifier: folder.applicationBundleIdentifier,
             applicationGroupIdentifiers: folder.applicationGroupIdentifiers,
             applicationSignatureValidated: folder.applicationSignatureValidated,
-            applicationSignedBundleIdentifier: folder.applicationSignedBundleIdentifier
+            applicationSignedBundleIdentifier: folder.applicationSignedBundleIdentifier,
+            selectedAsApplicationBundle: folder.selectedAsApplicationBundle
         )
     }
 

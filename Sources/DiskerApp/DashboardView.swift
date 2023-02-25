@@ -300,6 +300,9 @@ final class DashboardModel {
         countedFileObjects = 0
         let scanTask = Task.detached(priority: .utility) {
             var identities = applicationBundleIdentities
+            let selectedApplicationBundlePaths = inspectSelectedAppBundles
+                ? Set(urls.filter { $0.pathExtension.lowercased() == "app" }.map(\.path))
+                : []
             if inspectSelectedAppBundles {
                 for url in urls where url.pathExtension.lowercased() == "app" {
                     let accessGranted = url.startAccessingSecurityScopedResource()
@@ -318,7 +321,9 @@ final class DashboardModel {
                     self.countedFileObjects = progress.countedFileObjects
                 }
             })
-            return observation.includingApplicationBundleIdentities(identities)
+            return observation.includingApplicationBundleIdentities(
+                identities, selectedApplicationBundlePaths: selectedApplicationBundlePaths
+            )
         }
         self.scanTask = scanTask
         Task {
@@ -1670,7 +1675,7 @@ struct DashboardView: View {
         case .declaredSharedGroupContainerClaim:
             attributionSymbol = "person.2.badge.gearshape"
         case .validatedBundleIdentifierPathMatch:
-            attributionSymbol = "folder.badge.checkmark"
+            attributionSymbol = "folder.badge.questionmark"
         case .probableContainerPathMatch:
             attributionSymbol = "folder.badge.questionmark"
         case .probableNamedSupportPathMatch:
