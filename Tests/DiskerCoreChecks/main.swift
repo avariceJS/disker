@@ -1934,6 +1934,10 @@ private struct DiskerCoreChecks {
             for: currentAfterClockChange, in: clockChangeHistory
         ) == [currentAfterClockChange],
                    "folder history must exclude an earlier-insertion scan timestamped after the current result")
+        try expect(ObservationComparison.previousCompleteFolder(
+            for: currentAfterClockChange, in: clockChangeHistory
+        ) == nil && ObservationComparison.growingFolders(in: clockChangeHistory).isEmpty,
+                   "folder growth must not compare against a scan timestamped after the current result")
 
         let retainedFolders = (0..<40).map { index in
             syntheticFolder(path: "/selected/long-history", bytes: Int64(index), complete: true)
@@ -2208,15 +2212,36 @@ private struct DiskerCoreChecks {
         ) == nil, "directory comparisons must not bridge a complete observation where the retained path is absent")
         try expect(ObservationComparison.growingDirectories(in: reappearanceHistory).isEmpty,
                    "directory growth must not infer change across an absent complete observation")
+
+        let futureDatedRoot = folderWithDirectory(
+            id: UUID(), path: "/clock-rollback", bytes: 500, complete: true,
+            directory: directory("Project", bytes: 500, complete: true),
+            finishedAt: Date(timeIntervalSince1970: 2_000)
+        )
+        let currentAfterClockRollback = folderWithDirectory(
+            id: UUID(), path: "/clock-rollback", bytes: 250, complete: true,
+            directory: directory("Project", bytes: 250, complete: true),
+            finishedAt: Date(timeIntervalSince1970: 1_000)
+        )
+        let clockRollbackHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: futureDatedRoot.finishedAt, folders: [futureDatedRoot], cancelled: false),
+            ScanObservation(startedAt: currentAfterClockRollback.finishedAt, folders: [currentAfterClockRollback], cancelled: false),
+        ])
+        let currentClockDirectory = try requireSummary("Project", in: currentAfterClockRollback)
+        try expect(ObservationComparison.previousCompleteDirectory(
+            for: currentClockDirectory, in: currentAfterClockRollback, history: clockRollbackHistory
+        ) == nil && ObservationComparison.growingDirectories(in: clockRollbackHistory).isEmpty,
+                   "directory growth must skip prior entries timestamped after the current scan")
     }
 
     private static func folderWithDirectory(
-        id: UUID, path: String, bytes: Int64, complete: Bool, directory: DirectoryUsage
+        id: UUID, path: String, bytes: Int64, complete: Bool, directory: DirectoryUsage,
+        finishedAt: Date = .now
     ) -> FolderObservation {
         FolderObservation(
             id: id, path: path, displayName: URL(fileURLWithPath: path).lastPathComponent,
             logicalBytes: bytes, allocatedBytes: bytes, fileCount: 1,
-            inaccessibleCount: complete ? 0 : 1, complete: complete,
+            inaccessibleCount: complete ? 0 : 1, finishedAt: finishedAt, complete: complete,
             subdirectorySummaries: [directory]
         )
     }

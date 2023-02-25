@@ -192,7 +192,9 @@ public enum ObservationComparison {
         let previous = history.observations[..<currentIndex].reversed().lazy
             .compactMap { observation in
                 observation.folders.first(where: {
-                    $0.path == current.path && $0.complete
+                    $0.path == current.path
+                        && $0.complete
+                        && $0.finishedAt <= current.finishedAt
                 })
             }
             .first
@@ -366,13 +368,18 @@ public enum ObservationComparison {
               })
         else { return nil }
 
-        // Partial scans are skipped, but the immediately preceding complete
-        // observation of this selected root is authoritative. If the exact
-        // retained path is absent there, do not bridge across it to an older
-        // directory that may have been removed, recreated, or summarized away.
+        // Partial and clock-future scans are skipped, but the immediately
+        // preceding complete observation with a non-future timestamp is
+        // authoritative. If the exact retained path is absent there, do not
+        // bridge across it to an older directory that may have been removed,
+        // recreated, or summarized away.
         guard let previousFolder = history.observations[..<currentIndex].reversed().lazy
             .compactMap({ observation in
-                observation.folders.first(where: { $0.path == folder.path && $0.complete })
+                observation.folders.first(where: {
+                    $0.path == folder.path
+                        && $0.complete
+                        && $0.finishedAt <= folder.finishedAt
+                })
             })
             .first
         else { return nil }
