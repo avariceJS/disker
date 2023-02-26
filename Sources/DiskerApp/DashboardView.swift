@@ -1030,6 +1030,7 @@ struct DashboardView: View {
                                         inaccessible: bundle.inaccessibleCount,
                                         excludedSymlinks: bundle.excludedSymlinkCount,
                                         excludedSpecialFiles: bundle.excludedSpecialFileCount,
+                                        excludedVolumeBoundaries: bundle.excludedVolumeBoundaryCount,
                                         changed: bundle.changedDuringScanCount,
                                         wasCancelled: model.scanWasCancelled(for: bundle),
                                         accountingOverflowed: bundle.byteAccountingOverflowed
@@ -1185,6 +1186,7 @@ struct DashboardView: View {
                                             inaccessible: folder.inaccessibleCount,
                                             excludedSymlinks: folder.excludedSymlinkCount,
                                             excludedSpecialFiles: folder.excludedSpecialFileCount,
+                                            excludedVolumeBoundaries: folder.excludedVolumeBoundaryCount,
                                             changed: folder.changedDuringScanCount,
                                             wasCancelled: observation.cancelled,
                                             accountingOverflowed: folder.byteAccountingOverflowed
@@ -1281,6 +1283,7 @@ struct DashboardView: View {
                                         inaccessible: folder.inaccessibleCount,
                                         excludedSymlinks: folder.excludedSymlinkCount,
                                         excludedSpecialFiles: folder.excludedSpecialFileCount,
+                                        excludedVolumeBoundaries: folder.excludedVolumeBoundaryCount,
                                         changed: folder.changedDuringScanCount,
                                         wasCancelled: observation.cancelled,
                                         accountingOverflowed: folder.byteAccountingOverflowed
@@ -1724,6 +1727,7 @@ struct DashboardView: View {
                                 inaccessible: observation.inaccessibleCount,
                                 excludedSymlinks: observation.excludedSymlinkCount,
                                 excludedSpecialFiles: observation.excludedSpecialFileCount,
+                                excludedVolumeBoundaries: observation.excludedVolumeBoundaryCount,
                                 changed: observation.changedDuringScanCount,
                                 wasCancelled: model.scanWasCancelled(for: observation),
                                 accountingOverflowed: observation.byteAccountingOverflowed
@@ -2093,6 +2097,7 @@ struct DashboardView: View {
                                     inaccessible: folder.inaccessibleCount,
                                     excludedSymlinks: folder.excludedSymlinkCount,
                                     excludedSpecialFiles: folder.excludedSpecialFileCount,
+                                    excludedVolumeBoundaries: folder.excludedVolumeBoundaryCount,
                                     changed: folder.changedDuringScanCount,
                                     wasCancelled: scanCancelled,
                                     accountingOverflowed: folder.byteAccountingOverflowed
@@ -2156,6 +2161,7 @@ struct DashboardView: View {
                                     inaccessible: gitUsage.incompleteCount,
                                     excludedSymlinks: gitUsage.excludedSymlinkCount,
                                     excludedSpecialFiles: gitUsage.excludedSpecialFileCount,
+                                    excludedVolumeBoundaries: gitUsage.excludedVolumeBoundaryCount,
                                     changed: gitUsage.changedDuringScanCount,
                                     wasCancelled: scanCancelled,
                                     accountingOverflowed: folder.byteAccountingOverflowed
@@ -2225,6 +2231,7 @@ struct DashboardView: View {
                                                 inaccessible: directory.incompleteCount,
                                                 excludedSymlinks: directory.excludedSymlinkCount,
                                                 excludedSpecialFiles: directory.excludedSpecialFileCount,
+                                                excludedVolumeBoundaries: directory.excludedVolumeBoundaryCount,
                                                 changed: directory.changedDuringScanCount,
                                                 wasCancelled: scanCancelled,
                                                 accountingOverflowed: folder.byteAccountingOverflowed
@@ -2325,6 +2332,7 @@ struct DashboardView: View {
                                     inaccessible: directory.incompleteCount,
                                     excludedSymlinks: directory.excludedSymlinkCount,
                                     excludedSpecialFiles: directory.excludedSpecialFileCount,
+                                    excludedVolumeBoundaries: directory.excludedVolumeBoundaryCount,
                                     changed: directory.changedDuringScanCount,
                                     wasCancelled: scanCancelled,
                                     accountingOverflowed: folder.byteAccountingOverflowed
@@ -2546,6 +2554,7 @@ struct DashboardView: View {
 
     private func coverageSummary(
         inaccessible: Int, excludedSymlinks: Int, excludedSpecialFiles: Int = 0,
+        excludedVolumeBoundaries: Int = 0,
         changed: Int, wasCancelled: Bool, accountingOverflowed: Bool = false
     ) -> String {
         var details: [String] = []
@@ -2553,6 +2562,7 @@ struct DashboardView: View {
         if inaccessible > 0 { details.append("\(inaccessible) unmeasured") }
         if excludedSymlinks > 0 { details.append("\(excludedSymlinks) symlinks not followed") }
         if excludedSpecialFiles > 0 { details.append("\(excludedSpecialFiles) special files excluded") }
+        if excludedVolumeBoundaries > 0 { details.append("\(excludedVolumeBoundaries) nested volume boundaries skipped") }
         if changed > 0 { details.append("\(changed) changed during scan") }
         if wasCancelled && details.isEmpty { details.append("scan cancelled") }
         return details.isEmpty ? "Coverage incomplete" : "Partial · " + details.joined(separator: " · ")

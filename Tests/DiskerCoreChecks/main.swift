@@ -1,4 +1,4 @@
-import DiskerCore
+@_spi(DiskerTesting) import DiskerCore
 import Darwin
 import Foundation
 
@@ -42,6 +42,7 @@ private struct DiskerCoreChecks {
             ("system memory-pressure transition mapping", testMemoryPressureEventMapping),
             ("cautious sustained process growth signal", testPossibleProcessGrowth),
             ("metadata scan and symlink exclusion", testMetadataScanAndSymlinkExclusion),
+            ("nested volume boundaries are skipped and partial", testNestedVolumeBoundary),
             ("special filesystem entries remain partial and uncounted", testSpecialFileExclusion),
             ("metadata-only filename extension summaries", testFileExtensionSummaries),
             ("Disker own-footprint scan stays in app-owned scope", testDiskerFootprintScope),
@@ -1053,6 +1054,46 @@ private struct DiskerCoreChecks {
         }
     }
 
+    private static func testNestedVolumeBoundary() throws {
+        try withTemporaryDirectory { root in
+            try Data(repeating: 0x41, count: 4096).write(to: root.appendingPathComponent("root.bin"))
+            let sameVolumeDirectory = root.appendingPathComponent("ordinary", isDirectory: true)
+            try FileManager.default.createDirectory(at: sameVolumeDirectory, withIntermediateDirectories: false)
+            try Data(repeating: 0x42, count: 2048).write(to: sameVolumeDirectory.appendingPathComponent("child.bin"))
+            let syntheticMount = root.appendingPathComponent("mounted", isDirectory: true)
+            try FileManager.default.createDirectory(at: syntheticMount, withIntermediateDirectories: false)
+            try Data(repeating: 0x43, count: 8192).write(to: syntheticMount.appendingPathComponent("external.bin"))
+            let syntheticMountedFile = root.appendingPathComponent("mounted-file.bin")
+            try Data(repeating: 0x44, count: 1024).write(to: syntheticMountedFile)
+
+            var rootMetadata = stat()
+            try expect(root.path.withCString({ lstat($0, &rootMetadata) }) == 0,
+                       "synthetic scan root should expose its actual device identifier")
+            let rootDeviceID = UInt64(truncatingIfNeeded: rootMetadata.st_dev)
+            let differentDeviceID = rootDeviceID == UInt64.max ? rootDeviceID - 1 : rootDeviceID + 1
+            let result = FolderScanner.scan(
+                roots: [root], simulatedDeviceIDsByPath: [
+                    syntheticMount.path: differentDeviceID,
+                    syntheticMountedFile.path: differentDeviceID,
+                ]
+            )
+            guard let folder = result.folders.first else {
+                throw CheckFailure.assertion("one selected root should yield a synthetic mount-boundary result")
+            }
+            try expect(folder.logicalBytes == 6144 && folder.fileCount == 2,
+                       "root totals should include same-volume files but exclude nested-volume content")
+            try expect(folder.excludedVolumeBoundaryCount == 2 && !folder.complete
+                       && folder.inaccessibleCount == 0,
+                       "an excluded nested volume should be reported as partial, not as a permission failure")
+            let ordinary = try requireSummary("ordinary", in: folder)
+            let mount = try requireSummary("mounted", in: folder)
+            try expect(ordinary.complete && ordinary.logicalBytes == 2048,
+                       "ordinary same-volume child directories should still be scanned completely")
+            try expect(!mount.complete && mount.logicalBytes == 0 && mount.excludedVolumeBoundaryCount == 1,
+                       "the excluded mountpoint should remain visible as a zero-byte incomplete boundary")
+        }
+    }
+
     private static func testFileExtensionSummaries() throws {
         try withTemporaryDirectory { root in
             let database = root.appendingPathComponent("events.sqlite")
@@ -1598,6 +1639,9 @@ private struct DiskerCoreChecks {
         try expect(folder.subdirectorySummaries.count == 1, "old folder history should preserve existing directory summaries")
         try expect(folder.subdirectorySummaries[0].changedDuringScanCount == 0, "old directory summaries should default mutation count to zero")
         try expect(folder.subdirectorySummaries[0].excludedSpecialFileCount == 0, "old directory summaries should default special-file count to zero")
+        try expect(folder.excludedVolumeBoundaryCount == 0
+                   && folder.subdirectorySummaries[0].excludedVolumeBoundaryCount == 0,
+                   "older history should default nested-volume boundary counts to zero")
         try expect(!folder.subdirectorySummaries[0].gitMetadataEntryDetected, "old directory summaries should default Git marker state to false")
         try expect(!folder.subdirectorySummariesTruncated, "old folder history should default truncation to false")
         try expect(folder.fileExtensionSummaries.isEmpty && !folder.fileExtensionSummariesTruncated,

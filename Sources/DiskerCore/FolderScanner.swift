@@ -87,6 +87,7 @@ public enum FolderScanner {
         var incompleteCount = 0
         var excludedSymlinkCount = 0
         var excludedSpecialFileCount = 0
+        var excludedVolumeBoundaryCount = 0
         var changedDuringScanCount = 0
         var gitMetadataEntryDetected = false
     }
@@ -95,6 +96,29 @@ public enum FolderScanner {
         roots: [URL],
         shouldCancel: () -> Bool = { Task.isCancelled },
         progress: (ScanProgress) -> Void = { _ in }
+    ) -> ScanObservation {
+        scanInternal(
+            roots: roots, simulatedDeviceIDsByPath: [:], shouldCancel: shouldCancel, progress: progress
+        )
+    }
+
+    /// Device-ID injection for deterministic synthetic filesystem boundary checks.
+    @_spi(DiskerTesting)
+    public static func scan(
+        roots: [URL], simulatedDeviceIDsByPath: [String: UInt64],
+        shouldCancel: () -> Bool = { Task.isCancelled },
+        progress: (ScanProgress) -> Void = { _ in }
+    ) -> ScanObservation {
+        scanInternal(
+            roots: roots, simulatedDeviceIDsByPath: simulatedDeviceIDsByPath,
+            shouldCancel: shouldCancel, progress: progress
+        )
+    }
+
+    private static func scanInternal(
+        roots: [URL], simulatedDeviceIDsByPath: [String: UInt64],
+        shouldCancel: () -> Bool,
+        progress: (ScanProgress) -> Void
     ) -> ScanObservation {
         let startedAt = Date.now
         var results: [FolderObservation] = []
@@ -133,6 +157,7 @@ public enum FolderScanner {
             var metrics: [String: DirectoryMetrics] = ["": DirectoryMetrics()]
             var inaccessibleCount = 0
             var excludedSymlinkCount = 0
+            var excludedVolumeBoundaryCount = 0
             var fileCountForProgress = 0
             var visitedEntryCountForProgress = 0
             var scanComplete = true
@@ -279,6 +304,8 @@ public enum FolderScanner {
                             continue
                         }
                         let type = metadata.st_mode & S_IFMT
+                        let entryDeviceID = simulatedDeviceIDsByPath[fullPath]
+                            ?? UInt64(truncatingIfNeeded: metadata.st_dev)
                         var reachedFileProgressInterval = false
                         if name == ".git", type == S_IFDIR || type == S_IFREG {
                             var parentMetrics = metrics[directory.relativePath, default: DirectoryMetrics()]
@@ -289,13 +316,25 @@ public enum FolderScanner {
                             excludedSymlinkCount += 1
                             addCoverageEvent(directory.relativePath, symlink: true, to: &metrics)
                         } else if type == S_IFDIR {
-                            metrics[relativePath] = DirectoryMetrics()
-                            discoveredDirectories.append(PendingDirectory(
-                                components: directory.components + [name],
-                                relativePath: relativePath,
-                                path: fullPath,
-                                expectedIdentity: identity(of: metadata)
-                            ))
+                            if entryDeviceID != rootVolumeDeviceID {
+                                excludedVolumeBoundaryCount += 1
+                                scanComplete = false
+                                metrics[relativePath] = DirectoryMetrics(excludedVolumeBoundaryCount: 1)
+                            } else {
+                                metrics[relativePath] = DirectoryMetrics()
+                                discoveredDirectories.append(PendingDirectory(
+                                    components: directory.components + [name],
+                                    relativePath: relativePath,
+                                    path: fullPath,
+                                    expectedIdentity: identity(of: metadata)
+                                ))
+                            }
+                        } else if entryDeviceID != rootVolumeDeviceID {
+                            excludedVolumeBoundaryCount += 1
+                            scanComplete = false
+                            var parentMetrics = metrics[directory.relativePath, default: DirectoryMetrics()]
+                            parentMetrics.excludedVolumeBoundaryCount += 1
+                            metrics[directory.relativePath] = parentMetrics
                         } else if type != S_IFREG {
                             excludedSpecialFileCount += 1
                             addCoverageEvent(directory.relativePath, symlink: false, specialFile: true, to: &metrics)
@@ -408,6 +447,7 @@ public enum FolderScanner {
                 parentMetrics.incompleteCount += child.incompleteCount
                 parentMetrics.excludedSymlinkCount += child.excludedSymlinkCount
                 parentMetrics.excludedSpecialFileCount += child.excludedSpecialFileCount
+                parentMetrics.excludedVolumeBoundaryCount += child.excludedVolumeBoundaryCount
                 parentMetrics.changedDuringScanCount += child.changedDuringScanCount
                 metrics[parent] = parentMetrics
             }
@@ -485,6 +525,7 @@ public enum FolderScanner {
 
             let folderComplete = scanComplete && !accountingOverflow && inaccessibleCount == 0
                 && excludedSymlinkCount == 0 && excludedSpecialFileCount == 0
+                && excludedVolumeBoundaryCount == 0
                 && metrics[""]?.changedDuringScanCount == 0
             let retainedExtensions = Array(rankedExtensions.prefix(maximumFileExtensionSummaries))
             let retainedSubdirectories = Array(summaries.prefix(maximumDirectorySummaries))
@@ -505,6 +546,7 @@ public enum FolderScanner {
                 complete: folderComplete,
                 excludedSymlinkCount: excludedSymlinkCount,
                 excludedSpecialFileCount: excludedSpecialFileCount,
+                excludedVolumeBoundaryCount: excludedVolumeBoundaryCount,
                 changedDuringScanCount: rootMetrics.changedDuringScanCount,
                 byteAccountingOverflowed: accountingOverflow,
                 gitMetadataEntryDetected: rootMetrics.gitMetadataEntryDetected,
@@ -558,6 +600,7 @@ public enum FolderScanner {
             otherFileExtensionCategoryCount: folder.otherFileExtensionCategoryCount,
             inaccessibleCount: folder.inaccessibleCount, finishedAt: folder.finishedAt, complete: false,
             excludedSymlinkCount: folder.excludedSymlinkCount, excludedSpecialFileCount: folder.excludedSpecialFileCount,
+            excludedVolumeBoundaryCount: folder.excludedVolumeBoundaryCount,
             changedDuringScanCount: folder.changedDuringScanCount + 1,
             byteAccountingOverflowed: folder.byteAccountingOverflowed,
             gitMetadataEntryDetected: folder.gitMetadataEntryDetected,
@@ -585,6 +628,7 @@ public enum FolderScanner {
             inaccessibleCount: folder.inaccessibleCount + 1, finishedAt: folder.finishedAt, complete: false,
             excludedSymlinkCount: folder.excludedSymlinkCount,
             excludedSpecialFileCount: folder.excludedSpecialFileCount,
+            excludedVolumeBoundaryCount: folder.excludedVolumeBoundaryCount,
             changedDuringScanCount: folder.changedDuringScanCount,
             byteAccountingOverflowed: folder.byteAccountingOverflowed,
             gitMetadataEntryDetected: folder.gitMetadataEntryDetected,
@@ -612,17 +656,20 @@ public enum FolderScanner {
             incompleteCount: value.incompleteCount,
             excludedSymlinkCount: value.excludedSymlinkCount,
             excludedSpecialFileCount: value.excludedSpecialFileCount,
+            excludedVolumeBoundaryCount: value.excludedVolumeBoundaryCount,
             changedDuringScanCount: value.changedDuringScanCount,
             gitMetadataEntryDetected: value.gitMetadataEntryDetected,
             complete: value.incompleteCount == 0 && value.excludedSymlinkCount == 0
                 && value.excludedSpecialFileCount == 0
+                && value.excludedVolumeBoundaryCount == 0
                 && value.changedDuringScanCount == 0 && !accountingOverflowed
         )
     }
 
     private static func emptyObservation(
         root: URL, volumeDeviceID: UInt64? = nil, inaccessibleCount: Int = 0, excludedSymlinkCount: Int = 0,
-        excludedSpecialFileCount: Int = 0, changedDuringScanCount: Int = 0
+        excludedSpecialFileCount: Int = 0, excludedVolumeBoundaryCount: Int = 0,
+        changedDuringScanCount: Int = 0
     ) -> FolderObservation {
         FolderObservation(
             path: root.path, volumeDeviceID: volumeDeviceID,
@@ -634,6 +681,7 @@ public enum FolderScanner {
             complete: false,
             excludedSymlinkCount: excludedSymlinkCount,
             excludedSpecialFileCount: excludedSpecialFileCount,
+            excludedVolumeBoundaryCount: excludedVolumeBoundaryCount,
             changedDuringScanCount: changedDuringScanCount
         )
     }
