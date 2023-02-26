@@ -52,7 +52,9 @@ public enum ObservationComparison {
                           $0.processID == latest.processID
                               && $0.name == latest.name
                               && $0.processStartTime == startTime
-                      }) else { break }
+                      }),
+                      observation.observedAt <= (matching.last?.observation.observedAt ?? latestObservation.observedAt)
+                else { break }
                 matching.append((observation, process))
             }
             guard matching.count >= 3,
@@ -169,8 +171,8 @@ public enum ObservationComparison {
                 continue
             }
             guard candidate.complete else { continue }
-            guard candidate.finishedAt <= current.finishedAt else { continue }
             guard sameFolderVolume(candidate, current) else { break }
+            guard candidate.finishedAt <= current.finishedAt else { continue }
             prior.append(candidate)
         }
         // The persisted observation list is already bounded. Keep the whole
@@ -189,17 +191,14 @@ public enum ObservationComparison {
               })
         else { return nil }
 
-        let previous = history.observations[..<currentIndex].reversed().lazy
-            .compactMap { observation in
-                observation.folders.first(where: {
-                    $0.path == current.path
-                        && $0.complete
-                        && $0.finishedAt <= current.finishedAt
-                })
-            }
-            .first
-        guard let previous, sameFolderVolume(previous, current) else { return nil }
-        return previous
+        for observation in history.observations[..<currentIndex].reversed() {
+            guard let candidate = observation.folders.first(where: {
+                $0.path == current.path && $0.complete
+            }) else { continue }
+            guard sameFolderVolume(candidate, current) else { return nil }
+            if candidate.finishedAt <= current.finishedAt { return candidate }
+        }
+        return nil
     }
 
     /// Positive allocated-byte changes for the latest complete observation of
@@ -285,19 +284,17 @@ public enum ObservationComparison {
         }
 
         var signals: [DirectoryGrowthSignal] = []
-        for folder in latestByPath.values {
-            guard folder.complete,
-                  let previousFolder = previousCompleteFolder(for: folder, in: history) else { continue }
-            let previousDirectories = directoryMap(in: previousFolder)
+        for folder in latestByPath.values where folder.complete {
             for directory in directoryMap(in: folder).values {
                 guard directory.complete,
-                      let previousDirectory = previousDirectories[directory.rootRelativePath],
-                      previousDirectory.complete,
-                      let delta = allocatedByteDelta(current: directory, previous: previousDirectory),
+                      let previous = previousCompleteDirectoryObservation(
+                          for: directory, in: folder, history: history
+                      ),
+                      let delta = allocatedByteDelta(current: directory, previous: previous.directory),
                       delta > 0 else { continue }
                 signals.append(DirectoryGrowthSignal(
-                    folder: folder, previousFolder: previousFolder,
-                    directory: directory, previousDirectory: previousDirectory,
+                    folder: folder, previousFolder: previous.folder,
+                    directory: directory, previousDirectory: previous.directory,
                     growthBytes: delta
                 ))
             }
@@ -362,37 +359,36 @@ public enum ObservationComparison {
         in folder: FolderObservation,
         history: LocalHistory
     ) -> DirectoryUsage? {
+        previousCompleteDirectoryObservation(for: current, in: folder, history: history)?.directory
+    }
+
+    private static func previousCompleteDirectoryObservation(
+        for current: DirectoryUsage,
+        in folder: FolderObservation,
+        history: LocalHistory
+    ) -> (folder: FolderObservation, directory: DirectoryUsage)? {
         guard folder.complete, current.complete,
               let currentIndex = history.observations.firstIndex(where: { observation in
                   observation.folders.contains(where: { $0.id == folder.id })
               })
         else { return nil }
 
-        // Partial and clock-future scans are skipped, but the immediately
-        // preceding complete observation with a non-future timestamp is
-        // authoritative. If the exact retained path is absent there, do not
-        // bridge across it to an older directory that may have been removed,
-        // recreated, or summarized away.
-        guard let previousFolder = history.observations[..<currentIndex].reversed().lazy
-            .compactMap({ observation in
-                observation.folders.first(where: {
-                    $0.path == folder.path
-                        && $0.complete
-                        && $0.finishedAt <= folder.finishedAt
-                })
-            })
-            .first
-        else { return nil }
-
-        guard sameFolderVolume(folder, previousFolder) else { return nil }
-
-        return previousFolder.projectDirectorySummaries.first(where: {
-            $0.rootRelativePath == current.rootRelativePath && $0.complete
-        }) ?? previousFolder.subdirectorySummaries.first(where: {
-            $0.rootRelativePath == current.rootRelativePath && $0.complete
-        }) ?? previousFolder.gitMetadataUsage.flatMap {
-            $0.rootRelativePath == current.rootRelativePath && $0.complete ? $0 : nil
+        // Partial scans and roots not selected in an observation are skipped.
+        // A complete same-root observation is an invalidation boundary when
+        // the retained directory is absent or the volume identity changed,
+        // even if its wall-clock time moved into the future after a rollback.
+        for observation in history.observations[..<currentIndex].reversed() {
+            guard let previousFolder = observation.folders.first(where: {
+                $0.path == folder.path && $0.complete
+            }) else { continue }
+            guard sameFolderVolume(folder, previousFolder) else { return nil }
+            let previousDirectory = directoryMap(in: previousFolder)[current.rootRelativePath]
+            guard let previousDirectory, previousDirectory.complete else { return nil }
+            if previousFolder.finishedAt <= folder.finishedAt {
+                return (previousFolder, previousDirectory)
+            }
         }
+        return nil
     }
 
     public static func allocatedByteDelta(

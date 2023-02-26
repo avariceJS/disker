@@ -924,6 +924,16 @@ private struct DiskerCoreChecks {
         try expect(signals.count == 1, "three consecutive samples over the minimum interval should expose a substantial sustained growth signal")
         try expect(signals[0].processID == 4242 && signals[0].growthBytes == 170 * 1_048_576, "the signal should report the same process and observed resident-size change")
 
+        let rollbackSamples = [
+            ramObservation(at: 0, processStart: processStart, residentBytes: 100 * 1_048_576),
+            ramObservation(at: 60 * 60, processStart: processStart, residentBytes: 150 * 1_048_576),
+            ramObservation(at: 15 * 60, processStart: processStart, residentBytes: 250 * 1_048_576),
+        ]
+        try expect(ObservationComparison.possibleProcessGrowth(
+            in: LocalHistory(ramObservations: rollbackSamples)
+        ).isEmpty,
+                   "a timestamp inversion must break the continuous RAM growth sample run")
+
         let fiveMinuteSamples = [0, 5, 10, 15].enumerated().map { index, minutes in
             ramObservation(
                 at: TimeInterval(minutes * 60), processStart: processStart,
@@ -1938,6 +1948,33 @@ private struct DiskerCoreChecks {
             for: currentAfterClockChange, in: clockChangeHistory
         ) == nil && ObservationComparison.growingFolders(in: clockChangeHistory).isEmpty,
                    "folder growth must not compare against a scan timestamped after the current result")
+        let sameVolumeBeforeReplacement = syntheticFolder(
+            path: "/selected/volume-clock-change", bytes: 100, complete: true,
+            volumeDeviceID: 101, finishedAt: Date(timeIntervalSince1970: 100)
+        )
+        let futureReplacementVolume = syntheticFolder(
+            path: sameVolumeBeforeReplacement.path, bytes: 900, complete: true,
+            volumeDeviceID: 202, finishedAt: Date(timeIntervalSince1970: 300)
+        )
+        let sameVolumeAfterRollback = syntheticFolder(
+            path: sameVolumeBeforeReplacement.path, bytes: 150, complete: true,
+            volumeDeviceID: 101, finishedAt: Date(timeIntervalSince1970: 200)
+        )
+        let volumeRollbackHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: sameVolumeBeforeReplacement.finishedAt,
+                            folders: [sameVolumeBeforeReplacement], cancelled: false),
+            ScanObservation(startedAt: futureReplacementVolume.finishedAt,
+                            folders: [futureReplacementVolume], cancelled: false),
+            ScanObservation(startedAt: sameVolumeAfterRollback.finishedAt,
+                            folders: [sameVolumeAfterRollback], cancelled: false),
+        ])
+        try expect(ObservationComparison.previousCompleteFolder(
+            for: sameVolumeAfterRollback, in: volumeRollbackHistory
+        ) == nil && ObservationComparison.completeFolderSeries(
+            for: sameVolumeAfterRollback, in: volumeRollbackHistory
+        ) == [sameVolumeAfterRollback]
+                   && ObservationComparison.growingFolders(in: volumeRollbackHistory).isEmpty,
+                   "a clock-future observation on a replacement volume must remain a history boundary")
 
         let retainedFolders = (0..<40).map { index in
             syntheticFolder(path: "/selected/long-history", bytes: Int64(index), complete: true)
@@ -2232,14 +2269,74 @@ private struct DiskerCoreChecks {
             for: currentClockDirectory, in: currentAfterClockRollback, history: clockRollbackHistory
         ) == nil && ObservationComparison.growingDirectories(in: clockRollbackHistory).isEmpty,
                    "directory growth must skip prior entries timestamped after the current scan")
+
+        let directoryBeforeAbsence = folderWithDirectory(
+            id: UUID(), path: "/clock-absence", bytes: 100, complete: true,
+            directory: directory("Project", bytes: 100, complete: true),
+            finishedAt: Date(timeIntervalSince1970: 100)
+        )
+        let directoryAbsentFuture = folderWithDirectory(
+            id: UUID(), path: "/clock-absence", bytes: 200, complete: true,
+            directory: directory("Elsewhere", bytes: 200, complete: true),
+            finishedAt: Date(timeIntervalSince1970: 300)
+        )
+        let directoryAfterRollback = folderWithDirectory(
+            id: UUID(), path: "/clock-absence", bytes: 250, complete: true,
+            directory: directory("Project", bytes: 250, complete: true),
+            finishedAt: Date(timeIntervalSince1970: 200)
+        )
+        let directoryAbsenceHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: directoryBeforeAbsence.finishedAt,
+                            folders: [directoryBeforeAbsence], cancelled: false),
+            ScanObservation(startedAt: directoryAbsentFuture.finishedAt,
+                            folders: [directoryAbsentFuture], cancelled: false),
+            ScanObservation(startedAt: directoryAfterRollback.finishedAt,
+                            folders: [directoryAfterRollback], cancelled: false),
+        ])
+        let currentAfterAbsence = try requireSummary("Project", in: directoryAfterRollback)
+        try expect(ObservationComparison.previousCompleteDirectory(
+            for: currentAfterAbsence, in: directoryAfterRollback, history: directoryAbsenceHistory
+        ) == nil && ObservationComparison.growingDirectories(in: directoryAbsenceHistory).isEmpty,
+                   "a clock-future complete scan where the retained directory is absent must prevent bridging to older history")
+
+        let directoryBeforeVolumeChange = folderWithDirectory(
+            id: UUID(), path: "/clock-volume", bytes: 100, complete: true,
+            directory: directory("Project", bytes: 100, complete: true),
+            finishedAt: Date(timeIntervalSince1970: 100), volumeDeviceID: 101
+        )
+        let directoryOnReplacementVolume = folderWithDirectory(
+            id: UUID(), path: "/clock-volume", bytes: 900, complete: true,
+            directory: directory("Project", bytes: 900, complete: true),
+            finishedAt: Date(timeIntervalSince1970: 300), volumeDeviceID: 202
+        )
+        let directoryOnOriginalVolumeAfterRollback = folderWithDirectory(
+            id: UUID(), path: "/clock-volume", bytes: 150, complete: true,
+            directory: directory("Project", bytes: 150, complete: true),
+            finishedAt: Date(timeIntervalSince1970: 200), volumeDeviceID: 101
+        )
+        let directoryVolumeHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: directoryBeforeVolumeChange.finishedAt,
+                            folders: [directoryBeforeVolumeChange], cancelled: false),
+            ScanObservation(startedAt: directoryOnReplacementVolume.finishedAt,
+                            folders: [directoryOnReplacementVolume], cancelled: false),
+            ScanObservation(startedAt: directoryOnOriginalVolumeAfterRollback.finishedAt,
+                            folders: [directoryOnOriginalVolumeAfterRollback], cancelled: false),
+        ])
+        let originalVolumeDirectory = try requireSummary("Project", in: directoryOnOriginalVolumeAfterRollback)
+        try expect(ObservationComparison.previousCompleteDirectory(
+            for: originalVolumeDirectory, in: directoryOnOriginalVolumeAfterRollback,
+            history: directoryVolumeHistory
+        ) == nil && ObservationComparison.growingDirectories(in: directoryVolumeHistory).isEmpty,
+                   "a clock-future root on a replacement volume must prevent bridging directory history")
     }
 
     private static func folderWithDirectory(
         id: UUID, path: String, bytes: Int64, complete: Bool, directory: DirectoryUsage,
-        finishedAt: Date = .now
+        finishedAt: Date = .now, volumeDeviceID: UInt64? = nil
     ) -> FolderObservation {
         FolderObservation(
-            id: id, path: path, displayName: URL(fileURLWithPath: path).lastPathComponent,
+            id: id, path: path, volumeDeviceID: volumeDeviceID,
+            displayName: URL(fileURLWithPath: path).lastPathComponent,
             logicalBytes: bytes, allocatedBytes: bytes, fileCount: 1,
             inaccessibleCount: complete ? 0 : 1, finishedAt: finishedAt, complete: complete,
             subdirectorySummaries: [directory]
