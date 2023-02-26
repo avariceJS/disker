@@ -39,6 +39,7 @@ public struct DuplicateVerificationResult: Codable, Equatable, Sendable {
     public let inaccessibleCount: Int
     public let excludedSymlinkCount: Int
     public let excludedSpecialFileCount: Int
+    public let excludedVolumeBoundaryCount: Int
     public let changedDuringCheckCount: Int
     public let byteAccountingOverflowed: Bool
     public let cancelled: Bool
@@ -48,6 +49,7 @@ public struct DuplicateVerificationResult: Codable, Equatable, Sendable {
     public init(
         verifiedAt: Date? = .now, selectedRootPaths: [String], groups: [DuplicateGroup], checkedFileCount: Int,
         inaccessibleCount: Int, excludedSymlinkCount: Int, excludedSpecialFileCount: Int,
+        excludedVolumeBoundaryCount: Int = 0,
         changedDuringCheckCount: Int, cancelled: Bool, byteAccountingOverflowed: Bool = false,
         selectedRootLimitExceeded: Bool = false
     ) {
@@ -58,6 +60,7 @@ public struct DuplicateVerificationResult: Codable, Equatable, Sendable {
         self.inaccessibleCount = inaccessibleCount
         self.excludedSymlinkCount = excludedSymlinkCount
         self.excludedSpecialFileCount = excludedSpecialFileCount
+        self.excludedVolumeBoundaryCount = excludedVolumeBoundaryCount
         self.changedDuringCheckCount = changedDuringCheckCount
         self.byteAccountingOverflowed = byteAccountingOverflowed
         self.cancelled = cancelled
@@ -66,13 +69,13 @@ public struct DuplicateVerificationResult: Codable, Equatable, Sendable {
 
     public var complete: Bool {
         !selectedRootLimitExceeded && !cancelled && inaccessibleCount == 0 && excludedSymlinkCount == 0
-            && excludedSpecialFileCount == 0 && changedDuringCheckCount == 0
+            && excludedSpecialFileCount == 0 && excludedVolumeBoundaryCount == 0 && changedDuringCheckCount == 0
             && !byteAccountingOverflowed
     }
 
     private enum CodingKeys: String, CodingKey {
         case verifiedAt, selectedRootPaths, groups, checkedFileCount, inaccessibleCount
-        case excludedSymlinkCount, excludedSpecialFileCount, changedDuringCheckCount
+        case excludedSymlinkCount, excludedSpecialFileCount, excludedVolumeBoundaryCount, changedDuringCheckCount
         case byteAccountingOverflowed, cancelled, selectedRootLimitExceeded
     }
 
@@ -85,6 +88,7 @@ public struct DuplicateVerificationResult: Codable, Equatable, Sendable {
         inaccessibleCount = try values.decode(Int.self, forKey: .inaccessibleCount)
         excludedSymlinkCount = try values.decode(Int.self, forKey: .excludedSymlinkCount)
         excludedSpecialFileCount = try values.decode(Int.self, forKey: .excludedSpecialFileCount)
+        excludedVolumeBoundaryCount = try values.decodeIfPresent(Int.self, forKey: .excludedVolumeBoundaryCount) ?? 0
         changedDuringCheckCount = try values.decode(Int.self, forKey: .changedDuringCheckCount)
         byteAccountingOverflowed = try values.decodeIfPresent(Bool.self, forKey: .byteAccountingOverflowed) ?? false
         cancelled = try values.decode(Bool.self, forKey: .cancelled)
@@ -149,6 +153,29 @@ public enum DuplicateVerifier {
         shouldCancel: () -> Bool = { Task.isCancelled },
         progress: (DuplicateVerificationProgress) -> Void = { _ in }
     ) -> DuplicateVerificationResult {
+        verifyInternal(
+            roots: roots, simulatedDeviceIDsByPath: [:], shouldCancel: shouldCancel, progress: progress
+        )
+    }
+
+    /// Device-ID injection for deterministic synthetic filesystem boundary checks.
+    @_spi(DiskerTesting)
+    public static func verify(
+        roots: [URL], simulatedDeviceIDsByPath: [String: UInt64],
+        shouldCancel: () -> Bool = { Task.isCancelled },
+        progress: (DuplicateVerificationProgress) -> Void = { _ in }
+    ) -> DuplicateVerificationResult {
+        verifyInternal(
+            roots: roots, simulatedDeviceIDsByPath: simulatedDeviceIDsByPath,
+            shouldCancel: shouldCancel, progress: progress
+        )
+    }
+
+    private static func verifyInternal(
+        roots: [URL], simulatedDeviceIDsByPath: [String: UInt64],
+        shouldCancel: () -> Bool,
+        progress: (DuplicateVerificationProgress) -> Void
+    ) -> DuplicateVerificationResult {
         guard roots.count <= maximumSelectedRootCount else {
             return DuplicateVerificationResult(
                 verifiedAt: nil, selectedRootPaths: [], groups: [], checkedFileCount: 0,
@@ -169,6 +196,7 @@ public enum DuplicateVerifier {
         var inaccessibleCount = 0
         var excludedSymlinkCount = 0
         var excludedSpecialFileCount = 0
+        var excludedVolumeBoundaryCount = 0
         var changedDuringCheckCount = 0
         var byteAccountingOverflowed = false
         var cancelled = false
@@ -198,6 +226,7 @@ public enum DuplicateVerifier {
                 continue
             }
             rootDescriptors.append(rootDescriptor)
+            let rootDeviceID = UInt64(truncatingIfNeeded: metadata.st_dev)
 
             var pending = [PendingDirectory(
                 components: [], path: root.path, identity: directoryIdentity(metadata)
@@ -251,6 +280,12 @@ public enum DuplicateVerifier {
                     guard statResult == 0 else { inaccessibleCount += 1; continue }
                     let components = directory.components + [name]
                     let path = (directory.path as NSString).appendingPathComponent(name)
+                    let childDeviceID = simulatedDeviceIDsByPath[path]
+                        ?? UInt64(truncatingIfNeeded: child.st_dev)
+                    if child.st_mode & S_IFMT != S_IFLNK && childDeviceID != rootDeviceID {
+                        excludedVolumeBoundaryCount += 1
+                        continue
+                    }
                     switch child.st_mode & S_IFMT {
                     case S_IFLNK:
                         excludedSymlinkCount += 1
@@ -403,6 +438,7 @@ public enum DuplicateVerifier {
             inaccessibleCount: inaccessibleCount,
             excludedSymlinkCount: excludedSymlinkCount,
             excludedSpecialFileCount: excludedSpecialFileCount,
+            excludedVolumeBoundaryCount: excludedVolumeBoundaryCount,
             changedDuringCheckCount: changedDuringCheckCount,
             cancelled: cancelled,
             byteAccountingOverflowed: byteAccountingOverflowed

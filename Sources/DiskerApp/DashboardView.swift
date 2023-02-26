@@ -1798,6 +1798,7 @@ struct DashboardView: View {
         if result.inaccessibleCount > 0 { reasons.append("\(result.inaccessibleCount) inaccessible") }
         if result.excludedSymlinkCount > 0 { reasons.append("\(result.excludedSymlinkCount) symlinks skipped") }
         if result.excludedSpecialFileCount > 0 { reasons.append("\(result.excludedSpecialFileCount) special files skipped") }
+        if result.excludedVolumeBoundaryCount > 0 { reasons.append("\(result.excludedVolumeBoundaryCount) nested volume boundaries skipped") }
         if result.changedDuringCheckCount > 0 { reasons.append("\(result.changedDuringCheckCount) items changed") }
         if result.cancelled { reasons.append("cancelled") }
         return "Partial coverage · " + reasons.joined(separator: " · ")

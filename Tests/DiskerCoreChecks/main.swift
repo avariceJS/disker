@@ -47,6 +47,7 @@ private struct DiskerCoreChecks {
             ("metadata-only filename extension summaries", testFileExtensionSummaries),
             ("Disker own-footprint scan stays in app-owned scope", testDiskerFootprintScope),
             ("selected-scope duplicate verification", testDuplicateVerification),
+            ("duplicate reads stay inside selected root volumes", testDuplicateVolumeBoundary),
             ("duplicate verification root limit", testDuplicateVerificationRootLimit),
             ("duplicate verification cancellation", testDuplicateVerificationCancellation),
             ("duplicate directory mutation coverage", testDuplicateDirectoryMutationCoverage),
@@ -1314,6 +1315,43 @@ private struct DiskerCoreChecks {
             } catch CleanupPlanError.pathOutsideSelectedScope { }
             let outsideAfterPlan = try Data(contentsOf: outside)
             try expect(outsideAfterPlan == sharedBytes, "rejected out-of-scope plans must leave files unchanged")
+        }
+    }
+
+    private static func testDuplicateVolumeBoundary() throws {
+        try withTemporaryDirectory { root in
+            let matchingBytes = Data("selected-root duplicate".utf8)
+            let first = root.appendingPathComponent("first.bin")
+            let second = root.appendingPathComponent("second.bin")
+            let mountedFile = root.appendingPathComponent("mounted-file.bin")
+            try matchingBytes.write(to: first)
+            try matchingBytes.write(to: second)
+            try matchingBytes.write(to: mountedFile)
+
+            let mountedDirectory = root.appendingPathComponent("mounted", isDirectory: true)
+            try FileManager.default.createDirectory(at: mountedDirectory, withIntermediateDirectories: false)
+            try matchingBytes.write(to: mountedDirectory.appendingPathComponent("external-a.bin"))
+            try matchingBytes.write(to: mountedDirectory.appendingPathComponent("external-b.bin"))
+
+            var rootMetadata = stat()
+            try expect(root.path.withCString({ lstat($0, &rootMetadata) }) == 0,
+                       "synthetic duplicate root should expose its actual device identifier")
+            let rootDeviceID = UInt64(truncatingIfNeeded: rootMetadata.st_dev)
+            let differentDeviceID = rootDeviceID == UInt64.max ? rootDeviceID - 1 : rootDeviceID + 1
+            let result = DuplicateVerifier.verify(
+                roots: [root], simulatedDeviceIDsByPath: [
+                    mountedDirectory.path: differentDeviceID,
+                    mountedFile.path: differentDeviceID,
+                ]
+            )
+            try expect(result.groups.count == 1
+                       && result.groups[0].files.map(\.path) == [first.path, second.path],
+                       "only duplicate files inside the selected root volume should be reported")
+            try expect(result.checkedFileCount == 2 && result.excludedVolumeBoundaryCount == 2
+                       && !result.complete,
+                       "cross-volume candidates should not be read and should make verification partial")
+            try expect(result.selectedRootPaths == [root.path],
+                       "verification provenance should retain the single explicitly selected root")
         }
     }
 
