@@ -146,18 +146,21 @@ private struct DiskerCoreChecks {
         let result = DuplicateVerificationResult(
             selectedRootPaths: ["/synthetic"], groups: [], checkedFileCount: 0,
             inaccessibleCount: 0, excludedSymlinkCount: 0, excludedSpecialFileCount: 0,
+            excludedVolumeBoundaryCount: 2,
             changedDuringCheckCount: 0, cancelled: false, byteAccountingOverflowed: true
         )
         try expect(!result.complete, "an overflowing allocated estimate must prevent claiming complete duplicate coverage")
         let encoded = try JSONEncoder().encode(result)
         let decoded = try JSONDecoder().decode(DuplicateVerificationResult.self, from: encoded)
-        try expect(decoded.byteAccountingOverflowed && !decoded.complete,
-                   "duplicate overflow disclosure must survive Codable round-trip")
+        try expect(decoded.byteAccountingOverflowed && decoded.excludedVolumeBoundaryCount == 2
+                   && !decoded.complete,
+                   "duplicate overflow and nested-volume coverage must survive Codable round-trip")
 
         let legacyJSON = #"{"verifiedAt":null,"selectedRootPaths":["/synthetic"],"groups":[],"checkedFileCount":0,"inaccessibleCount":0,"excludedSymlinkCount":0,"excludedSpecialFileCount":0,"changedDuringCheckCount":0,"cancelled":false}"#
         let legacy = try JSONDecoder().decode(DuplicateVerificationResult.self, from: Data(legacyJSON.utf8))
-        try expect(!legacy.byteAccountingOverflowed && !legacy.selectedRootLimitExceeded && legacy.complete,
-                   "legacy duplicate results should default newer coverage flags to false")
+        try expect(!legacy.byteAccountingOverflowed && !legacy.selectedRootLimitExceeded
+                   && legacy.excludedVolumeBoundaryCount == 0 && legacy.complete,
+                   "legacy duplicate results should default newer coverage flags to false and zero boundaries")
     }
 
     private static func testCapacityClamping() throws {
