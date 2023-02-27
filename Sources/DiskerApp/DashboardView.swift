@@ -280,6 +280,32 @@ final class DashboardModel {
         }
     }
 
+    func rescanAssociatedFolder(_ path: String) {
+        guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
+        if rememberedScopes.contains(where: { $0.path == path }) {
+            rescanRememberedFolder(path)
+            return
+        }
+
+        let selectedURL = URL(fileURLWithPath: path, isDirectory: true)
+        let panel = NSOpenPanel()
+        panel.title = "Re-select Associated Folder"
+        panel.prompt = "Rescan Folder"
+        panel.message = "Select this exact folder to measure it again and save read-only access for later scans."
+        panel.directoryURL = selectedURL.deletingLastPathComponent()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        guard panel.runModal() == .OK, let chosenURL = panel.urls.first else { return }
+        guard chosenURL.standardizedFileURL.path == selectedURL.standardizedFileURL.path else {
+            errorMessage = "Choose the same associated folder to keep its history comparable. No scan was started."
+            return
+        }
+        rememberFolders([chosenURL])
+        scan([chosenURL])
+    }
+
     func forgetRememberedFolder(_ path: String) {
         do {
             rememberedScopes = try SelectedScopeBookmarkStore.remove(path: path)
@@ -1731,6 +1757,7 @@ struct DashboardView: View {
 
     private func applicationAssociationRow(path: String, bundle: FolderObservation) -> some View {
         let folderName = URL(fileURLWithPath: path).lastPathComponent
+        let hasSavedAccess = model.rememberedScopes.contains(where: { $0.path == path })
         let attribution = ApplicationPathAttribution.classify(
             bundleIdentifier: bundle.applicationBundleIdentifier,
             associatedFolderPath: path,
@@ -1808,6 +1835,12 @@ struct DashboardView: View {
                 }
             }
             Spacer(minLength: 4)
+            Button(hasSavedAccess ? "Rescan" : "Select to rescan…") {
+                model.rescanAssociatedFolder(path)
+            }
+            .controlSize(.small)
+            .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
+            .help(hasSavedAccess ? "Measure this selected app-associated folder again" : "Re-select this exact folder to measure it again")
             Button {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
             } label: {
