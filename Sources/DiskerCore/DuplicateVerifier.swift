@@ -180,7 +180,7 @@ public enum DuplicateVerifier {
         roots: [URL],
         shouldCancel: () -> Bool = { Task.isCancelled },
         progress: (DuplicateVerificationProgress) -> Void = { _ in },
-        authorizeContentRead: (DuplicateVerificationReadEstimate) -> Bool = { _ in true }
+        authorizeContentRead: (DuplicateVerificationReadEstimate) -> Bool
     ) -> DuplicateVerificationResult {
         verifyInternal(
             roots: roots, simulatedDeviceIDsByPath: [:], shouldCancel: shouldCancel,
@@ -194,7 +194,7 @@ public enum DuplicateVerifier {
         roots: [URL], simulatedDeviceIDsByPath: [String: UInt64],
         shouldCancel: () -> Bool = { Task.isCancelled },
         progress: (DuplicateVerificationProgress) -> Void = { _ in },
-        authorizeContentRead: (DuplicateVerificationReadEstimate) -> Bool = { _ in true }
+        authorizeContentRead: (DuplicateVerificationReadEstimate) -> Bool
     ) -> DuplicateVerificationResult {
         verifyInternal(
             roots: roots, simulatedDeviceIDsByPath: simulatedDeviceIDsByPath,

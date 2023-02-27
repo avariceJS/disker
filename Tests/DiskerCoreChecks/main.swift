@@ -1331,6 +1331,17 @@ private struct DiskerCoreChecks {
                        "declining the candidate read estimate should end verification before hashing files")
             try expect(!deniedReadProgress.contains(where: { $0.phase == .readingContents || $0.bytesHashed > 0 }),
                        "declining consent must not report any file-content bytes read")
+
+            let uniqueRoot = root.appendingPathComponent("unique-only", isDirectory: true)
+            try FileManager.default.createDirectory(at: uniqueRoot, withIntermediateDirectories: false)
+            try Data("one unique file".utf8).write(to: uniqueRoot.appendingPathComponent("only.bin"))
+            var unnecessaryAuthorizationRequested = false
+            let uniqueOnly = DuplicateVerifier.verify(roots: [uniqueRoot], authorizeContentRead: { _ in
+                unnecessaryAuthorizationRequested = true
+                return true
+            })
+            try expect(!unnecessaryAuthorizationRequested && uniqueOnly.complete && uniqueOnly.checkedFileCount == 0,
+                       "verification without size-matched candidates should finish without requesting file-read consent")
             let firstAfterVerification = try Data(contentsOf: first)
             let secondAfterVerification = try Data(contentsOf: second)
             try expect(firstAfterVerification == sharedBytes && secondAfterVerification == sharedBytes, "verification must leave all selected files unchanged")
@@ -1402,7 +1413,8 @@ private struct DiskerCoreChecks {
                 roots: [root], simulatedDeviceIDsByPath: [
                     mountedDirectory.path: differentDeviceID,
                     mountedFile.path: differentDeviceID,
-                ]
+                ],
+                authorizeContentRead: { _ in true }
             )
             try expect(result.groups.count == 1
                        && result.groups[0].files.map(\.path) == [first.path, second.path],
@@ -1419,7 +1431,9 @@ private struct DiskerCoreChecks {
         try withTemporaryDirectory { root in
             try Data("synthetic bytes".utf8).write(to: root.appendingPathComponent("one.bin"))
             try Data("synthetic bytes".utf8).write(to: root.appendingPathComponent("two.bin"))
-            let result = DuplicateVerifier.verify(roots: [root], shouldCancel: { true })
+            let result = DuplicateVerifier.verify(
+                roots: [root], shouldCancel: { true }, authorizeContentRead: { _ in true }
+            )
             try expect(result.cancelled && !result.complete, "cancelled duplicate verification must stay explicitly incomplete")
             try expect(result.groups.isEmpty && result.checkedFileCount == 0, "immediate cancellation must not read or report file content")
         }
@@ -1429,7 +1443,7 @@ private struct DiskerCoreChecks {
         let roots = (0...DuplicateVerifier.maximumSelectedRootCount).map {
             URL(fileURLWithPath: "/synthetic/duplicate-root-\($0)")
         }
-        let result = DuplicateVerifier.verify(roots: roots)
+        let result = DuplicateVerifier.verify(roots: roots, authorizeContentRead: { _ in true })
         try expect(result.selectedRootLimitExceeded && !result.complete,
                    "duplicate verification must reject over-limit root sets explicitly")
         try expect(result.verifiedAt == nil && result.selectedRootPaths.isEmpty,
@@ -1449,7 +1463,7 @@ private struct DiskerCoreChecks {
                 mutated = true
                 try? Data("created after enumeration".utf8)
                     .write(to: root.appendingPathComponent("late-file.bin"))
-            })
+            }, authorizeContentRead: { _ in true })
             try expect(mutated, "the verification progress checkpoint should run after candidate hashing")
             try expect(result.changedDuringCheckCount > 0 && !result.complete, "a directory entry change during hashing must make final coverage partial")
             try expect(result.groups.count == 1, "already verified groups may be retained alongside an explicit partial-coverage result")
@@ -1476,7 +1490,7 @@ private struct DiskerCoreChecks {
                 } catch {
                     // The assertions below make a failed mutation visible.
                 }
-            })
+            }, authorizeContentRead: { _ in true })
             try expect(changedPreviouslyHashedFile, "the fixture should mutate an earlier file while a later file is being hashed")
             try expect(result.changedDuringCheckCount > 0 && !result.complete,
                        "final file metadata validation should detect a mutation after hashing that file")
