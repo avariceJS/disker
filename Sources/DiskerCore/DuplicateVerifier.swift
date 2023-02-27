@@ -2,8 +2,15 @@ import CryptoKit
 import Darwin
 import Foundation
 
+public enum DuplicateVerificationPhase: Sendable, Equatable {
+    case readingMetadata
+    case readingContents
+}
+
 public struct DuplicateVerificationProgress: Sendable {
+    public let phase: DuplicateVerificationPhase
     public let currentPath: String
+    public let entriesVisited: Int
     public let bytesHashed: UInt64
     public let candidateBytes: UInt64
 }
@@ -200,6 +207,8 @@ public enum DuplicateVerifier {
         var changedDuringCheckCount = 0
         var byteAccountingOverflowed = false
         var cancelled = false
+        var entriesVisited = 0
+        var lastMetadataProgressCount = 0
 
         for root in roots {
             if shouldCancel() { cancelled = true; break }
@@ -273,13 +282,21 @@ public enum DuplicateVerifier {
                     if name == "." || name == ".." { continue }
                     if shouldCancel() { cancelled = true; break }
 
+                    let components = directory.components + [name]
+                    let path = (directory.path as NSString).appendingPathComponent(name)
+                    entriesVisited += 1
+                    if entriesVisited - lastMetadataProgressCount >= 128 {
+                        lastMetadataProgressCount = entriesVisited
+                        progress(DuplicateVerificationProgress(
+                            phase: .readingMetadata, currentPath: path, entriesVisited: entriesVisited,
+                            bytesHashed: 0, candidateBytes: 0
+                        ))
+                    }
                     var child = stat()
                     let statResult = name.withCString {
                         fstatat(directoryFD, $0, &child, AT_SYMLINK_NOFOLLOW)
                     }
                     guard statResult == 0 else { inaccessibleCount += 1; continue }
-                    let components = directory.components + [name]
-                    let path = (directory.path as NSString).appendingPathComponent(name)
                     let childDeviceID = simulatedDeviceIDsByPath[path]
                         ?? UInt64(truncatingIfNeeded: child.st_dev)
                     if child.st_mode & S_IFMT != S_IFLNK && childDeviceID != rootDeviceID {
@@ -324,6 +341,13 @@ public enum DuplicateVerifier {
                 }
                 closedir(stream)
                 close(directoryFD)
+                if entriesVisited > lastMetadataProgressCount {
+                    lastMetadataProgressCount = entriesVisited
+                    progress(DuplicateVerificationProgress(
+                        phase: .readingMetadata, currentPath: directory.path, entriesVisited: entriesVisited,
+                        bytesHashed: 0, candidateBytes: 0
+                    ))
+                }
                 pending.append(contentsOf: discovered)
             }
             if cancelled { break }
@@ -350,6 +374,10 @@ public enum DuplicateVerifier {
                 return overflow ? UInt64.max : sum
             }
         }
+        progress(DuplicateVerificationProgress(
+            phase: .readingContents, currentPath: "", entriesVisited: entriesVisited,
+            bytesHashed: 0, candidateBytes: candidateBytes
+        ))
         var bytesHashed: UInt64 = 0
         var lastProgressBytes: UInt64 = 0
         var checkedFileCount = 0
@@ -365,7 +393,8 @@ public enum DuplicateVerifier {
                     if bytesHashed - lastProgressBytes >= 16 * 1024 * 1024 || bytesHashed == candidateBytes {
                         lastProgressBytes = bytesHashed
                         progress(DuplicateVerificationProgress(
-                            currentPath: path, bytesHashed: bytesHashed,
+                            phase: .readingContents, currentPath: path, entriesVisited: entriesVisited,
+                            bytesHashed: bytesHashed,
                             candidateBytes: candidateBytes
                         ))
                     }

@@ -16,7 +16,9 @@ final class DashboardModel {
     var isAppActive = false
     var duplicateResult: DuplicateVerificationResult?
     var isVerifyingDuplicates = false
+    var duplicateProgressPhase: DuplicateVerificationPhase = .readingMetadata
     var duplicateCurrentPath = ""
+    var duplicateEntriesVisited = 0
     var duplicateBytesHashed: UInt64 = 0
     var duplicateCandidateBytes: UInt64 = 0
     var preservedDuplicatePaths: [String: String] = [:]
@@ -355,14 +357,18 @@ final class DashboardModel {
         }
         duplicateResult = nil
         preservedDuplicatePaths = [:]
+        duplicateProgressPhase = .readingMetadata
         duplicateCurrentPath = ""
+        duplicateEntriesVisited = 0
         duplicateBytesHashed = 0
         duplicateCandidateBytes = 0
         isVerifyingDuplicates = true
         let task = Task.detached(priority: .utility) {
             DuplicateVerifier.verify(roots: roots, progress: { [weak self] progress in
                 Task { @MainActor [weak self] in
+                    self?.duplicateProgressPhase = progress.phase
                     self?.duplicateCurrentPath = progress.currentPath
+                    self?.duplicateEntriesVisited = progress.entriesVisited
                     self?.duplicateBytesHashed = progress.bytesHashed
                     self?.duplicateCandidateBytes = progress.candidateBytes
                 }
@@ -1338,9 +1344,11 @@ struct DashboardView: View {
                 )
                 if model.isVerifyingDuplicates {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Verifying same-size file candidates…")
+                        Text(model.duplicateProgressPhase == .readingMetadata
+                             ? "Reviewing selected-folder metadata…"
+                             : "Verifying same-size file candidates…")
                             .font(.headline)
-                        if model.duplicateCandidateBytes > 0 {
+                        if model.duplicateProgressPhase == .readingContents && model.duplicateCandidateBytes > 0 {
                             ProgressView(
                                 value: Double(model.duplicateBytesHashed),
                                 total: Double(model.duplicateCandidateBytes)
@@ -1354,7 +1362,11 @@ struct DashboardView: View {
                             .lineLimit(2)
                             .truncationMode(.middle)
                         HStack {
-                            Text("Read \(format(model.duplicateBytesHashed)) of \(format(model.duplicateCandidateBytes)) candidate bytes")
+                            Text(model.duplicateProgressPhase == .readingMetadata
+                                 ? "\(model.duplicateEntriesVisited) entries inspected · no file contents read"
+                                 : model.duplicateCandidateBytes > 0
+                                     ? "Read \(format(model.duplicateBytesHashed)) of \(format(model.duplicateCandidateBytes)) candidate bytes"
+                                     : "No candidate bytes to read")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()

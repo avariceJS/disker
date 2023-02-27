@@ -1266,13 +1266,32 @@ private struct DiskerCoreChecks {
                 at: root.appendingPathComponent("alias.bin"), withDestinationURL: first
             )
 
+            var progressEvents: [DuplicateVerificationProgress] = []
             var lastProgress: DuplicateVerificationProgress?
-            let result = DuplicateVerifier.verify(roots: [root], progress: { lastProgress = $0 })
+            let result = DuplicateVerifier.verify(roots: [root], progress: {
+                progressEvents.append($0)
+                lastProgress = $0
+            })
             try expect(result.groups.count == 1, "only byte-identical same-size files should form a duplicate group")
             try expect(result.groups[0].files.map(\.path) == [first.path, second.path], "hard-link aliases should not be reported as separate files")
             try expect(result.groups[0].files.allSatisfy { $0.logicalBytes == UInt64(sharedBytes.count) }, "duplicate candidates should retain exact logical sizes")
             try expect(result.checkedFileCount == 3, "only regular files in shared-size buckets should be hashed")
             try expect(result.excludedSymlinkCount == 1 && !result.complete, "symlinks should remain excluded and make verification coverage partial")
+            let metadataProgress = progressEvents.first { $0.phase == .readingMetadata }
+            let contentProgress = progressEvents.first { $0.phase == .readingContents }
+            guard let metadataIndex = progressEvents.firstIndex(where: { $0.phase == .readingMetadata }),
+                  let contentIndex = progressEvents.firstIndex(where: { $0.phase == .readingContents }) else {
+                throw CheckFailure.assertion("duplicate verification should report both metadata and content phases")
+            }
+            try expect(metadataIndex < contentIndex,
+                       "metadata progress must precede the content-reading phase")
+            try expect(metadataProgress?.entriesVisited == 6
+                       && metadataProgress?.bytesHashed == 0 && metadataProgress?.candidateBytes == 0,
+                       "metadata progress should identify examined entries without implying a file-content read")
+            try expect(contentProgress?.entriesVisited == 6
+                       && contentProgress?.bytesHashed == 0
+                       && contentProgress?.candidateBytes == UInt64(sharedBytes.count * 3),
+                       "the content phase should begin only after metadata identifies the candidate read volume")
             try expect(lastProgress?.bytesHashed == UInt64(sharedBytes.count * 3), "progress should report bytes actually read from size-matched candidates")
             let firstAfterVerification = try Data(contentsOf: first)
             let secondAfterVerification = try Data(contentsOf: second)
