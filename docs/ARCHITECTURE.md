@@ -24,6 +24,8 @@ Visible extension categories may also receive a filename-only artifact clue for 
 
 The native folder picker and scan entry point cap each observation at 50 selected roots, matching the existing maximum app-folder association count. Over-limit selections are rejected before bookmark creation or scanning so one observation cannot grow without bound from an accidental bulk selection.
 
+When a scan contains identical selected paths or a lexical parent/child pair, Overview and Folders warn that root totals can include the same files and must not be added together. The comparison normalizes path syntax and checks component boundaries; it does not resolve symlinks, aliases, or filesystem identity.
+
 The overview's folder-growth highlights are the largest three positive allocated-byte deltas for each path's latest complete scan against its previous complete scan. Paths are never compared across roots. A newer partial scan suppresses that path's older signal, and shrinking or unchanged paths are omitted. These highlights are historical selected-path evidence, not a claim that a folder caused a system-capacity change.
 
 The overview separately highlights up to three growing descendant paths. A directory is compared only with the same relative path under the same selected root and the previous complete observation. The path must appear in both retained summaries; an omitted path is not interpreted as zero even when a top-directory summary was truncated. A newer partial root scan suppresses older signals. These are allocated-byte estimates and do not establish project ownership.

@@ -42,6 +42,7 @@ private struct DiskerCoreChecks {
             ("system memory-pressure transition mapping", testMemoryPressureEventMapping),
             ("cautious sustained process growth signal", testPossibleProcessGrowth),
             ("metadata scan and symlink exclusion", testMetadataScanAndSymlinkExclusion),
+            ("selected root overlap boundaries", testSelectedRootOverlap),
             ("nested volume boundaries are skipped and partial", testNestedVolumeBoundary),
             ("special filesystem entries remain partial and uncounted", testSpecialFileExclusion),
             ("metadata-only filename extension summaries", testFileExtensionSummaries),
@@ -1056,6 +1057,25 @@ private struct DiskerCoreChecks {
             try expect(nestedSummary.excludedSymlinkCount == 1, "nested summary should report its own excluded symlink")
             try expect(!nestedSummary.complete, "a subtree with an excluded symlink should not look fully measured")
         }
+    }
+
+    private static func testSelectedRootOverlap() throws {
+        try expect(
+            SelectedRootScope.hasOverlappingPaths(["/Users/example/Project", "/Users/example/Project/Build"]),
+            "a selected parent and child folder should be recognized as overlapping scopes"
+        )
+        try expect(
+            SelectedRootScope.hasOverlappingPaths(["/Users/example/Project", "/Users/example/Project"]),
+            "the same path selected twice should be recognized as an overlapping scope"
+        )
+        try expect(
+            !SelectedRootScope.hasOverlappingPaths(["/Users/example/Project", "/Users/example/Project-Archive"]),
+            "a sibling path with the same textual prefix must not be treated as a descendant"
+        )
+        try expect(
+            SelectedRootScope.hasOverlappingPaths(["/", "/Users/example/Project"]),
+            "the filesystem root should overlap every descendant path"
+        )
     }
 
     private static func testNestedVolumeBoundary() throws {

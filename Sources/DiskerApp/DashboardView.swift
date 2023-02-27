@@ -663,6 +663,7 @@ struct DashboardView: View {
                     emptyHistoryCard
                 } else {
                     scanCard
+                    selectedRootOverlapNotice
                     folderGrowthCard
                     directoryGrowthCard
                     if let latest = model.latestScan, !latest.folders.isEmpty {
@@ -893,6 +894,31 @@ struct DashboardView: View {
         }
         .frame(maxWidth: .infinity, minHeight: 190)
         .background(.background, in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var selectedRootOverlapNotice: some View {
+        Group {
+            if let latest = model.latestScan,
+               SelectedRootScope.hasOverlappingPaths(latest.folders.map(\.path)) {
+                Label {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Selected folder paths overlap")
+                            .font(.subheadline.weight(.semibold))
+                        Text("A parent scan can include a nested selected folder. Review each root separately; some files may appear in both totals, so do not add them together.")
+                            .font(.caption)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } icon: {
+                    Image(systemName: "arrow.triangle.branch")
+                        .foregroundStyle(.orange)
+                }
+                .foregroundStyle(.secondary)
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+                .accessibilityElement(children: .combine)
+            }
+        }
     }
 
     private var folderGrowthCard: some View {
@@ -1149,6 +1175,7 @@ struct DashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 header("Selected folders", subtitle: "Measure only locations you choose. Saved read-only access lets you rescan them on demand.")
+                selectedRootOverlapNotice
                 if hasSelectedFolderHistoryChart { historyRangePicker }
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
