@@ -1769,7 +1769,7 @@ struct DashboardView: View {
         let panel = NSOpenPanel()
         panel.title = "Choose folders for duplicate verification"
         panel.prompt = "Choose Folders"
-        panel.message = "Disker will hash regular files with matching sizes in these folders. Contents of other files are not read."
+        panel.message = "Disker will inspect file metadata to find same-size candidates. It will not read file contents until you confirm the next step."
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
@@ -1782,7 +1782,7 @@ struct DashboardView: View {
 
         let confirmation = NSAlert()
         confirmation.messageText = "Read selected files to verify duplicates?"
-        confirmation.informativeText = "Disker will read contents only for regular files that share a logical size inside the selected folders. It will not modify files.\n\n" + panel.urls.map(\.path).joined(separator: "\n")
+        confirmation.informativeText = "Disker will read only regular files with matching logical sizes. Broad folders can require substantial reads, so choose focused locations. You can cancel the check at any time; cancelled results are marked incomplete. Files will not be changed.\n\nSelected locations:\n" + panel.urls.map(\.path).joined(separator: "\n")
         confirmation.addButton(withTitle: "Read and Verify")
         confirmation.addButton(withTitle: "Cancel")
         guard confirmation.runModal() == .alertFirstButtonReturn else { return }
