@@ -1831,9 +1831,13 @@ struct DashboardView: View {
                                     .controlSize(.small)
                                     .accessibilityLabel("Sampling RAM")
                             }
-                            Text(ram.observedAt.formatted(date: .abbreviated, time: .shortened))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text(ram.observedAt.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption)
+                                Text(ram.observedAt, style: .relative)
+                                    .font(.caption2)
+                            }
+                            .foregroundStyle(.secondary)
                         }
                         HStack(alignment: .firstTextBaseline, spacing: 5) {
                             Text(format(ram.physicalBytes))

@@ -63,7 +63,7 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 - Reports complete-only allocated-estimate deltas for matching descendant paths under the same selected root.
 - Provides Finder reveal for selected folder roots.
 - The About page can measure Disker's own app bundle and its dedicated Application Support directory, show their paths and separate logical/allocated estimates, and reveal either location in Finder. This one-time metadata measurement is not added to growth history and excludes user-selected folders.
-- Provides a separate, manual RAM sample using Mach VM page counts and process resident sizes.
+- Provides a separate, manual RAM sample using Mach VM page counts and process resident sizes. The retained snapshot shows its recorded time and relative age so an older sample is not mistaken for live data.
 - Offers optional five-minute RAM sampling and records public macOS memory-pressure transitions while Disker is the active app. It is off by default, pauses while inactive, and installs no background service; samples and events stay in bounded local history.
 - Keeps up to 180 on-demand RAM samples locally and plots free, compressed, and macOS-reported swap use as separate observed points (no interpolation) using the same time ranges as storage history. A zero allocated-swap state is shown distinctly from an unavailable sysctl result. It does not infer pressure or diagnose leaks.
 - Flags possible process resident-size growth after at least three continuous available samples of the same PID, name, and kernel-reported start time span at least 15 minutes and show 100 MiB or more growth. Five-minute sampling can use four observations to cover that interval. This is an investigation signal, not a leak diagnosis.
