@@ -20,6 +20,7 @@ final class DashboardModel {
     var duplicateCurrentPath = ""
     var duplicateEntriesVisited = 0
     var duplicateBytesHashed: UInt64 = 0
+    var duplicateCandidateFileCount = 0
     var duplicateCandidateBytes: UInt64 = 0
     var preservedDuplicatePaths: [String: String] = [:]
     var rememberedScopes: [SelectedScopeBookmark] = []
@@ -361,16 +362,23 @@ final class DashboardModel {
         duplicateCurrentPath = ""
         duplicateEntriesVisited = 0
         duplicateBytesHashed = 0
+        duplicateCandidateFileCount = 0
         duplicateCandidateBytes = 0
         isVerifyingDuplicates = true
-        let task = Task.detached(priority: .utility) {
+        let task = Task.detached(priority: .utility) { [weak self] in
             DuplicateVerifier.verify(roots: roots, progress: { [weak self] progress in
                 Task { @MainActor [weak self] in
                     self?.duplicateProgressPhase = progress.phase
                     self?.duplicateCurrentPath = progress.currentPath
                     self?.duplicateEntriesVisited = progress.entriesVisited
                     self?.duplicateBytesHashed = progress.bytesHashed
+                    self?.duplicateCandidateFileCount = progress.candidateFileCount
                     self?.duplicateCandidateBytes = progress.candidateBytes
+                }
+            }, authorizeContentRead: { [weak self] estimate in
+                guard let self else { return false }
+                return DispatchQueue.main.sync {
+                    self.confirmDuplicateContentRead(estimate, in: roots)
                 }
             })
         }
@@ -381,6 +389,35 @@ final class DashboardModel {
             duplicateCurrentPath = ""
             duplicateTask = nil
         }
+    }
+
+    private func confirmDuplicateContentRead(
+        _ estimate: DuplicateVerificationReadEstimate, in roots: [URL]
+    ) -> Bool {
+        duplicateProgressPhase = .awaitingContentAuthorization
+        duplicateEntriesVisited = estimate.entriesVisited
+        duplicateBytesHashed = 0
+        duplicateCandidateFileCount = estimate.candidateFileCount
+        duplicateCandidateBytes = estimate.candidateBytes
+
+        let formattedBytes = ByteCountFormatter.string(
+            fromByteCount: Int64(clamping: estimate.candidateBytes), countStyle: .file
+        )
+        let sizeDescription = estimate.byteAccountingOverflowed
+            ? "more than \(formattedBytes)"
+            : "about \(formattedBytes)"
+        let fileLabel = estimate.candidateFileCount == 1 ? "candidate file" : "candidate files"
+        let alert = NSAlert()
+        alert.messageText = "Read \(estimate.candidateFileCount) \(fileLabel) to verify duplicates?"
+        var details = "Metadata found \(estimate.candidateFileCount) regular files sharing logical sizes, with an estimated \(sizeDescription) of file contents to read. Files may change before they are checked."
+        if !estimate.metadataCoverageComplete {
+            details += " Metadata coverage is incomplete, so this estimate may miss other candidates."
+        }
+        details += "\n\nApprove to start reading. You can cancel during hashing; cancelled results remain incomplete. Disker will not modify files.\n\nSelected locations:\n"
+        alert.informativeText = details + roots.map(\.path).joined(separator: "\n")
+        alert.addButton(withTitle: "Read and Verify")
+        alert.addButton(withTitle: "Cancel Without Reading")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     func cancelDuplicateVerification() {
@@ -1335,6 +1372,27 @@ struct DashboardView: View {
         }
     }
 
+    private var duplicateProgressTitle: String {
+        switch model.duplicateProgressPhase {
+        case .readingMetadata: "Reviewing selected-folder metadata…"
+        case .awaitingContentAuthorization: "Waiting for content-read confirmation…"
+        case .readingContents: "Verifying same-size file candidates…"
+        }
+    }
+
+    private var duplicateProgressDetail: String {
+        switch model.duplicateProgressPhase {
+        case .readingMetadata:
+            "\(model.duplicateEntriesVisited) entries inspected · no file contents read"
+        case .awaitingContentAuthorization:
+            "\(model.duplicateCandidateFileCount) candidates · about \(format(model.duplicateCandidateBytes)) to read · no content read yet"
+        case .readingContents where model.duplicateCandidateBytes > 0:
+            "Read \(format(model.duplicateBytesHashed)) of \(format(model.duplicateCandidateBytes)) across \(model.duplicateCandidateFileCount) files"
+        case .readingContents:
+            "\(model.duplicateCandidateFileCount) candidate files · 0 content bytes"
+        }
+    }
+
     private var duplicatesPage: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
@@ -1344,9 +1402,7 @@ struct DashboardView: View {
                 )
                 if model.isVerifyingDuplicates {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(model.duplicateProgressPhase == .readingMetadata
-                             ? "Reviewing selected-folder metadata…"
-                             : "Verifying same-size file candidates…")
+                        Text(duplicateProgressTitle)
                             .font(.headline)
                         if model.duplicateProgressPhase == .readingContents && model.duplicateCandidateBytes > 0 {
                             ProgressView(
@@ -1362,11 +1418,7 @@ struct DashboardView: View {
                             .lineLimit(2)
                             .truncationMode(.middle)
                         HStack {
-                            Text(model.duplicateProgressPhase == .readingMetadata
-                                 ? "\(model.duplicateEntriesVisited) entries inspected · no file contents read"
-                                 : model.duplicateCandidateBytes > 0
-                                     ? "Read \(format(model.duplicateBytesHashed)) of \(format(model.duplicateCandidateBytes)) candidate bytes"
-                                     : "No candidate bytes to read")
+                            Text(duplicateProgressDetail)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()
@@ -1792,12 +1844,6 @@ struct DashboardView: View {
             return
         }
 
-        let confirmation = NSAlert()
-        confirmation.messageText = "Read selected files to verify duplicates?"
-        confirmation.informativeText = "Disker will read only regular files with matching logical sizes. Broad folders can require substantial reads, so choose focused locations. You can cancel the check at any time; cancelled results are marked incomplete. Files will not be changed.\n\nSelected locations:\n" + panel.urls.map(\.path).joined(separator: "\n")
-        confirmation.addButton(withTitle: "Read and Verify")
-        confirmation.addButton(withTitle: "Cancel")
-        guard confirmation.runModal() == .alertFirstButtonReturn else { return }
         model.verifyDuplicates(in: panel.urls)
     }
 

@@ -4,6 +4,7 @@ import Foundation
 
 public enum DuplicateVerificationPhase: Sendable, Equatable {
     case readingMetadata
+    case awaitingContentAuthorization
     case readingContents
 }
 
@@ -12,7 +13,27 @@ public struct DuplicateVerificationProgress: Sendable {
     public let currentPath: String
     public let entriesVisited: Int
     public let bytesHashed: UInt64
+    public let candidateFileCount: Int
     public let candidateBytes: UInt64
+}
+
+public struct DuplicateVerificationReadEstimate: Sendable {
+    public let selectedRootPaths: [String]
+    public let candidateFileCount: Int
+    public let candidateBytes: UInt64
+    public let entriesVisited: Int
+    public let inaccessibleCount: Int
+    public let excludedSymlinkCount: Int
+    public let excludedSpecialFileCount: Int
+    public let excludedVolumeBoundaryCount: Int
+    public let changedDuringCheckCount: Int
+    public let byteAccountingOverflowed: Bool
+
+    public var metadataCoverageComplete: Bool {
+        inaccessibleCount == 0 && excludedSymlinkCount == 0 && excludedSpecialFileCount == 0
+            && excludedVolumeBoundaryCount == 0 && changedDuringCheckCount == 0
+            && !byteAccountingOverflowed
+    }
 }
 
 public struct DuplicateFile: Codable, Equatable, Sendable {
@@ -158,10 +179,12 @@ public enum DuplicateVerifier {
     public static func verify(
         roots: [URL],
         shouldCancel: () -> Bool = { Task.isCancelled },
-        progress: (DuplicateVerificationProgress) -> Void = { _ in }
+        progress: (DuplicateVerificationProgress) -> Void = { _ in },
+        authorizeContentRead: (DuplicateVerificationReadEstimate) -> Bool = { _ in true }
     ) -> DuplicateVerificationResult {
         verifyInternal(
-            roots: roots, simulatedDeviceIDsByPath: [:], shouldCancel: shouldCancel, progress: progress
+            roots: roots, simulatedDeviceIDsByPath: [:], shouldCancel: shouldCancel,
+            progress: progress, authorizeContentRead: authorizeContentRead
         )
     }
 
@@ -170,18 +193,20 @@ public enum DuplicateVerifier {
     public static func verify(
         roots: [URL], simulatedDeviceIDsByPath: [String: UInt64],
         shouldCancel: () -> Bool = { Task.isCancelled },
-        progress: (DuplicateVerificationProgress) -> Void = { _ in }
+        progress: (DuplicateVerificationProgress) -> Void = { _ in },
+        authorizeContentRead: (DuplicateVerificationReadEstimate) -> Bool = { _ in true }
     ) -> DuplicateVerificationResult {
         verifyInternal(
             roots: roots, simulatedDeviceIDsByPath: simulatedDeviceIDsByPath,
-            shouldCancel: shouldCancel, progress: progress
+            shouldCancel: shouldCancel, progress: progress, authorizeContentRead: authorizeContentRead
         )
     }
 
     private static func verifyInternal(
         roots: [URL], simulatedDeviceIDsByPath: [String: UInt64],
         shouldCancel: () -> Bool,
-        progress: (DuplicateVerificationProgress) -> Void
+        progress: (DuplicateVerificationProgress) -> Void,
+        authorizeContentRead: (DuplicateVerificationReadEstimate) -> Bool
     ) -> DuplicateVerificationResult {
         guard roots.count <= maximumSelectedRootCount else {
             return DuplicateVerificationResult(
@@ -289,7 +314,7 @@ public enum DuplicateVerifier {
                         lastMetadataProgressCount = entriesVisited
                         progress(DuplicateVerificationProgress(
                             phase: .readingMetadata, currentPath: path, entriesVisited: entriesVisited,
-                            bytesHashed: 0, candidateBytes: 0
+                            bytesHashed: 0, candidateFileCount: 0, candidateBytes: 0
                         ))
                     }
                     var child = stat()
@@ -345,7 +370,7 @@ public enum DuplicateVerifier {
                     lastMetadataProgressCount = entriesVisited
                     progress(DuplicateVerificationProgress(
                         phase: .readingMetadata, currentPath: directory.path, entriesVisited: entriesVisited,
-                        bytesHashed: 0, candidateBytes: 0
+                        bytesHashed: 0, candidateFileCount: 0, candidateBytes: 0
                     ))
                 }
                 pending.append(contentsOf: discovered)
@@ -368,51 +393,79 @@ public enum DuplicateVerifier {
             uniqueCandidatesBySize[candidate.logicalBytes, default: []].append(candidate)
         }
         let buckets = uniqueCandidatesBySize.values.filter { $0.count > 1 }
-        let candidateBytes = buckets.reduce(UInt64(0)) { total, bucket in
-            bucket.reduce(total) { partial, file in
-                let (sum, overflow) = partial.addingReportingOverflow(file.logicalBytes)
-                return overflow ? UInt64.max : sum
+        var candidateBytes: UInt64 = 0
+        var candidateFileCount = 0
+        var candidateByteOverflowed = false
+        for bucket in buckets {
+            for candidate in bucket {
+                candidateFileCount = candidateFileCount == Int.max ? Int.max : candidateFileCount + 1
+                let (sum, overflow) = candidateBytes.addingReportingOverflow(candidate.logicalBytes)
+                candidateBytes = overflow ? UInt64.max : sum
+                candidateByteOverflowed = candidateByteOverflowed || overflow
             }
         }
+        byteAccountingOverflowed = byteAccountingOverflowed || candidateByteOverflowed
         progress(DuplicateVerificationProgress(
-            phase: .readingContents, currentPath: "", entriesVisited: entriesVisited,
-            bytesHashed: 0, candidateBytes: candidateBytes
+            phase: .awaitingContentAuthorization, currentPath: "", entriesVisited: entriesVisited,
+            bytesHashed: 0, candidateFileCount: candidateFileCount, candidateBytes: candidateBytes
         ))
+        if shouldCancel() {
+            cancelled = true
+        } else if candidateFileCount > 0 && !authorizeContentRead(DuplicateVerificationReadEstimate(
+            selectedRootPaths: roots.map(\.path), candidateFileCount: candidateFileCount,
+            candidateBytes: candidateBytes, entriesVisited: entriesVisited,
+            inaccessibleCount: inaccessibleCount, excludedSymlinkCount: excludedSymlinkCount,
+            excludedSpecialFileCount: excludedSpecialFileCount,
+            excludedVolumeBoundaryCount: excludedVolumeBoundaryCount,
+            changedDuringCheckCount: changedDuringCheckCount,
+            byteAccountingOverflowed: byteAccountingOverflowed
+        )) {
+            cancelled = true
+        }
+        if !cancelled {
+            progress(DuplicateVerificationProgress(
+                phase: .readingContents, currentPath: "", entriesVisited: entriesVisited,
+                bytesHashed: 0, candidateFileCount: candidateFileCount, candidateBytes: candidateBytes
+            ))
+        }
         var bytesHashed: UInt64 = 0
         var lastProgressBytes: UInt64 = 0
         var checkedFileCount = 0
         var filesByHash: [String: [DuplicateFile]] = [:]
         var finalMetadataValidatedPaths = Set<String>()
 
-        outer: for bucket in buckets {
-            for candidate in bucket.sorted(by: { utf8LessThan($0.path, $1.path) }) {
-                if shouldCancel() { cancelled = true; break outer }
-                switch hash(candidate, shouldCancel: shouldCancel, progress: { path, bytes in
-                    let (sum, overflow) = bytesHashed.addingReportingOverflow(bytes)
-                    bytesHashed = overflow ? UInt64.max : sum
-                    if bytesHashed - lastProgressBytes >= 16 * 1024 * 1024 || bytesHashed == candidateBytes {
-                        lastProgressBytes = bytesHashed
-                        progress(DuplicateVerificationProgress(
-                            phase: .readingContents, currentPath: path, entriesVisited: entriesVisited,
-                            bytesHashed: bytesHashed,
-                            candidateBytes: candidateBytes
+        if !cancelled {
+            outer: for bucket in buckets {
+                for candidate in bucket.sorted(by: { utf8LessThan($0.path, $1.path) }) {
+                    if shouldCancel() { cancelled = true; break outer }
+                    switch hash(candidate, shouldCancel: shouldCancel, progress: { path, bytes in
+                        let (sum, overflow) = bytesHashed.addingReportingOverflow(bytes)
+                        bytesHashed = overflow ? UInt64.max : sum
+                        if bytesHashed - lastProgressBytes >= 16 * 1024 * 1024 || bytesHashed == candidateBytes {
+                            lastProgressBytes = bytesHashed
+                            progress(DuplicateVerificationProgress(
+                                phase: .readingContents, currentPath: path, entriesVisited: entriesVisited,
+                                bytesHashed: bytesHashed,
+                                candidateFileCount: candidateFileCount,
+                                candidateBytes: candidateBytes
+                            ))
+                        }
+                    }) {
+                    case .hashed(let digest):
+                        checkedFileCount += 1
+                        filesByHash[digest, default: []].append(DuplicateFile(
+                            path: candidate.path,
+                            logicalBytes: candidate.logicalBytes,
+                            allocatedBytes: candidate.allocatedBytes
                         ))
+                    case .changed:
+                        changedDuringCheckCount += 1
+                    case .unavailable:
+                        inaccessibleCount += 1
+                    case .cancelled:
+                        cancelled = true
+                        break outer
                     }
-                }) {
-                case .hashed(let digest):
-                    checkedFileCount += 1
-                    filesByHash[digest, default: []].append(DuplicateFile(
-                        path: candidate.path,
-                        logicalBytes: candidate.logicalBytes,
-                        allocatedBytes: candidate.allocatedBytes
-                    ))
-                case .changed:
-                    changedDuringCheckCount += 1
-                case .unavailable:
-                    inaccessibleCount += 1
-                case .cancelled:
-                    cancelled = true
-                    break outer
                 }
             }
         }

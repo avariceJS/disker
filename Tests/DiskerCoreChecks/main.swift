@@ -1268,31 +1268,69 @@ private struct DiskerCoreChecks {
 
             var progressEvents: [DuplicateVerificationProgress] = []
             var lastProgress: DuplicateVerificationProgress?
-            let result = DuplicateVerifier.verify(roots: [root], progress: {
-                progressEvents.append($0)
-                lastProgress = $0
-            })
+            var readEstimate: DuplicateVerificationReadEstimate?
+            let result = DuplicateVerifier.verify(
+                roots: [root],
+                progress: {
+                    progressEvents.append($0)
+                    lastProgress = $0
+                },
+                authorizeContentRead: { estimate in
+                    readEstimate = estimate
+                    return true
+                }
+            )
             try expect(result.groups.count == 1, "only byte-identical same-size files should form a duplicate group")
             try expect(result.groups[0].files.map(\.path) == [first.path, second.path], "hard-link aliases should not be reported as separate files")
             try expect(result.groups[0].files.allSatisfy { $0.logicalBytes == UInt64(sharedBytes.count) }, "duplicate candidates should retain exact logical sizes")
             try expect(result.checkedFileCount == 3, "only regular files in shared-size buckets should be hashed")
             try expect(result.excludedSymlinkCount == 1 && !result.complete, "symlinks should remain excluded and make verification coverage partial")
             let metadataProgress = progressEvents.first { $0.phase == .readingMetadata }
+            let awaitingAuthorizationProgress = progressEvents.first { $0.phase == .awaitingContentAuthorization }
             let contentProgress = progressEvents.first { $0.phase == .readingContents }
             guard let metadataIndex = progressEvents.firstIndex(where: { $0.phase == .readingMetadata }),
+                  let authorizationIndex = progressEvents.firstIndex(where: { $0.phase == .awaitingContentAuthorization }),
                   let contentIndex = progressEvents.firstIndex(where: { $0.phase == .readingContents }) else {
-                throw CheckFailure.assertion("duplicate verification should report both metadata and content phases")
+                throw CheckFailure.assertion("duplicate verification should report metadata, consent, and content phases")
             }
-            try expect(metadataIndex < contentIndex,
-                       "metadata progress must precede the content-reading phase")
+            try expect(metadataIndex < authorizationIndex && authorizationIndex < contentIndex,
+                       "metadata inspection and explicit content authorization must precede content reads")
             try expect(metadataProgress?.entriesVisited == 6
                        && metadataProgress?.bytesHashed == 0 && metadataProgress?.candidateBytes == 0,
                        "metadata progress should identify examined entries without implying a file-content read")
             try expect(contentProgress?.entriesVisited == 6
                        && contentProgress?.bytesHashed == 0
+                       && contentProgress?.candidateFileCount == 3
                        && contentProgress?.candidateBytes == UInt64(sharedBytes.count * 3),
                        "the content phase should begin only after metadata identifies the candidate read volume")
+            try expect(readEstimate?.selectedRootPaths == [root.path]
+                       && readEstimate?.candidateFileCount == 3
+                       && readEstimate?.candidateBytes == UInt64(sharedBytes.count * 3)
+                       && readEstimate?.entriesVisited == 6
+                       && readEstimate?.excludedSymlinkCount == 1
+                       && readEstimate?.metadataCoverageComplete == false,
+                       "the pre-read estimate should describe candidate bytes, selected scope, and partial coverage")
+            try expect(awaitingAuthorizationProgress?.candidateFileCount == 3
+                       && awaitingAuthorizationProgress?.candidateBytes == UInt64(sharedBytes.count * 3)
+                       && awaitingAuthorizationProgress?.bytesHashed == 0,
+                       "the consent phase should show estimated candidates before hashing starts")
             try expect(lastProgress?.bytesHashed == UInt64(sharedBytes.count * 3), "progress should report bytes actually read from size-matched candidates")
+
+            var deniedReadProgress: [DuplicateVerificationProgress] = []
+            var deniedReadEstimate: DuplicateVerificationReadEstimate?
+            let deniedRead = DuplicateVerifier.verify(
+                roots: [root],
+                progress: { deniedReadProgress.append($0) },
+                authorizeContentRead: { estimate in
+                    deniedReadEstimate = estimate
+                    return false
+                }
+            )
+            try expect(deniedRead.cancelled && deniedRead.checkedFileCount == 0 && deniedRead.groups.isEmpty
+                       && deniedReadEstimate?.candidateBytes == UInt64(sharedBytes.count * 3),
+                       "declining the candidate read estimate should end verification before hashing files")
+            try expect(!deniedReadProgress.contains(where: { $0.phase == .readingContents || $0.bytesHashed > 0 }),
+                       "declining consent must not report any file-content bytes read")
             let firstAfterVerification = try Data(contentsOf: first)
             let secondAfterVerification = try Data(contentsOf: second)
             try expect(firstAfterVerification == sharedBytes && secondAfterVerification == sharedBytes, "verification must leave all selected files unchanged")
