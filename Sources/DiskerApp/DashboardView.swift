@@ -27,6 +27,9 @@ final class DashboardModel {
     var ownFootprint: ScanObservation?
     var ownFootprintPaths: [String] = []
     var isMeasuringOwnFootprint = false
+    var applicationBundlePathAvailability: [String: Bool] = [:]
+    var checkingApplicationBundlePaths = Set<String>()
+    private var applicationBundlePathCheckIDs: [String: UUID] = [:]
     var errorMessage: String?
     var currentPath = ""
     var countedFileObjects = 0
@@ -72,6 +75,27 @@ final class DashboardModel {
 
     func relatedFolders(for bundlePath: String) -> [String] {
         history.applicationAssociations.first(where: { $0.bundlePath == bundlePath })?.relatedFolderPaths ?? []
+    }
+
+    func checkApplicationBundlePath(_ path: String) {
+        guard checkingApplicationBundlePaths.insert(path).inserted else { return }
+        let requestID = UUID()
+        applicationBundlePathCheckIDs[path] = requestID
+        applicationBundlePathAvailability.removeValue(forKey: path)
+        let generation = historyGeneration.token()
+        let expectedPath = URL(fileURLWithPath: path).standardizedFileURL.path
+        let bookmark = rememberedScopes.first(where: { $0.path == expectedPath })
+        let task = Task.detached(priority: .utility) {
+            SelectedScopePathProbe.isAvailable(at: path, using: bookmark)
+        }
+        Task {
+            let isAvailable = await task.value
+            guard applicationBundlePathCheckIDs[path] == requestID,
+                  historyGeneration.accepts(generation) else { return }
+            applicationBundlePathCheckIDs.removeValue(forKey: path)
+            checkingApplicationBundlePaths.remove(path)
+            applicationBundlePathAvailability[path] = isAvailable
+        }
     }
 
     func applicationBundleIdentifier(for bundlePath: String) -> String? {
@@ -219,9 +243,12 @@ final class DashboardModel {
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
         panel.allowedContentTypes = [.applicationBundle]
-        guard panel.runModal() == .OK else { return }
-        rememberFolders(panel.urls)
-        scan(panel.urls, inspectSelectedAppBundles: true)
+        guard panel.runModal() == .OK, let bundleURL = panel.urls.first else { return }
+        applicationBundlePathCheckIDs.removeValue(forKey: bundleURL.path)
+        checkingApplicationBundlePaths.remove(bundleURL.path)
+        applicationBundlePathAvailability[bundleURL.path] = true
+        rememberFolders([bundleURL])
+        scan([bundleURL], inspectSelectedAppBundles: true)
     }
 
     func chooseRelatedFolders(for bundlePath: String, startingAt directory: URL? = nil) {
@@ -467,6 +494,9 @@ final class DashboardModel {
 
     func clearHistory() {
         historyGeneration.advance()
+        applicationBundlePathAvailability = [:]
+        checkingApplicationBundlePaths = []
+        applicationBundlePathCheckIDs = [:]
         scanTask?.cancel()
         ownFootprintRequestID = UUID()
         ownFootprintTask?.cancel()
@@ -1079,7 +1109,8 @@ struct DashboardView: View {
                 } else {
                     ForEach(bundles) { bundle in
                         let relatedPaths = model.relatedFolders(for: bundle.path)
-                        let bundlePathIsAvailable = FileManager.default.fileExists(atPath: bundle.path)
+                        let pathAvailability = model.applicationBundlePathAvailability[bundle.path]
+                        let isCheckingPath = model.checkingApplicationBundlePaths.contains(bundle.path)
                         VStack(alignment: .leading, spacing: 10) {
                             HStack(alignment: .top) {
                                 Label(bundle.displayName, systemImage: "app.fill")
@@ -1107,7 +1138,28 @@ struct DashboardView: View {
                                 .truncationMode(.middle)
                             applicationIdentityRow(for: bundle)
                             applicationDataLocationSuggestions(for: bundle)
-                            if !bundlePathIsAvailable && !relatedPaths.isEmpty {
+                            HStack(spacing: 8) {
+                                if isCheckingPath {
+                                    ProgressView().controlSize(.small)
+                                    Text("Checking selected app path…")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                } else if let pathAvailability {
+                                    Label(
+                                        pathAvailability ? "Bundle path available at last check" : "Bundle path unavailable at last check",
+                                        systemImage: pathAvailability ? "checkmark.circle" : "questionmark.circle"
+                                    )
+                                    .font(.caption)
+                                    .foregroundStyle(pathAvailability ? Color.secondary : Color.orange)
+                                }
+                                Button(pathAvailability == nil ? "Check bundle path" : "Check again") {
+                                    model.checkApplicationBundlePath(bundle.path)
+                                }
+                                .controlSize(.small)
+                                .disabled(isCheckingPath || model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
+                                .help("Check only the exact app bundle path last measured; no folders are scanned")
+                            }
+                            if pathAvailability == false && !relatedPaths.isEmpty {
                                 Label {
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text("Possible leftover data · needs review")

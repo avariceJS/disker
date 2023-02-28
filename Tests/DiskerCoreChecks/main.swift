@@ -746,6 +746,26 @@ private struct DiskerCoreChecks {
             let resolved = try SelectedScopeBookmarkStore.resolve(loaded[0], at: storeURL)
             try expect(resolved.standardizedFileURL.path == root.standardizedFileURL.path,
                        "a bookmark should resolve to its selected folder")
+            let scopeStoreBeforeProbe = try Data(contentsOf: storeURL)
+            try expect(SelectedScopePathProbe.isAvailable(
+                at: root.path, using: loaded[0]
+            ),
+                       "a saved read-only scope should permit a no-follow metadata availability check at its exact path")
+            let differentPath = base.appendingPathComponent("different-folder", isDirectory: true)
+            try FileManager.default.createDirectory(at: differentPath, withIntermediateDirectories: false)
+            try expect(!SelectedScopePathProbe.isAvailable(
+                at: differentPath.path, using: loaded[0]
+            ),
+                       "a bookmark that resolves to another path must not make the recorded path appear available")
+            let scopeStoreAfterProbe = try Data(contentsOf: storeURL)
+            try expect(scopeStoreAfterProbe == scopeStoreBeforeProbe,
+                       "a read-only path availability check must not refresh or rewrite the saved bookmark")
+            let selectedAlias = base.appendingPathComponent("selected-alias", isDirectory: true)
+            try FileManager.default.createSymbolicLink(at: selectedAlias, withDestinationURL: root)
+            try expect(!SelectedScopePathProbe.isAvailable(at: selectedAlias.path),
+                       "an availability check must not follow a selected symlink")
+            try expect(!SelectedScopePathProbe.isAvailable(at: base.appendingPathComponent("missing-folder").path),
+                       "an unavailable selected path must remain an explicit false result")
             let rescanned = FolderScanner.scan(roots: [resolved])
             try expect(rescanned.folders.first?.complete == true && rescanned.folders.first?.fileCount == 1,
                        "the metadata scanner should be able to rescan a resolved selected-scope bookmark")
