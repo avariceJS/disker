@@ -1078,6 +1078,8 @@ struct DashboardView: View {
                     .background(.background, in: RoundedRectangle(cornerRadius: 14))
                 } else {
                     ForEach(bundles) { bundle in
+                        let relatedPaths = model.relatedFolders(for: bundle.path)
+                        let bundlePathIsAvailable = FileManager.default.fileExists(atPath: bundle.path)
                         VStack(alignment: .leading, spacing: 10) {
                             HStack(alignment: .top) {
                                 Label(bundle.displayName, systemImage: "app.fill")
@@ -1105,6 +1107,25 @@ struct DashboardView: View {
                                 .truncationMode(.middle)
                             applicationIdentityRow(for: bundle)
                             applicationDataLocationSuggestions(for: bundle)
+                            if !bundlePathIsAvailable && !relatedPaths.isEmpty {
+                                Label {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Possible leftover data · needs review")
+                                            .font(.subheadline.weight(.semibold))
+                                        Text("The last measured app path is currently unavailable. The app may have moved, its volume may be disconnected, or access may be restricted. Disker's saved folder associations were selected manually; their current presence, ownership, and safety are unknown.")
+                                            .font(.caption)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                } icon: {
+                                    Image(systemName: "questionmark.folder.fill")
+                                        .foregroundStyle(.orange)
+                                }
+                                .foregroundStyle(.secondary)
+                                .padding(12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+                                .accessibilityElement(children: .combine)
+                            }
                             HStack(spacing: 12) {
                                 Text("Logical \(format(bundle.logicalBytes))")
                                 Text("Allocated estimate \(format(bundle.allocatedBytes))")
@@ -1142,7 +1163,6 @@ struct DashboardView: View {
                             }
                             .disabled(model.isScanning)
 
-                            let relatedPaths = model.relatedFolders(for: bundle.path)
                             if !relatedPaths.isEmpty {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Label("Folders you associated", systemImage: "link")
