@@ -19,6 +19,7 @@ public struct SelectedScopeBookmark: Codable, Equatable, Identifiable, Sendable 
 public enum SelectedScopeBookmarkError: Error, LocalizedError {
     case tooManyBookmarks
     case bookmarkUnavailable(String)
+    case bookmarkPathChanged(expected: String, resolved: String)
 
     public var errorDescription: String? {
         switch self {
@@ -26,6 +27,8 @@ public enum SelectedScopeBookmarkError: Error, LocalizedError {
             return "Disker can remember up to 20 selected folders. Remove a saved folder before adding another."
         case .bookmarkUnavailable(let reason):
             return "Disker could not restore access to this selected folder. Choose it again to grant access. \(reason)"
+        case .bookmarkPathChanged(let expected, let resolved):
+            return "This saved folder now resolves to a different location (\(resolved)) than the selected path (\(expected)). Choose the intended folder again to update it."
         }
     }
 }
@@ -94,6 +97,13 @@ public enum SelectedScopeBookmarkStore {
                 relativeTo: nil,
                 bookmarkDataIsStale: &stale
             )
+            let resolvedPath = url.standardizedFileURL.path
+            guard resolvedPath == URL(fileURLWithPath: bookmark.path, isDirectory: true)
+                .standardizedFileURL.path else {
+                throw SelectedScopeBookmarkError.bookmarkPathChanged(
+                    expected: bookmark.path, resolved: resolvedPath
+                )
+            }
             guard !stale else {
                 var bookmarks = try load(from: fileURL).filter { $0.path != bookmark.path }
                 let refreshed = try url.bookmarkData(
@@ -102,7 +112,7 @@ public enum SelectedScopeBookmarkStore {
                     relativeTo: nil
                 )
                 bookmarks.append(SelectedScopeBookmark(
-                    path: url.standardizedFileURL.path,
+                    path: resolvedPath,
                     bookmarkData: refreshed
                 ))
                 try save(bookmarks, at: fileURL)

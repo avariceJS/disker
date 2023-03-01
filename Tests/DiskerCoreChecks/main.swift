@@ -753,6 +753,26 @@ private struct DiskerCoreChecks {
                        "a saved read-only scope should permit a no-follow metadata availability check at its exact path")
             let differentPath = base.appendingPathComponent("different-folder", isDirectory: true)
             try FileManager.default.createDirectory(at: differentPath, withIntermediateDirectories: false)
+            let movedBookmarkData = try differentPath.bookmarkData(
+                options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+            let mismatchedBookmark = SelectedScopeBookmark(
+                path: root.standardizedFileURL.path, bookmarkData: movedBookmarkData
+            )
+            let scopeStoreBeforeMismatch = try Data(contentsOf: storeURL)
+            var rejectedMovedBookmark = false
+            do {
+                _ = try SelectedScopeBookmarkStore.resolve(mismatchedBookmark, at: storeURL)
+            } catch SelectedScopeBookmarkError.bookmarkPathChanged {
+                rejectedMovedBookmark = true
+            }
+            let scopeStoreAfterMismatch = try Data(contentsOf: storeURL)
+            try expect(rejectedMovedBookmark,
+                       "a saved-folder rescan must reject a bookmark that now resolves to another path")
+            try expect(scopeStoreAfterMismatch == scopeStoreBeforeMismatch,
+                       "rejecting a moved bookmark must preserve the saved bookmark and path association")
             try expect(!SelectedScopePathProbe.isAvailable(
                 at: differentPath.path, using: loaded[0]
             ),
@@ -2249,8 +2269,9 @@ private struct DiskerCoreChecks {
             for: extensionCurrent, in: extensionHistory
         )
         try expect(extensionGrowth?.map(\.extensionName) == ["log", "sqlite"]
-                   && extensionGrowth?.map(\.growthBytes) == [100, 60],
-                   "filename-category growth should rank positive allocated estimates across the same complete root")
+                   && extensionGrowth?.map(\.growthBytes) == [100, 60]
+                   && extensionGrowth?.map(\.currentAllocatedBytes) == [300, 60],
+                   "filename-category growth should include deltas and current allocated estimates for the same complete root")
         let cappedCurrent = FolderObservation(
             id: UUID(), path: extensionPath, displayName: "extension-growth",
             logicalBytes: 1_200, allocatedBytes: 1_200, fileCount: 4,

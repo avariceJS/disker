@@ -974,9 +974,14 @@ struct DashboardView: View {
                                     .foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 4)
-                            Text(formattedDelta(signal.growthBytes))
-                                .font(.subheadline.weight(.semibold).monospacedDigit())
-                                .foregroundStyle(.orange)
+                            VStack(alignment: .trailing, spacing: 3) {
+                                Text(formattedDelta(signal.growthBytes))
+                                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                                    .foregroundStyle(.orange)
+                                Text("Now ~\(format(signal.folder.allocatedBytes)) allocated")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
                             Button {
                                 NSWorkspace.shared.activateFileViewerSelecting([
                                     URL(fileURLWithPath: signal.folder.path)
@@ -1027,9 +1032,14 @@ struct DashboardView: View {
                                     .foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 4)
-                            Text(formattedDelta(signal.growthBytes))
-                                .font(.subheadline.weight(.semibold).monospacedDigit())
-                                .foregroundStyle(.orange)
+                            VStack(alignment: .trailing, spacing: 3) {
+                                Text(formattedDelta(signal.growthBytes))
+                                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                                    .foregroundStyle(.orange)
+                                Text("Now ~\(format(signal.directory.allocatedBytes)) allocated")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
                             Button {
                                 let directoryURL = URL(fileURLWithPath: signal.folder.path)
                                     .appendingPathComponent(signal.directory.rootRelativePath)
@@ -2626,9 +2636,14 @@ struct DashboardView: View {
                             .font(.caption2.monospaced())
                             .lineLimit(1)
                         Spacer(minLength: 4)
-                        Text(formattedDelta(item.growthBytes))
-                            .font(.caption2.monospacedDigit().weight(.medium))
-                            .foregroundStyle(.orange)
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(formattedDelta(item.growthBytes))
+                                .font(.caption2.monospacedDigit().weight(.medium))
+                                .foregroundStyle(.orange)
+                            Text("Now ~\(format(item.currentAllocatedBytes)) allocated")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }

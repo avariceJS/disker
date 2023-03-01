@@ -12,6 +12,7 @@ public enum ObservationComparison {
         public var id: String { extensionName }
         public let extensionName: String
         public let growthBytes: Int64
+        public let currentAllocatedBytes: Int64
     }
 
     public struct DirectoryGrowthSignal: Equatable, Identifiable, Sendable {
@@ -258,7 +259,9 @@ public enum ObservationComparison {
             let before = previousCategories[name, default: 0]
             let (delta, overflow) = now.subtractingReportingOverflow(before)
             guard !overflow, delta > 0 else { return nil }
-            return FileExtensionGrowthSignal(extensionName: name, growthBytes: delta)
+            return FileExtensionGrowthSignal(
+                extensionName: name, growthBytes: delta, currentAllocatedBytes: now
+            )
         }
         .sorted {
             if $0.growthBytes != $1.growthBytes { return $0.growthBytes > $1.growthBytes }
