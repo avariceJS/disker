@@ -32,6 +32,7 @@ private struct DiskerCoreChecks {
             ("explicit application bundle history index", testApplicationBundleIndex),
             ("explicitly selected app bundle identity read", testApplicationBundleMetadata),
             ("evidence-scoped application container attribution", testApplicationPathAttribution),
+            ("read-only app footprint review", testApplicationFootprintReview),
             ("explicit app-folder associations", testApplicationFolderAssociations),
             ("bounded read-only selected-scope bookmarks", testSelectedScopeBookmarks),
             ("local stores reject symlinks", testLocalStoresRejectSymlinks),
@@ -576,6 +577,88 @@ private struct DiskerCoreChecks {
             bundleIdentifier: "../Other", homeDirectoryPath: home,
             claimedGroupIdentifiers: [groupIdentifier]
         ).isEmpty, "invalid identifiers must not generate app-data paths")
+    }
+
+    private static func testApplicationFootprintReview() throws {
+        let home = "/Users/synthetic"
+        let identifier = "com.example.Sample"
+        let groupIdentifier = "TEAM.group.shared"
+        let bundlePath = "/Applications/Sample.app"
+        let containerPath = "\(home)/Library/Containers/\(identifier)"
+        let containerChild = "\(containerPath)/Documents"
+        let groupPath = "\(home)/Library/Group Containers/\(groupIdentifier)"
+        let supportPath = "\(home)/Library/Application Support/\(identifier)"
+        let cachePath = "\(home)/Library/Caches/\(identifier)"
+        let unknownPath = "/Volumes/External/Selected by owner"
+        let bundle = syntheticFolder(path: bundlePath, bytes: 100, complete: true)
+            .includingApplicationBundleIdentity(
+                ApplicationBundleIdentity(
+                    bundleIdentifier: identifier,
+                    claimedGroupIdentifiers: [groupIdentifier],
+                    signatureValidated: true,
+                    signedBundleIdentifier: identifier
+                ),
+                selectedAsApplicationBundle: true
+            )
+        let oldSupportObservation = syntheticFolder(
+            path: supportPath, bytes: 300, complete: true,
+            finishedAt: Date(timeIntervalSince1970: 100)
+        )
+        let latestPartialSupportObservation = syntheticFolder(
+            path: supportPath, bytes: 450, complete: false,
+            finishedAt: Date(timeIntervalSince1970: 200)
+        )
+        let groupObservation = syntheticFolder(path: groupPath, bytes: 700, complete: true)
+        let childObservation = syntheticFolder(path: containerChild, bytes: 200, complete: true)
+        let observations = [
+            ScanObservation(startedAt: Date(timeIntervalSince1970: 100), folders: [
+                bundle, oldSupportObservation, groupObservation, childObservation,
+            ], cancelled: false),
+            ScanObservation(startedAt: Date(timeIntervalSince1970: 200), folders: [
+                latestPartialSupportObservation,
+            ], cancelled: true),
+        ]
+        let association = ApplicationFolderAssociation(
+            bundlePath: bundlePath,
+            relatedFolderPaths: [
+                containerPath, containerChild, groupPath, supportPath, cachePath,
+                unknownPath, groupPath,
+            ]
+        )
+        let otherBundlePath = "/Applications/Other.app"
+        let history = LocalHistory(
+            observations: observations,
+            applicationAssociations: [
+                association,
+                ApplicationFolderAssociation(bundlePath: otherBundlePath, relatedFolderPaths: [unknownPath]),
+            ]
+        )
+
+        let review = ApplicationFootprintReview.make(
+            for: bundle, in: history, homeDirectoryPath: home
+        )
+        let byPath = Dictionary(uniqueKeysWithValues: review.entries.map { ($0.path, $0) })
+        try expect(review.entries.count == 7 && review.entries.first?.kind == .applicationBundle,
+                   "the read-only review should show the bundle and deduplicated associated paths")
+        try expect(byPath[bundlePath]?.observation == bundle,
+                   "the bundle row should use the latest observation for its exact selected path")
+        try expect(byPath[supportPath]?.observation == latestPartialSupportObservation
+                   && byPath[supportPath]?.observation?.complete == false
+                   && byPath[supportPath]?.scanWasCancelled == true,
+                   "a newer partial measurement must remain visibly partial instead of falling back to stale complete data")
+        try expect(byPath[groupPath]?.isShared == true
+                   && byPath[groupPath]?.attribution?.evidence == .signatureCoveredSharedGroupClaim,
+                   "signature-covered group data must remain explicitly shared in the review")
+        try expect(byPath[containerPath]?.overlappingPaths == [containerChild]
+                   && byPath[containerChild]?.overlappingPaths == [containerPath],
+                   "nested reviewed scopes must be marked as overlapping rather than summed")
+        try expect(byPath[cachePath]?.attribution?.evidence == .probableNamedSupportPathMatch
+                   && byPath[unknownPath]?.attribution?.evidence == .userSelectedOnly
+                   && byPath[unknownPath]?.isShared == true
+                   && byPath[unknownPath]?.otherAssociatedBundlePaths == [otherBundlePath],
+                   "cache clues, user-only evidence, and links to another app must remain distinguishable")
+        try expect(byPath[cachePath]?.observation == nil && review.reclaimableBytes == nil,
+                   "unmeasured locations and reclaimable physical bytes must remain unknown")
     }
 
     private static func testApplicationBundleMetadata() throws {

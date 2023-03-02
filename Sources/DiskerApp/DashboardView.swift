@@ -77,6 +77,12 @@ final class DashboardModel {
         history.applicationAssociations.first(where: { $0.bundlePath == bundlePath })?.relatedFolderPaths ?? []
     }
 
+    func applicationFootprintReview(for bundle: FolderObservation) -> ApplicationFootprintReview {
+        ApplicationFootprintReview.make(
+            for: bundle, in: history, homeDirectoryPath: NSHomeDirectory()
+        )
+    }
+
     func checkApplicationBundlePath(_ path: String) {
         guard checkingApplicationBundlePaths.insert(path).inserted else { return }
         let requestID = UUID()
@@ -566,6 +572,7 @@ struct DashboardView: View {
     @State private var historyChartRange: ObservationTimeRange = .week
     @State private var isConfirmingHistoryClear = false
     @State private var isAutomaticRAMSamplingEnabled = false
+    @State private var applicationReviewBundle: FolderObservation?
     @Environment(\.scenePhase) private var scenePhase
 
     private let sections = ["Overview", "Applications", "Folders", "Duplicates", "History", "RAM", "About"]
@@ -616,6 +623,13 @@ struct DashboardView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(Color(nsColor: .windowBackgroundColor))
+        }
+        .sheet(item: $applicationReviewBundle) { bundle in
+            ApplicationFootprintReviewSheet(
+                bundleName: bundle.displayName,
+                review: model.applicationFootprintReview(for: bundle)
+            )
+            .frame(minWidth: 580, minHeight: 520)
         }
         .onAppear {
             model.isAppActive = scenePhase == .active
@@ -1220,6 +1234,10 @@ struct DashboardView: View {
                                     .foregroundStyle(.secondary)
                             }
                             .font(.caption2)
+                            Button("Review app removal footprint…") {
+                                applicationReviewBundle = bundle
+                            }
+                            .disabled(model.isScanning || model.isVerifyingDuplicates || model.isMeasuringOwnFootprint)
                             Button("Associate Folders…") {
                                 model.chooseRelatedFolders(for: bundle.path)
                             }
@@ -2788,5 +2806,177 @@ struct DashboardView: View {
         case "About": "info.circle"
         default: "chart.pie"
         }
+    }
+}
+
+private struct ApplicationFootprintReviewSheet: View {
+    let bundleName: String
+    let review: ApplicationFootprintReview
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("App removal footprint", systemImage: "app.badge.checkmark")
+                        .font(.title2.weight(.semibold))
+                    Text(bundleName)
+                        .font(.headline)
+                    Text("Read-only review of the bundle and folders you associated with it.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Label {
+                    Text("Disker does not remove files or add these independent measurements together. Overlapping or shared paths can be counted more than once. Reclaimable physical space is unknown.")
+                } icon: {
+                    Image(systemName: "info.circle.fill")
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+
+                ForEach(review.entries) { entry in
+                    entryCard(entry)
+                }
+
+                Label("Reclaimable physical space: unknown", systemImage: "questionmark.circle")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(24)
+            .frame(maxWidth: 760, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func entryCard(_ entry: ApplicationFootprintReview.Entry) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Label(
+                    entry.kind == .applicationBundle ? "Selected application bundle" : "Associated location",
+                    systemImage: entry.kind == .applicationBundle ? "app.fill" : "folder"
+                )
+                .font(.subheadline.weight(.semibold))
+                Spacer()
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: entry.path)])
+                } label: {
+                    Label("Reveal", systemImage: "arrow.up.right.square")
+                }
+                .buttonStyle(.borderless)
+                .help("Reveal this exact path in Finder")
+            }
+            Text(entry.path)
+                .font(.caption.monospaced())
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let observation = entry.observation {
+                Text("Last measured \(observation.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption.weight(.medium))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Logical size: \(format(observation.logicalBytes))")
+                    Text("Allocated estimate: ~\(format(observation.allocatedBytes))")
+                    Text("\(observation.fileCount) files")
+                }
+                .font(.caption.monospacedDigit())
+                if observation.complete {
+                    Label("Complete coverage at that scan", systemImage: "checkmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                } else {
+                    Label("Partial coverage at that scan · \(unmeasuredSummary(observation, wasCancelled: entry.scanWasCancelled))", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Label("No saved measurement for this path", systemImage: "questionmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let attribution = entry.attribution {
+                Label(attribution.title, systemImage: entry.isShared ? "person.2" : "questionmark.folder")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(entry.isShared ? Color.orange : Color.secondary)
+                Text(attribution.explanation)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if !entry.otherAssociatedBundlePaths.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label("Also associated with other applications · current use unknown", systemImage: "person.2")
+                        .font(.caption.weight(.medium))
+                    ForEach(entry.otherAssociatedBundlePaths, id: \.self) { path in
+                        Text(path)
+                            .font(.caption2.monospaced())
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .foregroundStyle(.orange)
+            }
+
+            Text(consequence(for: entry))
+                .font(.caption)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if !entry.overlappingPaths.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label("Overlaps another reviewed path", systemImage: "square.stack.3d.up")
+                        .font(.caption.weight(.medium))
+                    ForEach(entry.overlappingPaths, id: \.self) { path in
+                        Text(path)
+                            .font(.caption2.monospaced())
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .foregroundStyle(.orange)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.background, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
+    }
+
+    private func consequence(for entry: ApplicationFootprintReview.Entry) -> String {
+        guard entry.kind == .associatedFolder else {
+            return "Removing the bundle may leave related data behind. Reinstallation might restore the app, but availability of a trusted installer has not been checked."
+        }
+        if entry.isShared {
+            if entry.attribution?.evidence == .declaredSharedGroupContainerClaim
+                || entry.attribution?.evidence == .signatureCoveredSharedGroupClaim {
+                return "This path has a shared App Group claim; current use by other apps is unverified. It is excluded from any app-exclusive cleanup estimate."
+            }
+            return "Other app records also link this exact path; current use is unverified. It is excluded from any app-exclusive cleanup estimate."
+        }
+        if entry.attribution?.evidence == .probableNamedSupportPathMatch,
+           URL(fileURLWithPath: entry.path).pathComponents.contains("Caches") {
+            return "This path is under a conventional cache location. Its name does not prove that its contents are safe to remove or regenerate."
+        }
+        return "This location may contain unique documents, settings, databases, licenses, or app state. Ownership and recovery options are unverified."
+    }
+
+    private func unmeasuredSummary(_ observation: FolderObservation, wasCancelled: Bool) -> String {
+        var reasons: [String] = []
+        if observation.inaccessibleCount > 0 { reasons.append("\(observation.inaccessibleCount) inaccessible") }
+        if observation.excludedSymlinkCount > 0 { reasons.append("\(observation.excludedSymlinkCount) symlinks skipped") }
+        if observation.excludedSpecialFileCount > 0 { reasons.append("\(observation.excludedSpecialFileCount) special files skipped") }
+        if observation.excludedVolumeBoundaryCount > 0 { reasons.append("\(observation.excludedVolumeBoundaryCount) volume boundaries skipped") }
+        if observation.changedDuringScanCount > 0 { reasons.append("\(observation.changedDuringScanCount) changed during scan") }
+        if observation.byteAccountingOverflowed { reasons.append("byte totals capped") }
+        if wasCancelled { reasons.append("scan cancelled") }
+        return reasons.isEmpty ? "some data may be unmeasured" : reasons.joined(separator: " · ")
+    }
+
+    private func format(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 }
