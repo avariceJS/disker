@@ -992,7 +992,7 @@ struct DashboardView: View {
                                 Text(formattedDelta(signal.growthBytes))
                                     .font(.subheadline.weight(.semibold).monospacedDigit())
                                     .foregroundStyle(.orange)
-                                Text("Now ~\(format(signal.folder.allocatedBytes)) allocated")
+                                Text("At latest scan ~\(format(signal.folder.allocatedBytes)) allocated")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }
@@ -1050,7 +1050,7 @@ struct DashboardView: View {
                                 Text(formattedDelta(signal.growthBytes))
                                     .font(.subheadline.weight(.semibold).monospacedDigit())
                                     .foregroundStyle(.orange)
-                                Text("Now ~\(format(signal.directory.allocatedBytes)) allocated")
+                                Text("At latest scan ~\(format(signal.directory.allocatedBytes)) allocated")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }
@@ -2645,7 +2645,7 @@ struct DashboardView: View {
             }
             if let growth, !growth.isEmpty,
                let previous = model.previousCompleteObservation(for: folder) {
-                Text("Growing categories · allocated estimate since \(previous.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                Text("Growing categories · allocated estimate · \(previous.finishedAt.formatted(date: .abbreviated, time: .shortened)) → \(folder.finishedAt.formatted(date: .abbreviated, time: .shortened))")
                     .font(.caption2.weight(.semibold))
                     .padding(.top, 2)
                 ForEach(growth) { item in
@@ -2658,7 +2658,7 @@ struct DashboardView: View {
                             Text(formattedDelta(item.growthBytes))
                                 .font(.caption2.monospacedDigit().weight(.medium))
                                 .foregroundStyle(.orange)
-                            Text("Now ~\(format(item.currentAllocatedBytes)) allocated")
+                            Text("At latest scan ~\(format(item.currentAllocatedBytes)) allocated")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
