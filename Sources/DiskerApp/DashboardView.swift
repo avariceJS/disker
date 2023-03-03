@@ -2841,9 +2841,6 @@ private struct ApplicationFootprintReviewSheet: View {
                     entryCard(entry)
                 }
 
-                Label("Reclaimable physical space: unknown", systemImage: "questionmark.circle")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
             }
             .padding(24)
             .frame(maxWidth: 760, alignment: .leading)
