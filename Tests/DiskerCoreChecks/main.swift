@@ -590,7 +590,11 @@ private struct DiskerCoreChecks {
         let supportPath = "\(home)/Library/Application Support/\(identifier)"
         let cachePath = "\(home)/Library/Caches/\(identifier)"
         let unknownPath = "/Volumes/External/Selected by owner"
-        let bundle = syntheticFolder(path: bundlePath, bytes: 100, complete: true)
+        let bundle = FolderObservation(
+            path: bundlePath, displayName: "Sample",
+            logicalBytes: 100, allocatedBytes: 120, fileCount: 2,
+            inaccessibleCount: 0, complete: true
+        )
             .includingApplicationBundleIdentity(
                 ApplicationBundleIdentity(
                     bundleIdentifier: identifier,
@@ -640,8 +644,11 @@ private struct DiskerCoreChecks {
         let byPath = Dictionary(uniqueKeysWithValues: review.entries.map { ($0.path, $0) })
         try expect(review.entries.count == 7 && review.entries.first?.kind == .applicationBundle,
                    "the read-only review should show the bundle and deduplicated associated paths")
-        try expect(byPath[bundlePath]?.observation == bundle,
-                   "the bundle row should use the latest observation for its exact selected path")
+        try expect(byPath[bundlePath]?.observation == bundle
+                   && byPath[bundlePath]?.observation?.logicalBytes == 100
+                   && byPath[bundlePath]?.observation?.allocatedBytes == 120
+                   && review.reclaimableBytes == nil,
+                   "the bundle row should preserve distinct logical and allocated bytes without inferring reclaimable space")
         try expect(byPath[supportPath]?.observation == latestPartialSupportObservation
                    && byPath[supportPath]?.observation?.complete == false
                    && byPath[supportPath]?.scanWasCancelled == true,
