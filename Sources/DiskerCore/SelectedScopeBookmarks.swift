@@ -135,16 +135,17 @@ public enum SelectedScopeBookmarkStore {
             guard resolution.isStale else { return url }
 
             var bookmarks = try load(from: fileURL)
+            let existingIndex = bookmarks.firstIndex(where: { $0.path == bookmark.path })
+            if existingIndex == nil && bookmarks.count >= maximumBookmarkCount {
+                throw SelectedScopeBookmarkError.tooManyBookmarks
+            }
             let refreshed = try creatingBookmarkData(url)
             let refreshedBookmark = SelectedScopeBookmark(
                 path: resolvedPath, bookmarkData: refreshed
             )
-            if let index = bookmarks.firstIndex(where: { $0.path == bookmark.path }) {
+            if let index = existingIndex {
                 bookmarks[index] = refreshedBookmark
             } else {
-                guard bookmarks.count < maximumBookmarkCount else {
-                    throw SelectedScopeBookmarkError.tooManyBookmarks
-                }
                 bookmarks.append(refreshedBookmark)
             }
             try save(bookmarks, at: fileURL)

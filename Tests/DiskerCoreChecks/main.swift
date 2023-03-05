@@ -936,6 +936,43 @@ private struct DiskerCoreChecks {
             let rejectedBookmarks = try SelectedScopeBookmarkStore.load(from: crowdedStore)
             try expect(rejectedBookmarks.isEmpty,
                        "a rejected over-limit selection must not partially persist permissions")
+
+            let fullStore = base.appendingPathComponent("full-scope-store.json")
+            let existingLocations = Array(locations.prefix(SelectedScopeBookmarkStore.maximumBookmarkCount))
+            _ = try SelectedScopeBookmarkStore.remember(existingLocations, at: fullStore)
+            let overflowLocation = locations[SelectedScopeBookmarkStore.maximumBookmarkCount]
+            let overflowBookmarkData = try overflowLocation.bookmarkData(
+                options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+            let overflowBookmark = SelectedScopeBookmark(
+                path: overflowLocation.standardizedFileURL.path,
+                bookmarkData: overflowBookmarkData
+            )
+            let fullStoreBeforeRefresh = try Data(contentsOf: fullStore)
+            var attemptedOverflowRefresh = false
+            var overflowRejected = false
+            do {
+                _ = try SelectedScopeBookmarkStore.resolve(
+                    overflowBookmark,
+                    at: fullStore,
+                    resolvingBookmarkData: { _ in (url: overflowLocation, isStale: true) },
+                    creatingBookmarkData: { _ in
+                        attemptedOverflowRefresh = true
+                        return overflowBookmarkData
+                    }
+                )
+            } catch SelectedScopeBookmarkError.tooManyBookmarks {
+                overflowRejected = true
+            }
+            let fullStoreAfterRefresh = try Data(contentsOf: fullStore)
+            let fullStoreEntriesAfterRefresh = try SelectedScopeBookmarkStore.load(from: fullStore)
+            try expect(overflowRejected && !attemptedOverflowRefresh,
+                       "stale refresh should reject a missing scope at capacity before minting another bookmark")
+            try expect(fullStoreAfterRefresh == fullStoreBeforeRefresh
+                       && fullStoreEntriesAfterRefresh.count == SelectedScopeBookmarkStore.maximumBookmarkCount,
+                       "a rejected stale refresh must preserve the bounded bookmark store")
         }
     }
 
