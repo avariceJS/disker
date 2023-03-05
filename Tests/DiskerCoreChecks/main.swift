@@ -853,14 +853,23 @@ private struct DiskerCoreChecks {
             )
             let scopeStoreBeforeMismatch = try Data(contentsOf: storeURL)
             var rejectedMovedBookmark = false
+            var attemptedUnsafeRefresh = false
             do {
-                _ = try SelectedScopeBookmarkStore.resolve(mismatchedBookmark, at: storeURL)
+                _ = try SelectedScopeBookmarkStore.resolve(
+                    mismatchedBookmark,
+                    at: storeURL,
+                    resolvingBookmarkData: { _ in (url: differentPath, isStale: true) },
+                    creatingBookmarkData: { _ in
+                        attemptedUnsafeRefresh = true
+                        return movedBookmarkData
+                    }
+                )
             } catch SelectedScopeBookmarkError.bookmarkPathChanged {
                 rejectedMovedBookmark = true
             }
             let scopeStoreAfterMismatch = try Data(contentsOf: storeURL)
-            try expect(rejectedMovedBookmark,
-                       "a saved-folder rescan must reject a bookmark that now resolves to another path")
+            try expect(rejectedMovedBookmark && !attemptedUnsafeRefresh,
+                       "a moved stale bookmark must fail before refreshing data for another path")
             try expect(scopeStoreAfterMismatch == scopeStoreBeforeMismatch,
                        "rejecting a moved bookmark must preserve the saved bookmark and path association")
             try expect(!SelectedScopePathProbe.isAvailable(
@@ -870,6 +879,23 @@ private struct DiskerCoreChecks {
             let scopeStoreAfterProbe = try Data(contentsOf: storeURL)
             try expect(scopeStoreAfterProbe == scopeStoreBeforeProbe,
                        "a read-only path availability check must not refresh or rewrite the saved bookmark")
+            let refreshedBookmarkData = try root.bookmarkData(
+                options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+            let staleResolution = try SelectedScopeBookmarkStore.resolve(
+                loaded[0],
+                at: storeURL,
+                resolvingBookmarkData: { _ in (url: root, isStale: true) },
+                creatingBookmarkData: { _ in refreshedBookmarkData }
+            )
+            let refreshedBookmarks = try SelectedScopeBookmarkStore.load(from: storeURL)
+            try expect(staleResolution.standardizedFileURL.path == root.standardizedFileURL.path
+                       && refreshedBookmarks.count == 1
+                       && refreshedBookmarks[0].path == root.standardizedFileURL.path
+                       && refreshedBookmarks[0].bookmarkData == refreshedBookmarkData,
+                       "a stale same-path bookmark should refresh in place without changing its scope identity")
             let selectedAlias = base.appendingPathComponent("selected-alias", isDirectory: true)
             try FileManager.default.createSymbolicLink(at: selectedAlias, withDestinationURL: root)
             try expect(!SelectedScopePathProbe.isAvailable(at: selectedAlias.path),

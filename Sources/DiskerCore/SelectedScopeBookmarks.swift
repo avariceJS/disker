@@ -89,35 +89,65 @@ public enum SelectedScopeBookmarkStore {
     /// Resolves a previously approved location. A refreshed stale bookmark is
     /// persisted before the URL is returned for the caller's explicit action.
     public static func resolve(_ bookmark: SelectedScopeBookmark, at fileURL: URL? = nil) throws -> URL {
-        var stale = false
-        do {
-            let url = try URL(
-                resolvingBookmarkData: bookmark.bookmarkData,
-                options: [.withSecurityScope],
-                relativeTo: nil,
-                bookmarkDataIsStale: &stale
-            )
-            let resolvedPath = url.standardizedFileURL.path
-            guard resolvedPath == URL(fileURLWithPath: bookmark.path, isDirectory: true)
-                .standardizedFileURL.path else {
-                throw SelectedScopeBookmarkError.bookmarkPathChanged(
-                    expected: bookmark.path, resolved: resolvedPath
+        try resolve(
+            bookmark,
+            at: fileURL,
+            resolvingBookmarkData: { data in
+                var stale = false
+                let url = try URL(
+                    resolvingBookmarkData: data,
+                    options: [.withSecurityScope],
+                    relativeTo: nil,
+                    bookmarkDataIsStale: &stale
                 )
-            }
-            guard !stale else {
-                var bookmarks = try load(from: fileURL).filter { $0.path != bookmark.path }
-                let refreshed = try url.bookmarkData(
+                return (url: url, isStale: stale)
+            },
+            creatingBookmarkData: { url in
+                try url.bookmarkData(
                     options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
                     includingResourceValuesForKeys: nil,
                     relativeTo: nil
                 )
-                bookmarks.append(SelectedScopeBookmark(
-                    path: resolvedPath,
-                    bookmarkData: refreshed
-                ))
-                try save(bookmarks, at: fileURL)
-                return url
             }
+        )
+    }
+
+    /// Injectable URL operations allow deterministic tests of stale-bookmark
+    /// refresh and path-mismatch handling without modifying real folder state.
+    @_spi(DiskerTesting)
+    public static func resolve(
+        _ bookmark: SelectedScopeBookmark,
+        at fileURL: URL? = nil,
+        resolvingBookmarkData: (Data) throws -> (url: URL, isStale: Bool),
+        creatingBookmarkData: (URL) throws -> Data
+    ) throws -> URL {
+        do {
+            let resolution = try resolvingBookmarkData(bookmark.bookmarkData)
+            let url = resolution.url
+            let resolvedPath = url.standardizedFileURL.path
+            let expectedPath = URL(fileURLWithPath: bookmark.path, isDirectory: true)
+                .standardizedFileURL.path
+            guard resolvedPath == expectedPath else {
+                throw SelectedScopeBookmarkError.bookmarkPathChanged(
+                    expected: bookmark.path, resolved: resolvedPath
+                )
+            }
+            guard resolution.isStale else { return url }
+
+            var bookmarks = try load(from: fileURL)
+            let refreshed = try creatingBookmarkData(url)
+            let refreshedBookmark = SelectedScopeBookmark(
+                path: resolvedPath, bookmarkData: refreshed
+            )
+            if let index = bookmarks.firstIndex(where: { $0.path == bookmark.path }) {
+                bookmarks[index] = refreshedBookmark
+            } else {
+                guard bookmarks.count < maximumBookmarkCount else {
+                    throw SelectedScopeBookmarkError.tooManyBookmarks
+                }
+                bookmarks.append(refreshedBookmark)
+            }
+            try save(bookmarks, at: fileURL)
             return url
         } catch let error as SelectedScopeBookmarkError {
             throw error
