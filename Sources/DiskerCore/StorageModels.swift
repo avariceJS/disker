@@ -103,6 +103,22 @@ public struct FileExtensionUsage: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// A bounded metadata summary for one regular file under a selected root.
+/// Sizes come from filesystem metadata; no file contents are read.
+public struct FileUsageSummary: Codable, Equatable, Identifiable, Sendable {
+    public let rootRelativePath: String
+    public let logicalBytes: Int64
+    public let allocatedBytes: Int64
+
+    public var id: String { rootRelativePath }
+
+    public init(rootRelativePath: String, logicalBytes: Int64, allocatedBytes: Int64) {
+        self.rootRelativePath = rootRelativePath
+        self.logicalBytes = logicalBytes
+        self.allocatedBytes = allocatedBytes
+    }
+}
+
 public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     public let id: UUID
     public let path: String
@@ -142,6 +158,11 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     /// independent of the largest-folder cap.
     public let projectDirectorySummaries: [DirectoryUsage]
     public let projectDirectorySummariesTruncated: Bool
+    /// Largest regular files by allocated-byte estimate, capped and ordered
+    /// deterministically. Paths are relative to the selected root; an empty
+    /// path means the selected root itself was a regular file.
+    public let largestFiles: [FileUsageSummary]
+    public let largestFilesTruncated: Bool
     /// Identifier read from the Info.plist of an explicitly selected app bundle.
     /// It is metadata evidence, not proof of signing identity or ownership.
     public let applicationBundleIdentifier: String?
@@ -172,6 +193,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         subdirectorySummariesTruncated: Bool = false,
         projectDirectorySummaries: [DirectoryUsage] = [],
         projectDirectorySummariesTruncated: Bool = false,
+        largestFiles: [FileUsageSummary] = [],
+        largestFilesTruncated: Bool = false,
         applicationBundleIdentifier: String? = nil,
         applicationGroupIdentifiers: [String] = [],
         applicationSignatureValidated: Bool = false,
@@ -203,6 +226,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         self.subdirectorySummariesTruncated = subdirectorySummariesTruncated
         self.projectDirectorySummaries = projectDirectorySummaries
         self.projectDirectorySummariesTruncated = projectDirectorySummariesTruncated
+        self.largestFiles = largestFiles
+        self.largestFilesTruncated = largestFilesTruncated
         self.applicationBundleIdentifier = applicationBundleIdentifier
         self.applicationGroupIdentifiers = applicationGroupIdentifiers
         self.applicationSignatureValidated = applicationSignatureValidated
@@ -219,6 +244,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         case finishedAt, complete
         case subdirectorySummaries, subdirectorySummariesTruncated, gitMetadataUsage
         case projectDirectorySummaries, projectDirectorySummariesTruncated
+        case largestFiles, largestFilesTruncated
         case applicationBundleIdentifier
         case applicationGroupIdentifiers
         case applicationSignatureValidated, applicationSignedBundleIdentifier
@@ -252,6 +278,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         subdirectorySummariesTruncated = try values.decodeIfPresent(Bool.self, forKey: .subdirectorySummariesTruncated) ?? false
         projectDirectorySummaries = try values.decodeIfPresent([DirectoryUsage].self, forKey: .projectDirectorySummaries) ?? []
         projectDirectorySummariesTruncated = try values.decodeIfPresent(Bool.self, forKey: .projectDirectorySummariesTruncated) ?? false
+        largestFiles = try values.decodeIfPresent([FileUsageSummary].self, forKey: .largestFiles) ?? []
+        largestFilesTruncated = try values.decodeIfPresent(Bool.self, forKey: .largestFilesTruncated) ?? false
         applicationBundleIdentifier = try values.decodeIfPresent(String.self, forKey: .applicationBundleIdentifier)
         applicationGroupIdentifiers = try values.decodeIfPresent([String].self, forKey: .applicationGroupIdentifiers) ?? []
         applicationSignatureValidated = try values.decodeIfPresent(Bool.self, forKey: .applicationSignatureValidated) ?? false
@@ -287,6 +315,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         try values.encode(subdirectorySummariesTruncated, forKey: .subdirectorySummariesTruncated)
         try values.encode(projectDirectorySummaries, forKey: .projectDirectorySummaries)
         try values.encode(projectDirectorySummariesTruncated, forKey: .projectDirectorySummariesTruncated)
+        try values.encode(largestFiles, forKey: .largestFiles)
+        try values.encode(largestFilesTruncated, forKey: .largestFilesTruncated)
         try values.encodeIfPresent(applicationBundleIdentifier, forKey: .applicationBundleIdentifier)
         try values.encode(applicationGroupIdentifiers, forKey: .applicationGroupIdentifiers)
         try values.encode(applicationSignatureValidated, forKey: .applicationSignatureValidated)
@@ -316,6 +346,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
             subdirectorySummariesTruncated: subdirectorySummariesTruncated,
             projectDirectorySummaries: projectDirectorySummaries,
             projectDirectorySummariesTruncated: projectDirectorySummariesTruncated,
+            largestFiles: largestFiles,
+            largestFilesTruncated: largestFilesTruncated,
             applicationBundleIdentifier: identity?.bundleIdentifier,
             applicationGroupIdentifiers: identity?.claimedGroupIdentifiers ?? [],
             applicationSignatureValidated: identity?.signatureValidated ?? false,

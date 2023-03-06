@@ -9,6 +9,7 @@ public struct ScanProgress: Sendable {
 public enum FolderScanner {
     private static let maximumDirectorySummaries = 100
     private static let maximumProjectDirectorySummaries = 20
+    private static let maximumLargestFileSummaries = 20
     private static let maximumFileExtensionSummaries = 30
 
     private struct FileIdentity: Hashable {
@@ -170,6 +171,7 @@ public enum FolderScanner {
             var rootFileCount = 0
             var excludedSpecialFileCount = 0
             var extensionMetrics: [String: FileExtensionMetrics] = [:]
+            var largestUniqueFiles: [FileUsageSummary] = []
 
             if rootType != S_IFDIR {
                 guard rootType == S_IFREG else {
@@ -186,6 +188,11 @@ public enum FolderScanner {
                     accumulate(file.allocatedBytes, into: &rootAllocatedBytes, overflowed: &accountingOverflow)
                     rootFileCount += 1
                     addFileExtension(file, to: &extensionMetrics, overflowed: &accountingOverflow)
+                    retainLargestFile(
+                        FileUsageSummary(rootRelativePath: "", logicalBytes: file.logicalBytes,
+                                         allocatedBytes: file.allocatedBytes),
+                        in: &largestUniqueFiles
+                    )
                 }
             } else {
                 let rootFD = root.path.withCString {
@@ -369,6 +376,16 @@ public enum FolderScanner {
                             if isNewFileObject {
                                 fileCountForProgress += 1
                                 reachedFileProgressInterval = fileCountForProgress.isMultiple(of: 256)
+                                if metadata.st_nlink == 1 {
+                                    retainLargestFile(
+                                        FileUsageSummary(
+                                            rootRelativePath: file.relativePath,
+                                            logicalBytes: file.logicalBytes,
+                                            allocatedBytes: file.allocatedBytes
+                                        ),
+                                        in: &largestUniqueFiles
+                                    )
+                                }
                             }
                         }
                         if reachedFileProgressInterval || visitedEntryCountForProgress.isMultiple(of: 256) {
@@ -429,6 +446,14 @@ public enum FolderScanner {
                 rootFileCount += 1
                 addFileExtension(file, to: &extensionMetrics, overflowed: &accountingOverflow)
             }
+            let rankedLargestFiles = (largestUniqueFiles + linkedFiles.map {
+                FileUsageSummary(
+                    rootRelativePath: rootType == S_IFDIR ? $0.relativePath : "",
+                    logicalBytes: $0.logicalBytes,
+                    allocatedBytes: $0.allocatedBytes
+                )
+            }).sorted(by: largestFilePrecedes)
+            let retainedLargestFiles = Array(rankedLargestFiles.prefix(maximumLargestFileSummaries))
 
             // Aggregate each directory into its parent once, deepest first.
             let directoryPaths = metrics.keys.filter { !$0.isEmpty }.sorted { lhs, rhs in
@@ -554,7 +579,9 @@ public enum FolderScanner {
                 subdirectorySummaries: retainedSubdirectories,
                 subdirectorySummariesTruncated: wasTruncated,
                 projectDirectorySummaries: retainedProjectDirectories,
-                projectDirectorySummariesTruncated: projectSummaries.count > maximumProjectDirectorySummaries
+                projectDirectorySummariesTruncated: projectSummaries.count > maximumProjectDirectorySummaries,
+                largestFiles: retainedLargestFiles,
+                largestFilesTruncated: rootFileCount > retainedLargestFiles.count
             )
             results.append(folderResult)
 
@@ -609,6 +636,8 @@ public enum FolderScanner {
             subdirectorySummariesTruncated: folder.subdirectorySummariesTruncated,
             projectDirectorySummaries: folder.projectDirectorySummaries,
             projectDirectorySummariesTruncated: folder.projectDirectorySummariesTruncated,
+            largestFiles: folder.largestFiles,
+            largestFilesTruncated: folder.largestFilesTruncated,
             applicationBundleIdentifier: folder.applicationBundleIdentifier,
             applicationGroupIdentifiers: folder.applicationGroupIdentifiers,
             applicationSignatureValidated: folder.applicationSignatureValidated,
@@ -637,6 +666,8 @@ public enum FolderScanner {
             subdirectorySummariesTruncated: folder.subdirectorySummariesTruncated,
             projectDirectorySummaries: folder.projectDirectorySummaries,
             projectDirectorySummariesTruncated: folder.projectDirectorySummariesTruncated,
+            largestFiles: folder.largestFiles,
+            largestFilesTruncated: folder.largestFilesTruncated,
             applicationBundleIdentifier: folder.applicationBundleIdentifier,
             applicationGroupIdentifiers: folder.applicationGroupIdentifiers,
             applicationSignatureValidated: folder.applicationSignatureValidated,
@@ -721,6 +752,23 @@ public enum FolderScanner {
         accumulate(file.allocatedBytes, into: &value.allocatedBytes, overflowed: &overflowed)
         value.fileCount += 1
         summaries[file.extensionName] = value
+    }
+
+    private static func retainLargestFile(
+        _ candidate: FileUsageSummary,
+        in retained: inout [FileUsageSummary]
+    ) {
+        retained.append(candidate)
+        retained.sort(by: largestFilePrecedes)
+        if retained.count > maximumLargestFileSummaries {
+            retained.removeLast()
+        }
+    }
+
+    private static func largestFilePrecedes(_ lhs: FileUsageSummary, _ rhs: FileUsageSummary) -> Bool {
+        if lhs.allocatedBytes != rhs.allocatedBytes { return lhs.allocatedBytes > rhs.allocatedBytes }
+        if lhs.logicalBytes != rhs.logicalBytes { return lhs.logicalBytes > rhs.logicalBytes }
+        return utf8LessThan(lhs.rootRelativePath, rhs.rootRelativePath)
     }
 
     private static func addFile(

@@ -2503,6 +2503,9 @@ struct DashboardView: View {
                     .padding(.horizontal, 14)
                     .padding(.bottom, 8)
                 }
+                if includeDetails && !folder.largestFiles.isEmpty {
+                    largestFileSection(for: folder)
+                }
             }
             if let latest = model.latestScan {
                 Text("Scan finished \(latest.finishedAt.formatted(date: .abbreviated, time: .shortened)) · \(latest.folders.count) selected locations")
@@ -2595,6 +2598,59 @@ struct DashboardView: View {
         .background(.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
     }
 
+    private func largestFileSection(for folder: FolderObservation) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Largest files")
+                .font(.subheadline.weight(.semibold))
+            Text("Ranked by allocated-byte estimate from file metadata. Logical size is shown separately; a large file is not evidence that it is safe to remove.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(folder.largestFiles) { file in
+                let fileURL = file.rootRelativePath.isEmpty
+                    ? URL(fileURLWithPath: folder.path)
+                    : URL(fileURLWithPath: folder.path).appendingPathComponent(file.rootRelativePath)
+                HStack(spacing: 10) {
+                    Image(systemName: "doc")
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(file.rootRelativePath.isEmpty ? folder.displayName : file.rootRelativePath)
+                            .font(.subheadline.weight(.medium))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        HStack(spacing: 8) {
+                            Text("Logical \(format(file.logicalBytes))")
+                            Text("Allocated ~\(format(file.allocatedBytes))")
+                                .help("Allocated-byte estimate from filesystem metadata")
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 4)
+                    Text(format(file.allocatedBytes))
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+                    } label: {
+                        Image(systemName: "arrow.up.right.square")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Reveal in Finder")
+                    .accessibilityLabel("Reveal \(file.rootRelativePath.isEmpty ? folder.displayName : file.rootRelativePath)")
+                }
+                .padding(.vertical, 7)
+                Divider()
+            }
+            if folder.largestFilesTruncated {
+                Text("Additional files were omitted from this bounded summary.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 8)
+    }
+
     private func fileExtensionSummary(for folder: FolderObservation) -> some View {
         let summaries = Array(folder.fileExtensionSummaries.prefix(5))
         let growth = ObservationComparison.growingFileExtensions(for: folder, in: model.history)
@@ -2664,6 +2720,7 @@ struct DashboardView: View {
                         }
                     }
                 }
+
             }
             Text("Grouped by filename only; content and purpose are not verified. Estimates share this scan's coverage.")
                 .font(.caption2)

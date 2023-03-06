@@ -62,6 +62,7 @@ private struct DiskerCoreChecks {
             ("selected symlink root is incomplete", testSelectedSymlinkRootIsIncomplete),
             ("hard-link deduplication", testHardLinkDeduplication),
             ("directory summary cap and stable order", testDirectorySummaryCap),
+            ("bounded largest-file metadata summaries", testLargestFileSummaries),
             ("old history JSON defaults new fields", testOldHistoryDecoding),
             ("sparse file size accounting", testSparseFileAccounting),
             ("missing root coverage", testMissingRootCoverage),
@@ -1913,6 +1914,9 @@ private struct DiskerCoreChecks {
             try expect(directory.logicalBytes == 2048 && directory.fileCount == 1, "lexicographically first hard-link path should deterministically own subtree bytes")
             let original = try requireSummary("original", in: result.folders[0])
             try expect(original.logicalBytes == 0 && original.fileCount == 0, "later hard-link path must not duplicate subtree bytes")
+            try expect(result.folders[0].largestFiles.count == 1
+                       && result.folders[0].largestFiles[0].rootRelativePath == "linked/payload.bin",
+                       "the deterministic hard-link owner should appear once in the largest-file summary: \(result.folders[0].largestFiles)")
         }
     }
 
@@ -1929,6 +1933,56 @@ private struct DiskerCoreChecks {
             let paths = folder.subdirectorySummaries.map(\.rootRelativePath)
             try expect(paths == paths.sorted(by: { $0.utf8.lexicographicallyPrecedes($1.utf8) }), "equal-size summaries should have stable UTF-8 path ordering")
             try expect(paths.first == "dir-000" && paths.last == "dir-099", "stable tie-break should retain the first 100 equal-size paths")
+        }
+    }
+
+    private static func testLargestFileSummaries() throws {
+        try withTemporaryDirectory { root in
+            let nested = root.appendingPathComponent("nested", isDirectory: true)
+            try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: false)
+            let largeURL = nested.appendingPathComponent("large.dat")
+            let mediumURL = root.appendingPathComponent("medium.dat")
+            let smallURL = root.appendingPathComponent("small.dat")
+            try Data(repeating: 0x4C, count: 32 * 1024).write(to: largeURL)
+            try Data(repeating: 0x4D, count: 12 * 1024).write(to: mediumURL)
+            try Data(repeating: 0x53, count: 4 * 1024).write(to: smallURL)
+
+            let folder = FolderScanner.scan(roots: [root]).folders[0]
+            var largeMetadata = stat()
+            let largeMetadataResult = largeURL.path.withCString { lstat($0, &largeMetadata) }
+            try expect(folder.complete, "large-file metadata summaries should not alter scan coverage")
+            try expect(largeMetadataResult == 0, "synthetic large-file metadata should remain available")
+            try expect(folder.largestFiles.map(\.rootRelativePath) == ["nested/large.dat", "medium.dat", "small.dat"],
+                       "largest files should use descending allocated estimate with stable paths")
+            try expect(folder.largestFiles.first?.logicalBytes == 32 * 1024
+                       && folder.largestFiles.first?.allocatedBytes == Int64(largeMetadata.st_blocks) * 512,
+                       "file summaries should preserve separate logical and filesystem allocated byte values")
+            try expect(!folder.largestFilesTruncated,
+                       "a small selected tree should report no omitted largest-file rows")
+
+            let encoded = try JSONEncoder().encode(folder)
+            let restored = try JSONDecoder().decode(FolderObservation.self, from: encoded)
+            try expect(restored.largestFiles == folder.largestFiles,
+                       "bounded largest-file paths and byte estimates should persist in local history")
+
+            let fileRoot = FolderScanner.scan(roots: [largeURL]).folders[0]
+            try expect(fileRoot.largestFiles.count == 1
+                       && fileRoot.largestFiles[0].rootRelativePath.isEmpty
+                       && fileRoot.largestFiles[0].logicalBytes == 32 * 1024,
+                       "a selected regular-file root should identify the file without duplicating its path")
+
+            let cappedRoot = root.appendingPathComponent("many", isDirectory: true)
+            try FileManager.default.createDirectory(at: cappedRoot, withIntermediateDirectories: false)
+            for index in 0..<23 {
+                let url = cappedRoot.appendingPathComponent(String(format: "file-%02d.bin", index))
+                try Data(repeating: UInt8(index), count: (index + 1) * 4096).write(to: url)
+            }
+            let capped = FolderScanner.scan(roots: [cappedRoot]).folders[0]
+            try expect(capped.largestFiles.count == 20 && capped.largestFilesTruncated,
+                       "largest-file history should retain a bounded list and disclose omitted files")
+            try expect(capped.largestFiles.first?.rootRelativePath == "file-22.bin"
+                       && capped.largestFiles.last?.rootRelativePath == "file-03.bin",
+                       "the bounded file summary should retain the 20 largest allocated estimates")
         }
     }
 
@@ -1969,6 +2023,8 @@ private struct DiskerCoreChecks {
                    "older history should default nested-volume boundary counts to zero")
         try expect(!folder.subdirectorySummaries[0].gitMetadataEntryDetected, "old directory summaries should default Git marker state to false")
         try expect(!folder.subdirectorySummariesTruncated, "old folder history should default truncation to false")
+        try expect(folder.largestFiles.isEmpty && !folder.largestFilesTruncated,
+                   "old folder history should default largest-file summaries to absent and untruncated")
         try expect(folder.fileExtensionSummaries.isEmpty && !folder.fileExtensionSummariesTruncated,
                    "old folder history should default filename-extension summaries to empty and untruncated")
         try expect(folder.otherFileExtensionUsage == nil && folder.otherFileExtensionCategoryCount == 0,
