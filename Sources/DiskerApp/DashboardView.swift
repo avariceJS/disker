@@ -2599,10 +2599,14 @@ struct DashboardView: View {
     }
 
     private func largestFileSection(for folder: FolderObservation) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        var growthByPath: [String: ObservationComparison.FileGrowthSignal] = [:]
+        for signal in ObservationComparison.growingFiles(for: folder, in: model.history) {
+            growthByPath[signal.file.rootRelativePath] = signal
+        }
+        return VStack(alignment: .leading, spacing: 8) {
             Text("Largest files")
                 .font(.subheadline.weight(.semibold))
-            Text("Ranked by allocated-byte estimate from file metadata. Logical size is shown separately; a large file is not evidence that it is safe to remove.")
+            Text("Ranked by allocated-byte estimate from metadata. Logical size is separate. Growth is shown only for paths present in both complete scans; omitted paths are unknown, and file size does not imply cleanup safety.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -2625,6 +2629,11 @@ struct DashboardView: View {
                         }
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                        if let growth = growthByPath[file.rootRelativePath] {
+                            Text("Allocated estimate increased \(format(growth.growthBytes)) since \(growth.previousFolder.finishedAt.formatted(date: .abbreviated, time: .shortened)).")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
                     }
                     Spacer(minLength: 4)
                     Text(format(file.allocatedBytes))

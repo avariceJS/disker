@@ -24,6 +24,15 @@ public enum ObservationComparison {
         public let growthBytes: Int64
     }
 
+    public struct FileGrowthSignal: Equatable, Identifiable, Sendable {
+        public var id: String { folder.path + "\u{0}" + file.rootRelativePath }
+        public let folder: FolderObservation
+        public let previousFolder: FolderObservation
+        public let file: FileUsageSummary
+        public let previousFile: FileUsageSummary
+        public let growthBytes: Int64
+    }
+
     public struct ProcessGrowthSignal: Equatable, Identifiable, Sendable {
         public var id: Int32 { processID }
         public let processID: Int32
@@ -308,6 +317,48 @@ public enum ObservationComparison {
             if $0.folder.path != $1.folder.path { return $0.folder.path < $1.folder.path }
             return $0.directory.rootRelativePath < $1.directory.rootRelativePath
         }.prefix(limit))
+    }
+
+    /// Positive allocated-byte deltas for exact relative file paths present in
+    /// both complete top-file summaries of the same selected root. Missing rows
+    /// are unknown and are never interpreted as zero; summary truncation does
+    /// not invalidate a path measured in both observations.
+    public static func growingFiles(
+        for current: FolderObservation,
+        in history: LocalHistory,
+        limit: Int = 5
+    ) -> [FileGrowthSignal] {
+        guard limit > 0, current.complete,
+              let latest = history.observations.reversed().lazy.compactMap({ observation in
+                  observation.folders.first(where: { $0.path == current.path })
+              }).first,
+              latest.id == current.id,
+              let previous = previousCompleteFolder(for: current, in: history),
+              previous.complete
+        else { return [] }
+
+        var previousByPath: [String: FileUsageSummary] = [:]
+        for file in previous.largestFiles where previousByPath[file.rootRelativePath] == nil {
+            previousByPath[file.rootRelativePath] = file
+        }
+        var signals: [FileGrowthSignal] = []
+        for file in current.largestFiles {
+            guard let prior = previousByPath[file.rootRelativePath] else { continue }
+            let (delta, overflow) = file.allocatedBytes.subtractingReportingOverflow(prior.allocatedBytes)
+            guard !overflow, delta > 0 else { continue }
+            signals.append(FileGrowthSignal(
+                folder: current, previousFolder: previous,
+                file: file, previousFile: prior, growthBytes: delta
+            ))
+        }
+        return signals.sorted {
+            if $0.growthBytes != $1.growthBytes { return $0.growthBytes > $1.growthBytes }
+            return $0.file.rootRelativePath.utf8.lexicographicallyPrecedes(
+                $1.file.rootRelativePath.utf8
+            )
+        }
+        .prefix(limit)
+        .map { $0 }
     }
 
     private static func directoryMap(in folder: FolderObservation) -> [String: DirectoryUsage] {

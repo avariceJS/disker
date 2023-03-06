@@ -76,6 +76,7 @@ private struct DiskerCoreChecks {
             ("same-path complete history comparison", testSamePathCompleteHistoryComparison),
             ("selected-folder growth highlights", testFolderGrowthHighlights),
             ("same-root complete directory growth comparison", testDirectoryGrowthComparison),
+            ("same-path complete largest-file growth", testLargestFileGrowthComparison),
             ("selected file root mutation remains partial", testSelectedFileRootMutationCoverage),
             ("scan progress callback", testScanProgressCallback),
             ("directory mutations make coverage partial", testDirectoryMutationCoverage),
@@ -2754,6 +2755,76 @@ private struct DiskerCoreChecks {
             history: directoryVolumeHistory
         ) == nil && ObservationComparison.growingDirectories(in: directoryVolumeHistory).isEmpty,
                    "a clock-future root on a replacement volume must prevent bridging directory history")
+    }
+
+    private static func testLargestFileGrowthComparison() throws {
+        func withFiles(_ folder: FolderObservation, _ files: [FileUsageSummary], truncated: Bool) -> FolderObservation {
+            FolderObservation(
+                id: folder.id, path: folder.path, volumeDeviceID: folder.volumeDeviceID,
+                displayName: folder.displayName, logicalBytes: folder.logicalBytes,
+                allocatedBytes: folder.allocatedBytes, fileCount: folder.fileCount,
+                inaccessibleCount: folder.inaccessibleCount, finishedAt: folder.finishedAt,
+                complete: folder.complete, largestFiles: files, largestFilesTruncated: truncated
+            )
+        }
+
+        let before = withFiles(
+            syntheticFolder(path: "/selected/project", bytes: 1_000, complete: true,
+                            volumeDeviceID: 42, finishedAt: Date(timeIntervalSince1970: 100)),
+            [
+                FileUsageSummary(rootRelativePath: "data/model.bin", logicalBytes: 100, allocatedBytes: 100),
+                FileUsageSummary(rootRelativePath: "cache/old.bin", logicalBytes: 50, allocatedBytes: 50),
+            ],
+            truncated: true
+        )
+        let current = withFiles(
+            syntheticFolder(path: before.path, bytes: 1_250, complete: true,
+                            volumeDeviceID: 42, finishedAt: Date(timeIntervalSince1970: 200)),
+            [
+                FileUsageSummary(rootRelativePath: "new.bin", logicalBytes: 900, allocatedBytes: 900),
+                FileUsageSummary(rootRelativePath: "data/model.bin", logicalBytes: 400, allocatedBytes: 350),
+                FileUsageSummary(rootRelativePath: "cache/old.bin", logicalBytes: 20, allocatedBytes: 20),
+            ],
+            truncated: true
+        )
+        let history = LocalHistory(observations: [
+            ScanObservation(startedAt: before.finishedAt, folders: [before], cancelled: false),
+            ScanObservation(startedAt: current.finishedAt, folders: [current], cancelled: false),
+        ])
+        let signals = ObservationComparison.growingFiles(for: current, in: history)
+        try expect(signals.map(\.file.rootRelativePath) == ["data/model.bin"]
+                   && signals.map(\.growthBytes) == [250]
+                   && signals[0].file.allocatedBytes == 350,
+                   "file growth should compare positive allocated changes for an exact path present in both complete top-file lists")
+        try expect(ObservationComparison.growingFiles(for: current, in: history, limit: 0).isEmpty,
+                   "file growth comparison should respect an empty result limit")
+
+        let unrelated = withFiles(
+            syntheticFolder(path: "/other/project", bytes: 1_250, complete: true,
+                            volumeDeviceID: 42, finishedAt: current.finishedAt),
+            current.largestFiles,
+            truncated: true
+        )
+        let unrelatedHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: before.finishedAt, folders: [before], cancelled: false),
+            ScanObservation(startedAt: unrelated.finishedAt, folders: [unrelated], cancelled: false),
+        ])
+        try expect(ObservationComparison.growingFiles(for: unrelated, in: unrelatedHistory).isEmpty,
+                   "identical relative file names under a different selected root must not be compared")
+
+        let partial = withFiles(
+            syntheticFolder(path: current.path, bytes: 1_500, complete: false,
+                            volumeDeviceID: 42, finishedAt: Date(timeIntervalSince1970: 300)),
+            [FileUsageSummary(rootRelativePath: "data/model.bin", logicalBytes: 500, allocatedBytes: 500)],
+            truncated: false
+        )
+        let partialHistory = LocalHistory(observations: history.observations + [
+            ScanObservation(startedAt: partial.finishedAt, folders: [partial], cancelled: true),
+        ])
+        try expect(ObservationComparison.growingFiles(for: current, in: partialHistory).isEmpty,
+                   "a newer partial observation must suppress a stale file-growth signal")
+        try expect(ObservationComparison.growingFiles(for: partial, in: partialHistory).isEmpty,
+                   "partial file observations must never produce growth signals")
     }
 
     private static func folderWithDirectory(
