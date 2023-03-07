@@ -27,9 +27,9 @@ The saved scan-root list shows each path's latest retained measurement, time, lo
 
 ## Repository and disk footprint
 
-Remote: `https://github.com/avariceJS/disker.git`; branch: `main`; `.git` is authoritative. At resume, local `main` and `origin/main` agreed at `f2e4d46a0a370b0334b7bceb7eb04ae82ed804ad`. The active checkpoint adds opt-in active-app storage monitoring and entitlement-aware bookmark creation/resolution. Commit and push after final diff review. Early 2023 UTC timestamps are intentionally simulated for contribution-calendar presentation, not actual implementation dates. Keep dates transparent, preserve history, and never force-push. Five meaningful commits occupy 2023-03-06 UTC; work continues on 2023-03-07 UTC.
+Remote: `https://github.com/avariceJS/disker.git`; branch: `main`; `.git` is authoritative. Latest verification: local `main` and `origin/main` agree at `7882f16fc1d890cbed7433eca960b45c12a8d01b`. Monitoring and entitlement-aware bookmark handling were published in `2429698`; session-reset disclosure and the current benchmark were published in `7882f16`. Early 2023 UTC timestamps are intentionally simulated for contribution-calendar presentation, not actual implementation dates. Keep dates transparent, preserve history, and never force-push. Five meaningful commits occupy 2023-03-06 UTC; work continues on 2023-03-07 UTC.
 
-Measured during this checkpoint: workspace 726,204 KiB total; `.git` 15,420 KiB; generated `.build` 709,240 KiB; `Sources` 476 KiB; `Tests` 224 KiB; installed app 6,696 KiB; standard app support data 104 KiB. Sizes are approximate directory measurements; sandboxed app support size was not remeasured. `.build` remains ignored and was not removed.
+Measured after publication: workspace 726,440 KiB total; `.git` 15,664 KiB; generated `.build` 709,240 KiB; `Sources` 476 KiB; `Tests` 216 KiB; installed app 6,696 KiB; standard app support data 104 KiB. Sizes are approximate directory measurements; sandboxed app support size was not remeasured. `.build` remains ignored and was not removed.
 
 ## Remaining work (highest priority first)
 
