@@ -1,7 +1,9 @@
 import Foundation
+import Security
 
-/// A user-approved, read-only location that can be scanned again on demand.
-/// The bookmark is a capability; it is stored locally and never uploaded.
+/// A user-selected location that Disker scans without modifying its contents.
+/// Sandboxed builds retain access with a security-scoped bookmark; the standard
+/// unsandboxed build stores an ordinary path bookmark. Neither is uploaded.
 public struct SelectedScopeBookmark: Codable, Equatable, Identifiable, Sendable {
     public let path: String
     public let bookmarkData: Data
@@ -33,8 +35,8 @@ public enum SelectedScopeBookmarkError: Error, LocalizedError {
     }
 }
 
-/// Stores a bounded set of explicit, read-only scopes for user-triggered scans.
-/// It does not schedule scans or perform work when the app launches.
+/// Stores a bounded set of explicitly selected locations for Disker's read-only
+/// scans. It does not schedule scans or perform work when the app launches.
 public enum SelectedScopeBookmarkStore {
     public static let maximumBookmarkCount = 20
     private static let fileName = "selected-scopes.json"
@@ -59,7 +61,7 @@ public enum SelectedScopeBookmarkStore {
             let data: Data
             do {
                 data = try url.bookmarkData(
-                    options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                    options: try creationOptionsForCurrentProcess(),
                     includingResourceValuesForKeys: nil,
                     relativeTo: nil
                 )
@@ -96,7 +98,7 @@ public enum SelectedScopeBookmarkStore {
                 var stale = false
                 let url = try URL(
                     resolvingBookmarkData: data,
-                    options: [.withSecurityScope],
+                    options: try resolutionOptionsForCurrentProcess(),
                     relativeTo: nil,
                     bookmarkDataIsStale: &stale
                 )
@@ -104,7 +106,7 @@ public enum SelectedScopeBookmarkStore {
             },
             creatingBookmarkData: { url in
                 try url.bookmarkData(
-                    options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                    options: try creationOptionsForCurrentProcess(),
                     includingResourceValuesForKeys: nil,
                     relativeTo: nil
                 )
@@ -185,5 +187,56 @@ public enum SelectedScopeBookmarkStore {
             .first?
             .appendingPathComponent("Disker", isDirectory: true)
             .appendingPathComponent(fileName)
+    }
+
+    /// Ordinary, unsandboxed apps cannot use `.withSecurityScope`; their
+    /// selected folder remains available through normal process file access.
+    /// Sandboxed builds need scoped bookmark capabilities to retain picker
+    /// grants across launches.
+    private static func creationOptionsForCurrentProcess() throws -> URL.BookmarkCreationOptions {
+        creationOptions(isSandboxed: try isCurrentProcessSandboxed())
+    }
+
+    static func resolutionOptionsForCurrentProcess() throws -> URL.BookmarkResolutionOptions {
+        resolutionOptions(isSandboxed: try isCurrentProcessSandboxed())
+    }
+
+    private static func isCurrentProcessSandboxed() throws -> Bool {
+        guard let task = SecTaskCreateFromSelf(kCFAllocatorDefault) else {
+            throw SelectedScopeBookmarkError.bookmarkUnavailable(
+                "Disker could not determine whether this build uses App Sandbox."
+            )
+        }
+        var queryError: Unmanaged<CFError>?
+        guard let entitlement = SecTaskCopyValueForEntitlement(
+            task,
+            "com.apple.security.app-sandbox" as CFString,
+            &queryError
+        ) else {
+            if let queryError {
+                throw SelectedScopeBookmarkError.bookmarkUnavailable(
+                    "Disker could not inspect its App Sandbox entitlement: \(queryError.takeRetainedValue().localizedDescription)"
+                )
+            }
+            // An absent entitlement is the normal result for the standard
+            // unsandboxed build. A query failure above remains fail-closed.
+            return false
+        }
+        guard CFGetTypeID(entitlement) == CFBooleanGetTypeID() else {
+            throw SelectedScopeBookmarkError.bookmarkUnavailable(
+                "Disker received an invalid App Sandbox entitlement value."
+            )
+        }
+        return CFBooleanGetValue(unsafeBitCast(entitlement, to: CFBoolean.self))
+    }
+
+    @_spi(DiskerTesting)
+    public static func creationOptions(isSandboxed: Bool) -> URL.BookmarkCreationOptions {
+        isSandboxed ? [.withSecurityScope, .securityScopeAllowOnlyReadAccess] : []
+    }
+
+    @_spi(DiskerTesting)
+    public static func resolutionOptions(isSandboxed: Bool) -> URL.BookmarkResolutionOptions {
+        isSandboxed ? [.withSecurityScope] : []
     }
 }

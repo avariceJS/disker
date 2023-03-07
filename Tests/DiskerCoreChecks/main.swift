@@ -40,6 +40,7 @@ private struct DiskerCoreChecks {
             ("live root volume capacity", testLiveCapacitySource),
             ("live RAM and process sample", testLiveRAMSample),
             ("opt-in RAM monitoring policy", testRAMMonitoringPolicy),
+            ("opt-in selected-root storage monitoring policy", testStorageMonitoringPolicy),
             ("system memory-pressure transition mapping", testMemoryPressureEventMapping),
             ("cautious sustained process growth signal", testPossibleProcessGrowth),
             ("metadata scan and symlink exclusion", testMetadataScanAndSymlinkExclusion),
@@ -815,6 +816,17 @@ private struct DiskerCoreChecks {
     }
 
     private static func testSelectedScopeBookmarks() throws {
+        try expect(
+            SelectedScopeBookmarkStore.creationOptions(isSandboxed: false).isEmpty
+                && SelectedScopeBookmarkStore.resolutionOptions(isSandboxed: false).isEmpty,
+            "the standard unsandboxed app must create and resolve ordinary bookmarks"
+        )
+        try expect(
+            SelectedScopeBookmarkStore.creationOptions(isSandboxed: true)
+                == [.withSecurityScope, .securityScopeAllowOnlyReadAccess]
+                && SelectedScopeBookmarkStore.resolutionOptions(isSandboxed: true) == [.withSecurityScope],
+            "the sandboxed app must create read-only security-scoped bookmarks and resolve their scope"
+        )
         try withTemporaryDirectory { base in
             let root = base.appendingPathComponent("selected-folder", isDirectory: true)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
@@ -847,7 +859,7 @@ private struct DiskerCoreChecks {
             let differentPath = base.appendingPathComponent("different-folder", isDirectory: true)
             try FileManager.default.createDirectory(at: differentPath, withIntermediateDirectories: false)
             let movedBookmarkData = try differentPath.bookmarkData(
-                options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                options: SelectedScopeBookmarkStore.creationOptions(isSandboxed: false),
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             )
@@ -883,7 +895,7 @@ private struct DiskerCoreChecks {
             try expect(scopeStoreAfterProbe == scopeStoreBeforeProbe,
                        "a read-only path availability check must not refresh or rewrite the saved bookmark")
             let refreshedBookmarkData = try root.bookmarkData(
-                options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                options: SelectedScopeBookmarkStore.creationOptions(isSandboxed: false),
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             )
@@ -945,7 +957,7 @@ private struct DiskerCoreChecks {
             _ = try SelectedScopeBookmarkStore.remember(existingLocations, at: fullStore)
             let overflowLocation = locations[SelectedScopeBookmarkStore.maximumBookmarkCount]
             let overflowBookmarkData = try overflowLocation.bookmarkData(
-                options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                options: SelectedScopeBookmarkStore.creationOptions(isSandboxed: false),
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             )
@@ -1192,6 +1204,127 @@ private struct DiskerCoreChecks {
         try expect(!RAMMonitoringPolicy.shouldObservePressure(enabled: true, appIsActive: false)
                    && !RAMMonitoringPolicy.shouldObservePressure(enabled: false, appIsActive: true),
                    "pressure observation should stop when Disker is inactive or monitoring is disabled")
+    }
+
+    private static func testStorageMonitoringPolicy() throws {
+        let start = Date(timeIntervalSince1970: 10_000)
+        let roots: Set<String> = ["/saved/alpha", "/saved/beta", "/saved/gamma"]
+        let base = StorageMonitoringPolicy.Input(
+            enabled: true,
+            enabledAt: start,
+            appIsActive: true,
+            savedRootIdentifiers: roots,
+            selectedRootIdentifiers: roots
+        )
+
+        try expect(StorageMonitoringPolicy.defaultInterval == 900,
+                   "storage monitoring should default to a fifteen-minute cadence")
+        let defaults = StorageMonitoringPolicy.evaluate(
+            StorageMonitoringPolicy.Input(enabled: true, interval: 1, enabledAt: start, appIsActive: true,
+                                          savedRootIdentifiers: roots, selectedRootIdentifiers: roots),
+            at: start.addingTimeInterval(299)
+        )
+        try expect(defaults.effectiveInterval == 300 && defaults.nextScheduledRootIdentifier == nil,
+                   "the cadence must clamp to five minutes and wait a full interval after opt-in")
+        let minimumReached = StorageMonitoringPolicy.evaluate(base, at: start.addingTimeInterval(900))
+        try expect(minimumReached.nextScheduledRootIdentifier == "/saved/alpha",
+                   "the first due root should be selected in stable lexical order")
+
+        let rootStarted = StorageMonitoringPolicy.Input(
+            enabled: true, interval: 300, enabledAt: start, appIsActive: true,
+            savedRootIdentifiers: roots, selectedRootIdentifiers: roots,
+            scheduledScanRootIdentifiers: ["/saved/alpha"],
+            lastScheduledStartByRoot: ["/saved/alpha": start.addingTimeInterval(300)]
+        )
+        let whileRootBusy = StorageMonitoringPolicy.evaluate(rootStarted, at: start.addingTimeInterval(600))
+        try expect(whileRootBusy.nextScheduledRootIdentifier == nil,
+                   "a scheduled scan must not overlap another scheduled root")
+        let oneDuePerEvaluation = StorageMonitoringPolicy.evaluate(
+            StorageMonitoringPolicy.Input(
+                enabled: true, interval: 300, enabledAt: start, appIsActive: true,
+                savedRootIdentifiers: roots, selectedRootIdentifiers: roots,
+                lastScheduledStartByRoot: ["/saved/alpha": start.addingTimeInterval(600)]
+            ),
+            at: start.addingTimeInterval(600)
+        )
+        try expect(oneDuePerEvaluation.nextScheduledRootIdentifier == "/saved/beta",
+                   "each evaluation should return at most one due root in deterministic order")
+
+        let rollback = StorageMonitoringPolicy.evaluate(
+            StorageMonitoringPolicy.Input(
+                enabled: true, interval: 300, enabledAt: start, appIsActive: true,
+                savedRootIdentifiers: roots, selectedRootIdentifiers: roots,
+                lastScheduledStartByRoot: ["/saved/alpha": start.addingTimeInterval(600)]
+            ),
+            at: start.addingTimeInterval(599)
+        )
+        try expect(rollback.nextScheduledRootIdentifier == "/saved/beta",
+                   "a wall-clock rollback must not make a previously scanned root due again")
+        let afterRollback = StorageMonitoringPolicy.evaluate(
+            StorageMonitoringPolicy.Input(
+                enabled: true, interval: 300, enabledAt: start, appIsActive: true,
+                savedRootIdentifiers: roots, selectedRootIdentifiers: ["/saved/alpha"],
+                lastScheduledStartByRoot: ["/saved/alpha": start.addingTimeInterval(600)]
+            ),
+            at: start.addingTimeInterval(900)
+        )
+        try expect(afterRollback.nextScheduledRootIdentifier == "/saved/alpha",
+                   "a root should become due only after its full interval has elapsed")
+
+        let disabled = StorageMonitoringPolicy.evaluate(
+            StorageMonitoringPolicy.Input(scheduledScanRootIdentifiers: ["/saved/alpha"]), at: start
+        )
+        let inactive = StorageMonitoringPolicy.evaluate(
+            StorageMonitoringPolicy.Input(enabled: true, appIsActive: false,
+                                          scheduledScanRootIdentifiers: ["/saved/alpha"]), at: start
+        )
+        try expect(disabled.cancelScheduledRootIdentifiers == ["/saved/alpha"]
+                   && inactive.cancelScheduledRootIdentifiers == ["/saved/alpha"],
+                   "disabling monitoring or app inactivity should cancel scheduled scans")
+
+        let excluded = StorageMonitoringPolicy.evaluate(
+            StorageMonitoringPolicy.Input(
+                enabled: true, enabledAt: start, appIsActive: true,
+                savedRootIdentifiers: roots.subtracting(["/saved/alpha"]),
+                selectedRootIdentifiers: roots,
+                pausedRootIdentifiers: ["/saved/beta"],
+                resettingRootIdentifiers: ["/saved/gamma"],
+                scheduledScanRootIdentifiers: roots
+            ),
+            at: start.addingTimeInterval(900)
+        )
+        try expect(excluded.eligibleRootIdentifiers.isEmpty
+                   && excluded.cancelScheduledRootIdentifiers == roots,
+                   "forgotten, paused, and resetting roots must be ineligible and cancel scheduled work")
+
+        let manualTakeover = StorageMonitoringPolicy.evaluate(
+            StorageMonitoringPolicy.Input(
+                enabled: true, enabledAt: start, appIsActive: true,
+                savedRootIdentifiers: roots, selectedRootIdentifiers: roots,
+                manualScanRootIdentifiers: ["/saved/alpha"],
+                scheduledScanRootIdentifiers: ["/saved/alpha"]
+            ),
+            at: start.addingTimeInterval(900)
+        )
+        try expect(manualTakeover.cancelScheduledRootIdentifiers == ["/saved/alpha"]
+                   && manualTakeover.nextScheduledRootIdentifier == nil,
+                   "manual scanning should supersede its scheduled scan and block scheduling while busy")
+        let globalBusy = StorageMonitoringPolicy.evaluate(
+            StorageMonitoringPolicy.Input(enabled: true, enabledAt: start, appIsActive: true,
+                                          globalScanInProgress: true,
+                                          savedRootIdentifiers: roots, selectedRootIdentifiers: roots),
+            at: start.addingTimeInterval(900)
+        )
+        try expect(globalBusy.nextScheduledRootIdentifier == nil,
+                   "scheduled monitoring must wait for any unrelated global scan to finish")
+        let malformedCadence = StorageMonitoringPolicy.evaluate(
+            StorageMonitoringPolicy.Input(enabled: true, interval: .infinity, enabledAt: start,
+                                          appIsActive: true, savedRootIdentifiers: roots,
+                                          selectedRootIdentifiers: roots),
+            at: start.addingTimeInterval(900)
+        )
+        try expect(malformedCadence.effectiveInterval == StorageMonitoringPolicy.defaultInterval,
+                   "non-finite interval settings should fall back to the safe default")
     }
 
     private static func testMemoryPressureEventMapping() throws {

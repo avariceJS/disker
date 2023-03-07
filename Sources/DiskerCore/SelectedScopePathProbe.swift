@@ -14,7 +14,7 @@ public enum SelectedScopePathProbe {
             var bookmarkIsStale = false
             guard let resolved = try? URL(
                 resolvingBookmarkData: bookmark.bookmarkData,
-                options: [.withSecurityScope],
+                options: try SelectedScopeBookmarkStore.resolutionOptionsForCurrentProcess(),
                 relativeTo: nil,
                 bookmarkDataIsStale: &bookmarkIsStale
             ),

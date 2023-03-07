@@ -24,6 +24,10 @@ final class DashboardModel {
     var duplicateCandidateBytes: UInt64 = 0
     var preservedDuplicatePaths: [String: String] = [:]
     var rememberedScopes: [SelectedScopeBookmark] = []
+    var monitoredScopePaths = Set<String>()
+    var pausedMonitoringReasons: [String: String] = [:]
+    var storageMonitoringInterval: TimeInterval = StorageMonitoringPolicy.defaultInterval
+    var storageMonitoringLastAttempt: [String: Date] = [:]
     var ownFootprint: ScanObservation?
     var ownFootprintPaths: [String] = []
     var isMeasuringOwnFootprint = false
@@ -34,6 +38,13 @@ final class DashboardModel {
     var currentPath = ""
     var countedFileObjects = 0
     private var scanTask: Task<ScanObservation, Never>?
+    enum ScanOrigin { case manual, scheduled }
+    private var scanOrigin: ScanOrigin?
+    private var scanRootPaths = Set<String>()
+    var scheduledScanPath: String?
+    private var storageMonitoringEnabledAtByPath: [String: Date] = [:]
+    private var storageMonitoringCooldownByPath: [String: Date] = [:]
+    private var storageMonitoringTask: Task<Void, Never>?
     private var historyGeneration = HistoryGeneration()
     private var ownFootprintTask: Task<ScanObservation, Never>?
     private var ownFootprintRequestID: UUID?
@@ -298,8 +309,17 @@ final class DashboardModel {
     }
 
     func rescanRememberedFolder(_ path: String) {
-        guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates,
-              let bookmark = rememberedScopes.first(where: { $0.path == path }) else { return }
+        rescanRememberedFolder(path, origin: .manual)
+    }
+
+    private func rescanRememberedFolder(_ path: String, origin: ScanOrigin) {
+        guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
+        guard let bookmark = rememberedScopes.first(where: { $0.path == path }) else {
+            if origin == .scheduled {
+                pauseStorageMonitoring(path, reason: "Saved access is missing. Select this folder again before resuming.")
+            }
+            return
+        }
         do {
             let url = try SelectedScopeBookmarkStore.resolve(bookmark)
             do {
@@ -307,8 +327,11 @@ final class DashboardModel {
             } catch {
                 errorMessage = "The folder is available for this scan, but saved locations could not be refreshed: \(error.localizedDescription)"
             }
-            scan([url])
+            scan([url], origin: origin)
         } catch {
+            if origin == .scheduled {
+                pauseStorageMonitoring(path, reason: "Saved access needs attention. Choose this folder again, then resume monitoring.")
+            }
             errorMessage = error.localizedDescription
         }
     }
@@ -342,14 +365,15 @@ final class DashboardModel {
     func forgetRememberedFolder(_ path: String) {
         do {
             rememberedScopes = try SelectedScopeBookmarkStore.remove(path: path)
+            removeStorageMonitoringState(for: path)
         } catch {
-            errorMessage = "Saved folder permission could not be removed: \(error.localizedDescription)"
+            errorMessage = "The saved folder could not be forgotten: \(error.localizedDescription)"
         }
     }
 
     func scan(
         _ urls: [URL], applicationBundleIdentities: [String: ApplicationBundleIdentity] = [:],
-        inspectSelectedAppBundles: Bool = false
+        inspectSelectedAppBundles: Bool = false, origin: ScanOrigin = .manual
     ) {
         guard !urls.isEmpty, !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
         guard urls.count <= ApplicationFolderAssociation.maximumRelatedFolderCount else {
@@ -357,6 +381,13 @@ final class DashboardModel {
             return
         }
         isScanning = true
+        scanOrigin = origin
+        scanRootPaths = Set(urls.map { $0.standardizedFileURL.path })
+        if origin == .scheduled, let onlyPath = scanRootPaths.first {
+            scheduledScanPath = onlyPath
+        } else {
+            scheduledScanPath = nil
+        }
         let generation = historyGeneration.token()
         currentPath = ""
         countedFileObjects = 0
@@ -397,16 +428,168 @@ final class DashboardModel {
                     errorMessage = "Scan finished, but local history could not be saved: \(error.localizedDescription)"
                 }
             }
+            let completedOrigin = scanOrigin
+            let completedRootPaths = scanRootPaths
+            let completedScheduledPath = scheduledScanPath
+            if let completedScheduledPath {
+                if !monitoredScopePaths.contains(completedScheduledPath) {
+                    storageMonitoringCooldownByPath.removeValue(forKey: completedScheduledPath)
+                    storageMonitoringLastAttempt.removeValue(forKey: completedScheduledPath)
+                } else if result.cancelled && isAppActive {
+                    pauseStorageMonitoring(completedScheduledPath, reason: "Scheduled scan cancelled. Resume monitoring when ready.")
+                } else {
+                    storageMonitoringCooldownByPath[completedScheduledPath] = .now
+                }
+            } else if completedOrigin == .manual {
+                for path in completedRootPaths.intersection(monitoredScopePaths) {
+                    if result.cancelled {
+                        pauseStorageMonitoring(path, reason: "Scan cancelled. Resume monitoring when ready.")
+                    } else {
+                        storageMonitoringCooldownByPath[path] = .now
+                    }
+                }
+            }
             isScanning = false
             currentPath = ""
             countedFileObjects = 0
             self.scanTask = nil
+            scanOrigin = nil
+            scanRootPaths = []
+            scheduledScanPath = nil
             if historyGeneration.accepts(generation) { refreshCapacity() }
         }
     }
 
     func cancelScan() {
         scanTask?.cancel()
+    }
+
+    func toggleStorageMonitoring(_ path: String, enabled: Bool) {
+        let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
+        guard rememberedScopes.contains(where: { $0.path == normalizedPath }) else { return }
+        if enabled {
+            monitoredScopePaths.insert(normalizedPath)
+            pausedMonitoringReasons.removeValue(forKey: normalizedPath)
+            storageMonitoringEnabledAtByPath[normalizedPath] = .now
+            storageMonitoringCooldownByPath[normalizedPath] = .now
+            startStorageMonitoringScheduler()
+        } else {
+            monitoredScopePaths.remove(normalizedPath)
+            pausedMonitoringReasons.removeValue(forKey: normalizedPath)
+            storageMonitoringEnabledAtByPath.removeValue(forKey: normalizedPath)
+            storageMonitoringCooldownByPath.removeValue(forKey: normalizedPath)
+            if scheduledScanPath == normalizedPath { cancelScan() }
+            if monitoredScopePaths.isEmpty { stopStorageMonitoringScheduler() }
+        }
+    }
+
+    func resumeStorageMonitoring(_ path: String) {
+        guard rememberedScopes.contains(where: { $0.path == path }) else { return }
+        pausedMonitoringReasons.removeValue(forKey: path)
+        monitoredScopePaths.insert(path)
+        storageMonitoringEnabledAtByPath[path] = .now
+        storageMonitoringCooldownByPath[path] = .now
+        startStorageMonitoringScheduler()
+    }
+
+    func setStorageMonitoringInterval(_ interval: TimeInterval) {
+        let clamped = max(StorageMonitoringPolicy.minimumInterval, interval)
+        guard clamped != storageMonitoringInterval else { return }
+        storageMonitoringInterval = clamped
+        let now = Date.now
+        for path in monitoredScopePaths where pausedMonitoringReasons[path] == nil {
+            storageMonitoringCooldownByPath[path] = now
+        }
+    }
+
+    func storageMonitoringNextEligibleDate(for path: String) -> Date? {
+        guard monitoredScopePaths.contains(path), pausedMonitoringReasons[path] == nil else { return nil }
+        let anchor = storageMonitoringCooldownByPath[path] ?? storageMonitoringEnabledAtByPath[path]
+        return anchor?.addingTimeInterval(storageMonitoringInterval)
+    }
+
+    func startStorageMonitoringScheduler() {
+        guard monitoredScopePaths.contains(where: { pausedMonitoringReasons[$0] == nil }),
+              isAppActive, storageMonitoringTask == nil else { return }
+        storageMonitoringTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                self.evaluateStorageMonitoring()
+                do {
+                    try await Task.sleep(nanoseconds: 60_000_000_000)
+                } catch {
+                    return
+                }
+            }
+        }
+    }
+
+    func stopStorageMonitoringScheduler() {
+        storageMonitoringTask?.cancel()
+        storageMonitoringTask = nil
+    }
+
+    func setStorageMonitoringAppActive(_ active: Bool) {
+        let wasActive = isAppActive
+        isAppActive = active
+        if active {
+            if !wasActive {
+                for path in monitoredScopePaths where pausedMonitoringReasons[path] == nil {
+                    storageMonitoringCooldownByPath[path] = .now
+                }
+            }
+            startStorageMonitoringScheduler()
+        } else {
+            stopStorageMonitoringScheduler()
+            if let path = scheduledScanPath {
+                cancelScan()
+                storageMonitoringCooldownByPath[path] = .now
+            }
+        }
+    }
+
+    private func evaluateStorageMonitoring(at now: Date = .now) {
+        let decision = StorageMonitoringPolicy.evaluate(
+            StorageMonitoringPolicy.Input(
+                enabled: !monitoredScopePaths.isEmpty,
+                interval: storageMonitoringInterval,
+                enabledAt: monitoredScopePaths.compactMap { storageMonitoringEnabledAtByPath[$0] }.min() ?? .distantFuture,
+                appIsActive: isAppActive,
+                globalScanInProgress: isScanning || isMeasuringOwnFootprint || isVerifyingDuplicates,
+                savedRootIdentifiers: Set(rememberedScopes.map(\.path)),
+                selectedRootIdentifiers: monitoredScopePaths,
+                pausedRootIdentifiers: Set(pausedMonitoringReasons.keys),
+                scheduledScanRootIdentifiers: scheduledScanPath.map { Set([$0]) } ?? [],
+                lastScheduledStartByRoot: storageMonitoringCooldownByPath
+            ),
+            at: now
+        )
+        for path in decision.cancelScheduledRootIdentifiers where scheduledScanPath == path {
+            cancelScan()
+        }
+        guard let path = decision.nextScheduledRootIdentifier else { return }
+        storageMonitoringCooldownByPath[path] = now
+        storageMonitoringLastAttempt[path] = now
+        rescanRememberedFolder(path, origin: .scheduled)
+    }
+
+    private func pauseStorageMonitoring(_ path: String, reason: String) {
+        monitoredScopePaths.insert(path)
+        pausedMonitoringReasons[path] = reason
+        if scheduledScanPath == path { cancelScan() }
+        if !monitoredScopePaths.contains(where: { pausedMonitoringReasons[$0] == nil }) {
+            stopStorageMonitoringScheduler()
+        }
+    }
+
+    private func removeStorageMonitoringState(for path: String) {
+        monitoredScopePaths.remove(path)
+        pausedMonitoringReasons.removeValue(forKey: path)
+        storageMonitoringEnabledAtByPath.removeValue(forKey: path)
+        storageMonitoringCooldownByPath.removeValue(forKey: path)
+        storageMonitoringLastAttempt.removeValue(forKey: path)
+        if scheduledScanPath == path { cancelScan() }
+        if monitoredScopePaths.isEmpty { stopStorageMonitoringScheduler() }
     }
 
     func verifyDuplicates(in roots: [URL]) {
@@ -500,6 +683,13 @@ final class DashboardModel {
 
     func clearHistory() {
         historyGeneration.advance()
+        monitoredScopePaths = []
+        pausedMonitoringReasons = [:]
+        storageMonitoringEnabledAtByPath = [:]
+        storageMonitoringCooldownByPath = [:]
+        storageMonitoringLastAttempt = [:]
+        scheduledScanPath = nil
+        stopStorageMonitoringScheduler()
         applicationBundlePathAvailability = [:]
         checkingApplicationBundlePaths = []
         applicationBundlePathCheckIDs = [:]
@@ -639,17 +829,21 @@ struct DashboardView: View {
             .frame(minWidth: 620, minHeight: 560)
         }
         .onAppear {
-            model.isAppActive = scenePhase == .active
+            model.setStorageMonitoringAppActive(scenePhase == .active)
+            model.startStorageMonitoringScheduler()
             model.refreshCapacity()
             model.updateMemoryPressureMonitoring(
                 enabled: isAutomaticRAMSamplingEnabled, appIsActive: model.isAppActive
             )
         }
         .onChange(of: scenePhase) { _, phase in
-            model.isAppActive = phase == .active
+            model.setStorageMonitoringAppActive(phase == .active)
             model.updateMemoryPressureMonitoring(
                 enabled: isAutomaticRAMSamplingEnabled, appIsActive: model.isAppActive
             )
+        }
+        .onDisappear {
+            model.stopStorageMonitoringScheduler()
         }
         .onChange(of: isAutomaticRAMSamplingEnabled) { _, enabled in
             if enabled && scenePhase == .active {
@@ -701,7 +895,7 @@ struct DashboardView: View {
             }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("This removes saved capacity, folder, RAM and system-pressure observations, app-folder associations, and remembered read-only scan permissions from this Mac. Active RAM monitoring will stop. Your files and folders will not be changed.")
+            Text("This removes saved capacity, folder, RAM and system-pressure observations, app-folder associations, and remembered scan locations from this Mac. Active storage and RAM monitoring will stop. Your files and folders will not be changed.")
         }
     }
 
@@ -1345,10 +1539,22 @@ struct DashboardView: View {
                 if hasSelectedFolderHistoryChart { historyRangePicker }
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Disker remembers up to 20 folders or application bundles you selected so you can rescan without reopening the picker. Scans remain manual; removing a location forgets its permission and does not touch files.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(alignment: .top) {
+                            Text("Saved locations are never scanned unless you ask or enable monitoring for that exact path. Monitoring enumerates metadata only while Disker is active; an in-flight scheduled scan may be cancelled when Disker becomes inactive.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 8)
+                            Menu("Every \(Int(model.storageMonitoringInterval / 60)) min") {
+                                ForEach([5, 15, 30, 60], id: \.self) { minutes in
+                                    Button("Every \(minutes) minutes") {
+                                        model.setStorageMonitoringInterval(TimeInterval(minutes * 60))
+                                    }
+                                }
+                            }
+                            .disabled(model.monitoredScopePaths.isEmpty)
+                            .help("Choose the interval for opted-in saved locations")
+                        }
                         if model.rememberedScopes.isEmpty {
                             Label("No saved scan locations", systemImage: "folder.badge.questionmark")
                                 .foregroundStyle(.secondary)
@@ -1363,6 +1569,37 @@ struct DashboardView: View {
                                             .foregroundStyle(.secondary)
                                             .lineLimit(1)
                                             .truncationMode(.middle)
+                                        Toggle("Monitor while Disker is active", isOn: Binding(
+                                            get: { model.monitoredScopePaths.contains(scope.path) },
+                                            set: { model.toggleStorageMonitoring(scope.path, enabled: $0) }
+                                        ))
+                                        .toggleStyle(.checkbox)
+                                        .font(.caption)
+                                        if let pauseReason = model.pausedMonitoringReasons[scope.path] {
+                                            HStack(spacing: 8) {
+                                                Label(pauseReason, systemImage: "pause.circle")
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.orange)
+                                                Button("Resume") { model.resumeStorageMonitoring(scope.path) }
+                                                    .font(.caption2)
+                                            }
+                                        } else if model.monitoredScopePaths.contains(scope.path) {
+                                            if model.isScanning && model.scheduledScanPath == scope.path {
+                                                Text("Scheduled metadata scan in progress")
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                            if let attemptedAt = model.storageMonitoringLastAttempt[scope.path] {
+                                                Text("Last attempt \(attemptedAt.formatted(date: .abbreviated, time: .shortened))")
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                            if let nextDate = model.storageMonitoringNextEligibleDate(for: scope.path) {
+                                                Text("Next eligible scan \(nextDate.formatted(date: .abbreviated, time: .shortened))")
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                        }
                                         if let observation = model.latestFolderObservation(at: scope.path) {
                                             Text("Measured \(observation.finishedAt.formatted(date: .abbreviated, time: .shortened)) · Logical \(format(observation.logicalBytes)) · Allocated ~\(format(observation.allocatedBytes))")
                                                 .font(.caption2)
@@ -1408,7 +1645,7 @@ struct DashboardView: View {
                                     }
                                     .buttonStyle(.borderless)
                                     .disabled(model.isScanning)
-                                    .help("Forget this saved location and its access permission")
+                                    .help("Forget this saved scan location")
                                     .accessibilityLabel("Forget saved location \(URL(fileURLWithPath: scope.path).lastPathComponent)")
                                 }
                                 Divider()
@@ -1511,7 +1748,7 @@ struct DashboardView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Label("Folder-size scans read metadata only. Explicit app signature checks read signed executable and resource contents locally; duplicate verification reads selected candidates after confirmation. Nothing is uploaded.", systemImage: "hand.raised")
                         Label("For a selected app bundle, Disker reads its declared bundle ID and embedded App Groups claim, then reads signed executable and resource contents to check local signature integrity. It does not verify notarization or publisher trust, current use, or exclusive ownership; App Group data is shared.", systemImage: "app.badge.checkmark")
-                        Label("Scan locations are chosen by you. Saved permissions are read-only and scans stay manual.", systemImage: "folder.badge.plus")
+                        Label("Scan locations are chosen by you. Disker does not change their contents; optional monitoring scans selected paths only while the app is active.", systemImage: "folder.badge.plus")
                         Label("Disker does not offer cleanup or deletion of user files.", systemImage: "lock.shield")
                         Label("History stays in this Mac's Application Support folder.", systemImage: "internaldrive")
                     }
@@ -1530,7 +1767,7 @@ struct DashboardView: View {
                 }
                 GroupBox {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Remove saved capacity measurements, folder paths and sizes, RAM samples, app-folder associations, and remembered read-only scan permissions from this Mac. Scanned files are not changed.")
+                        Text("Remove saved capacity measurements, folder paths and sizes, RAM samples, app-folder associations, and remembered scan locations from this Mac. Scanned files are not changed.")
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .fixedSize(horizontal: false, vertical: true)
                         Button("Clear Local History…", role: .destructive) {
