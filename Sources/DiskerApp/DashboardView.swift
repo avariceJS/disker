@@ -1540,7 +1540,7 @@ struct DashboardView: View {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(alignment: .top) {
-                            Text("Saved locations are never scanned unless you ask or enable monitoring for that exact path. Monitoring enumerates metadata only while Disker is active; an in-flight scheduled scan may be cancelled when Disker becomes inactive.")
+                            Text("Saved locations are scanned only on request or with per-path opt-in. Monitoring reads metadata only while Disker is active and resets off when Disker quits or relaunches; an in-flight scheduled scan may be cancelled when the app becomes inactive.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
