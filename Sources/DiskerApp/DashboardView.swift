@@ -1363,6 +1363,40 @@ struct DashboardView: View {
                                             .foregroundStyle(.secondary)
                                             .lineLimit(1)
                                             .truncationMode(.middle)
+                                        if let observation = model.latestFolderObservation(at: scope.path) {
+                                            Text("Measured \(observation.finishedAt.formatted(date: .abbreviated, time: .shortened)) · Logical \(format(observation.logicalBytes)) · Allocated ~\(format(observation.allocatedBytes))")
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(2)
+                                            if observation.complete {
+                                                if let previous = model.previousCompleteObservation(for: observation),
+                                                   let delta = ObservationComparison.allocatedByteDelta(
+                                                    current: observation, previous: previous
+                                                   ) {
+                                                    directoryChangeLabel(delta, previous: previous, current: observation)
+                                                } else {
+                                                    Text(model.directoryHistoryLabel(for: observation))
+                                                        .font(.caption2)
+                                                        .foregroundStyle(.secondary)
+                                                }
+                                            } else {
+                                                Text(coverageSummary(
+                                                    inaccessible: observation.inaccessibleCount,
+                                                    excludedSymlinks: observation.excludedSymlinkCount,
+                                                    excludedSpecialFiles: observation.excludedSpecialFileCount,
+                                                    excludedVolumeBoundaries: observation.excludedVolumeBoundaryCount,
+                                                    changed: observation.changedDuringScanCount,
+                                                    wasCancelled: model.scanWasCancelled(for: observation),
+                                                    accountingOverflowed: observation.byteAccountingOverflowed
+                                                ))
+                                                .font(.caption2)
+                                                .foregroundStyle(.orange)
+                                            }
+                                        } else {
+                                            Text("No measurement saved for this path yet")
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
                                     }
                                     Spacer(minLength: 8)
                                     Button("Scan") { model.rescanRememberedFolder(scope.path) }

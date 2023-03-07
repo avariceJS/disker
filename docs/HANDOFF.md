@@ -10,6 +10,8 @@ Application bundle measurement and read-only app-footprint review rely on explic
 
 Overview and selected-folder details now open a read-only developer-artifact review from the latest selected scan. It shows exact paths, observation time, separate logical and allocated estimates, classifications, consequences, evidence, coverage, truncation, and overlapping paths. Unsafe relative paths from stored summaries are rejected. Finder reveal and native re-selection are available; reclaimable bytes remain unknown and there is no deletion action.
 
+The saved scan-root list also shows each path's latest retained measurement, time, logical bytes, allocated estimate, and coverage. It shows a delta only for complete same-path/same-volume observations; the existing comparison rules suppress stale growth after a newer partial scan. Rescans remain manual.
+
 ## Verified state
 
 - Xcode 27.1 (27A9275), Swift 6.4, arm64; `xcode-select -p` is `/Applications/Xcode.app/Contents/Developer`.
@@ -17,6 +19,7 @@ Overview and selected-folder details now open a read-only developer-artifact rev
 - `scripts/package-app.sh standard` and `scripts/package-app.sh sandboxed` both built and passed strict ad-hoc signature verification. The ordinary build is installed at `~/Applications/Disker.app`; neither build is Developer ID-signed or notarized.
 - Opened the native app and inspected its Overview. With the sandboxed build, selected `/Users/root1/Desktop/disker` through the native folder picker, scanned it, then rescanned using its saved read-only bookmark. History showed both observations. The Folders UI visibly showed largest subfolders, extension categories, and largest files. The scan measured 714.1 MB logical and 735.3 MB allocated estimate, partial because two SwiftPM symlinks were excluded. This selected-folder scan did not read file contents. No additional macOS permission was granted; CUA UI control and inspection worked.
 - Opened the sandboxed app and visually/accessibly checked the new development-artifact review. It showed `.build` as a partial Swift build candidate, dSYM and `.git` as high-risk entries, exact paths, separate logical/allocated estimates, and explicit overlap warnings. Its native re-selection action opened `NSOpenPanel` at the chosen path; cancelling did not start a scan. No delete action appears.
+- Opened the latest sandboxed build and visually inspected Folders. The saved-root row showed the selected path, last measurement time, logical and allocated estimates, and partial coverage. No scan was triggered by merely opening the page.
 - The sandboxed RAM page recorded one point sample (24 GB installed, no swap allocation); process enumeration was denied by the sandbox and the UI disclosed that. The latest core host sample read 24 GiB physical RAM and found process enumeration available (499 processes); this is a point sample, not leak evidence.
 - Latest system root-volume sample: 494,384,795,648 total and 443,274,215,488 available bytes under macOS important-usage accounting. Their difference is not attributed file usage.
 - Earlier metadata-only benchmark: 6,927 workspace files in 0.324 s wall / 0.323 s CPU, 12.3 MiB max RSS, 731,189,248 allocated-estimate bytes; `du` reported 714,052 KiB. Coverage was partial due to two excluded SwiftPM symlinks. Installed app scan: 4 files, 0.002 s wall, 6,149,042 logical and 6,156,288 estimated allocated bytes; `du` reported 6,012 KiB.
@@ -24,7 +27,7 @@ Overview and selected-folder details now open a read-only developer-artifact rev
 
 ## Repository and disk footprint
 
-Remote: `https://github.com/avariceJS/disker.git`; branch: `main`; `.git` is authoritative. At resume, local `main` and `origin/main` agreed at `3f4e2d438a76b0dfb570dbc8456fd250689f1acb`. The early 2023 UTC timestamps are intentionally simulated for contribution-calendar presentation, not actual implementation dates. Keep dates transparent, preserve history, and never force-push. Five meaningful commits occupy 2023-03-06 UTC; the stop checkpoint starts 2023-03-07 UTC. Commit and publish the current developer-artifact review after final verification.
+Remote: `https://github.com/avariceJS/disker.git`; branch: `main`; `.git` is authoritative. At resume, local `main` and `origin/main` agreed at `3f4e2d438a76b0dfb570dbc8456fd250689f1acb`. The developer-artifact review was published as `bfd8745` and remote synchronization was verified. The saved-root freshness view is the current second checkpoint. Early 2023 UTC timestamps are intentionally simulated for contribution-calendar presentation, not actual implementation dates. Keep dates transparent, preserve history, and never force-push. Five meaningful commits occupy 2023-03-06 UTC; work continues on 2023-03-07 UTC.
 
 Measured workspace sizes at stop: repository 718,104 KiB total; `.git` 15,180 KiB; generated `.build` 701,456 KiB; `Sources` 424 KiB; `Tests` 200 KiB; installed app 6,040 KiB; standard app support data 100 KiB; sandboxed test app data 88 KiB. Sizes are approximate directory measurements. `.build` remains ignored and was not removed.
 
