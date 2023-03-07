@@ -573,6 +573,7 @@ struct DashboardView: View {
     @State private var isConfirmingHistoryClear = false
     @State private var isAutomaticRAMSamplingEnabled = false
     @State private var applicationReviewBundle: FolderObservation?
+    @State private var developerArtifactReviewFolder: FolderObservation?
     @Environment(\.scenePhase) private var scenePhase
 
     private let sections = ["Overview", "Applications", "Folders", "Duplicates", "History", "RAM", "About"]
@@ -630,6 +631,12 @@ struct DashboardView: View {
                 review: model.applicationFootprintReview(for: bundle)
             )
             .frame(minWidth: 580, minHeight: 520)
+        }
+        .sheet(item: $developerArtifactReviewFolder) { folder in
+            DeveloperArtifactReviewSheet(folder: folder) { url in
+                model.chooseFolders(startingAt: url)
+            }
+            .frame(minWidth: 620, minHeight: 560)
         }
         .onAppear {
             model.isAppActive = scenePhase == .active
@@ -710,6 +717,7 @@ struct DashboardView: View {
                     selectedRootOverlapNotice
                     folderGrowthCard
                     directoryGrowthCard
+                    developerArtifactReviewCard
                     if let latest = model.latestScan, !latest.folders.isEmpty {
                         let largestFolders = Array(latest.folders.sorted {
                             $0.allocatedBytes > $1.allocatedBytes
@@ -961,6 +969,64 @@ struct DashboardView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
                 .accessibilityElement(children: .combine)
+            }
+        }
+    }
+
+    private var developerArtifactReviewCard: some View {
+        Group {
+            if let latest = model.latestScan {
+                let candidateFolders = latest.folders.filter {
+                    !DeveloperArtifactReview.make(from: $0).entries.isEmpty
+                }
+                if !candidateFolders.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("Development data to review", systemImage: "shippingbox")
+                            .font(.headline)
+                        Text("Name and Git-marker clues identify places worth inspecting. They do not show that data is unused or safe to remove.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if candidateFolders.count > 3 {
+                            Text("Showing 3 of \(candidateFolders.count) selected roots with candidates. Open Folders to review the rest.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        ForEach(candidateFolders.prefix(3), id: \.path) { folder in
+                            let review = DeveloperArtifactReview.make(from: folder)
+                            HStack(alignment: .top, spacing: 12) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(folder.displayName)
+                                        .font(.subheadline.weight(.semibold))
+                                    Text("\(review.entries.count) measured candidates · \(folder.complete ? "complete scan" : "partial scan")")
+                                        .font(.caption)
+                                        .foregroundStyle(folder.complete ? Color.secondary : Color.orange)
+                                    if let largest = review.entries.max(by: { $0.allocatedBytesEstimate < $1.allocatedBytesEstimate }) {
+                                        Text("Largest: \(largest.relativePath) · ~\(format(largest.allocatedBytesEstimate)) allocated")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                    }
+                                }
+                                Spacer(minLength: 8)
+                                Button("Review") { developerArtifactReviewFolder = folder }
+                                    .buttonStyle(.bordered)
+                            }
+                            .padding(.vertical, 4)
+                            if folder.path != candidateFolders.prefix(3).last?.path { Divider() }
+                        }
+                        if candidateFolders.contains(where: { !$0.complete }) {
+                            Label("Partial scans can omit data; measured sizes are not reclaimable-space estimates.", systemImage: "exclamationmark.triangle")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    .padding(18)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.background, in: RoundedRectangle(cornerRadius: 16))
+                    .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
+                }
             }
         }
     }
@@ -2579,6 +2645,10 @@ struct DashboardView: View {
                         .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 5)
+                    Button("Review") { developerArtifactReviewFolder = folder }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityLabel("Review development data in \(folder.displayName)")
                     Button {
                         let url = URL(fileURLWithPath: folder.path)
                             .appendingPathComponent(directory.rootRelativePath, isDirectory: true)
@@ -2872,6 +2942,178 @@ struct DashboardView: View {
         case "About": "info.circle"
         default: "chart.pie"
         }
+    }
+}
+
+private struct DeveloperArtifactReviewSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let folder: FolderObservation
+    let onRescan: (URL) -> Void
+
+    private var review: DeveloperArtifactReview {
+        DeveloperArtifactReview.make(from: folder)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Development data review")
+                        .font(.title2.weight(.semibold))
+                    Text(folder.path)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: folder.path)])
+                } label: {
+                    Label("Reveal root", systemImage: "arrow.up.right.square")
+                }
+                .buttonStyle(.borderless)
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+
+            HStack(spacing: 14) {
+                Label(folder.complete ? "Complete observation" : "Partial observation", systemImage: folder.complete ? "checkmark.circle" : "exclamationmark.triangle")
+                    .foregroundStyle(folder.complete ? Color.secondary : Color.orange)
+                Text("Measured \(folder.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption)
+
+            Text("These measured paths are review leads based on directory names or a direct Git marker. Disker did not read their contents or determine current use, ownership, or safe removal. Logical size and allocated-byte estimate are separate; reclaimable bytes are unknown.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if review.candidatesTruncated {
+                Label("Only the 20 largest retained candidates are shown. Omitted matching paths are unknown.", systemImage: "ellipsis.circle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
+            }
+
+            if review.entries.isEmpty {
+                ContentUnavailableView("No measured candidates", systemImage: "shippingbox", description: Text("This scan did not retain any directories with a recognized name or direct Git marker."))
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(review.entries) { entry in
+                            developerArtifactEntry(entry)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+        .padding(20)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func developerArtifactEntry(_ entry: DeveloperArtifactReview.Entry) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: symbol(for: entry.category))
+                    .foregroundStyle(.blue)
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(entry.relativePath)
+                        .font(.subheadline.weight(.semibold).monospaced())
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                    Text(entry.category.title)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 6)
+                Text(entry.risk)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: 210, alignment: .trailing)
+            }
+
+            HStack(spacing: 12) {
+                Text("Logical \(format(entry.logicalBytes))")
+                Text("Allocated ~\(format(entry.allocatedBytesEstimate))")
+                    .help("Filesystem allocation estimate; not reclaimable bytes")
+                Text("\(entry.fileCount.formatted()) files")
+                Text(entry.subtreeComplete ? "Subtree complete" : "Subtree partial")
+                    .foregroundStyle(entry.subtreeComplete ? Color.secondary : Color.orange)
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+
+            Text(entry.evidence)
+                .font(.caption)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(entry.possibleConsequence)
+                .font(.caption)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(entry.caution)
+                .font(.caption)
+                .foregroundStyle(entry.subtreeComplete && entry.selectedRootComplete ? Color.secondary : Color.orange)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if !entry.overlappingCandidatePaths.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Overlapping candidate measurements · do not add")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.orange)
+                    ForEach(entry.overlappingCandidatePaths, id: \.self) { path in
+                        Text(path)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+
+            HStack {
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: entry.path)])
+                } label: {
+                    Label("Reveal in Finder", systemImage: "arrow.up.right.square")
+                }
+                .buttonStyle(.borderless)
+                Spacer()
+                Button("Choose this folder to rescan…") {
+                    onRescan(URL(fileURLWithPath: entry.path, isDirectory: true))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Opens the native folder picker. Disker will scan only after you select a folder.")
+            }
+        }
+        .padding(13)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.background, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
+    }
+
+    private func symbol(for category: DeveloperArtifactReview.Category) -> String {
+        switch category {
+        case .sourceControl: "chevron.left.forwardslash.chevron.right"
+        case .buildProducts: "hammer"
+        case .dependencies, .packageManagerData: "shippingbox"
+        case .runtimeAndSimulatorData, .archiveOrSymbols: "externaldrive"
+        case .userData: "externaldrive.badge.exclamationmark"
+        case .logs: "doc.text"
+        case .testOutput: "checkmark.rectangle.stack"
+        }
+    }
+
+    private func format(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 }
 

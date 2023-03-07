@@ -56,6 +56,7 @@ private struct DiskerCoreChecks {
             ("duplicate files are revalidated after hashing", testDuplicateFileRevalidation),
             ("nested directory usage summaries", testNestedDirectorySummaries),
             ("cautious development storage hints", testStorageAreaHints),
+            ("read-only developer artifact review", testDeveloperArtifactReview),
             ("cautious file artifact hints", testFileArtifactHints),
             ("Git metadata marker detection", testGitMetadataMarkerDetection),
             ("Git metadata footprint survives summary cap", testGitMetadataUsageSurvivesSummaryCap),
@@ -1791,6 +1792,92 @@ private struct DiskerCoreChecks {
                    "a directly named web build output should become a separate candidate")
         try expect(StorageAreaHint.matchingDirectory(relativePath: "project/.build/debug") == nil,
                    "a recognized ancestor must not classify every descendant as an independent candidate")
+    }
+
+    private static func testDeveloperArtifactReview() throws {
+        let finishedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let build = DirectoryUsage(
+            rootRelativePath: "Project/.build", logicalBytes: 3_000, allocatedBytes: 2_048,
+            fileCount: 4, incompleteCount: 0, excludedSymlinkCount: 0, complete: true
+        )
+        let dependencies = DirectoryUsage(
+            rootRelativePath: "Project/.build/node_modules", logicalBytes: 1_200, allocatedBytes: 1_024,
+            fileCount: 2, incompleteCount: 0, excludedSymlinkCount: 0, complete: true
+        )
+        let userData = DirectoryUsage(
+            rootRelativePath: "research/datasets", logicalBytes: 9_000, allocatedBytes: 8_192,
+            fileCount: 1, incompleteCount: 1, excludedSymlinkCount: 1, complete: false
+        )
+        let gitMarker = DirectoryUsage(
+            rootRelativePath: "source", logicalBytes: 400, allocatedBytes: 512,
+            fileCount: 2, incompleteCount: 0, excludedSymlinkCount: 0,
+            gitMetadataEntryDetected: true, complete: true
+        )
+        let directGit = DirectoryUsage(
+            rootRelativePath: ".git", logicalBytes: 128, allocatedBytes: 512,
+            fileCount: 2, incompleteCount: 0, excludedSymlinkCount: 0,
+            complete: true
+        )
+        let symbols = DirectoryUsage(
+            rootRelativePath: "Release/App.dSYM", logicalBytes: 2_000, allocatedBytes: 2_048,
+            fileCount: 3, incompleteCount: 0, excludedSymlinkCount: 0, complete: true
+        )
+        let traversalPath = DirectoryUsage(
+            rootRelativePath: "../../outside/node_modules", logicalBytes: 1_000, allocatedBytes: 1_024,
+            fileCount: 1, incompleteCount: 0, excludedSymlinkCount: 0, complete: true
+        )
+        let folder = FolderObservation(
+            path: "/Volumes/Work", displayName: "Work", logicalBytes: 20_000,
+            allocatedBytes: 18_000, fileCount: 12, inaccessibleCount: 1,
+            finishedAt: finishedAt, complete: false, gitMetadataEntryDetected: true,
+            gitMetadataUsage: directGit,
+            projectDirectorySummaries: [userData, dependencies, gitMarker, build, symbols, traversalPath],
+            projectDirectorySummariesTruncated: true
+        )
+
+        let review = DeveloperArtifactReview.make(from: folder)
+        try expect(review.selectedRootPath == folder.path && review.observedAt == finishedAt,
+                   "review should retain selected-root and observation provenance")
+        try expect(!review.selectedRootComplete && review.candidatesTruncated,
+                   "partial root coverage and omitted candidates must remain explicit")
+        try expect(review.entries.map(\.relativePath) == [".git", "Project/.build", "Project/.build/node_modules", "Release/App.dSYM", "research/datasets", "source"],
+                   "review rows should be deduplicated and deterministically sorted by exact relative path")
+        let byPath = Dictionary(uniqueKeysWithValues: review.entries.map { ($0.relativePath, $0) })
+        try expect(byPath["Project/.build"]?.category == .buildProducts
+                   && byPath["Project/.build/node_modules"]?.category == .dependencies
+                   && byPath["research/datasets"]?.category == .userData
+                   && byPath["Release/App.dSYM"]?.category == .archiveOrSymbols,
+                   "similar development candidates should retain distinct risk-relevant categories")
+        try expect(byPath["source"]?.category == .sourceControl && byPath[".git"]?.category == .sourceControl,
+                   "nested repository markers and the direct Git footprint should get source-control classification")
+        try expect(byPath[".git"]?.logicalBytes == 128 && byPath[".git"]?.allocatedBytesEstimate == 512,
+                   "Git footprint should preserve separate logical and allocated estimates")
+        try expect(byPath["Project/.build"]?.overlappingCandidatePaths == byPath["Project/.build/node_modules"].map { [$0.path] }
+                   && byPath["Project/.build/node_modules"]?.overlappingCandidatePaths == byPath["Project/.build"].map { [$0.path] },
+                   "nested subtree measurements should call out overlap instead of implying additive usage")
+        try expect(byPath["research/datasets"]?.subtreeComplete == false
+                   && byPath["research/datasets"]?.caution.contains("partial coverage") == true,
+                   "partial candidate coverage should be explicitly disclosed")
+        try expect(byPath["Project/.build"]?.selectedRootComplete == false
+                   && byPath["Project/.build"]?.caution.contains("selected-root scan is partial") == true,
+                   "a complete subtree must not hide that its selected-root observation was partial")
+        try expect(byPath["research/datasets"]?.risk.contains("High") == true
+                   && byPath["research/datasets"]?.possibleConsequence.contains("permanently lose") == true,
+                   "irreplaceable user data should receive a high-risk consequence warning")
+        try expect(byPath["Release/App.dSYM"]?.risk.contains("High") == true,
+                   "debug symbols should not be treated as routine low-risk build output")
+        try expect(byPath["Project/.build"]?.evidence.contains("name-only") == true
+                   && byPath[".git"]?.evidence.contains("not followed or parsed") == true,
+                   "evidence should explain the name-only rule and avoid following or parsing Git markers")
+        try expect(review.entries.allSatisfy({ $0.path.hasPrefix(folder.path + "/") })
+                   && review.entries.allSatisfy({ $0.logicalBytes >= 0 && $0.allocatedBytesEstimate >= 0 }),
+                   "review paths must stay under the selected root and sizes must remain valid nonnegative metrics")
+        try expect(byPath["Project/.build"]?.caution.contains("do not add their sizes") == true,
+                   "overlapping directory measurements must carry an explicit no-sum caution")
+        try expect(!String(describing: review).contains("reclaimableBytes"),
+                   "artifact review must not present a reclaimable-byte estimate")
+        try expect(!review.entries.contains(where: { $0.relativePath == traversalPath.rootRelativePath }),
+                   "persisted candidate paths containing traversal components must not escape the selected root")
     }
 
     private static func testFileArtifactHints() throws {
