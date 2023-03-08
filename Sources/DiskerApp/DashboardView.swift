@@ -1318,6 +1318,11 @@ struct DashboardView: View {
                                 Text("At latest scan ~\(format(signal.directory.allocatedBytes)) allocated")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
+                                if let bytesPerDay = signal.observedBytesPerDay {
+                                    Text("Observed pace \(formattedByteRate(bytesPerDay))/day")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                             Button {
                                 let directoryURL = URL(fileURLWithPath: signal.folder.path)

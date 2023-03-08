@@ -1,6 +1,13 @@
 import Foundation
 
 public enum ObservationComparison {
+    private static let minimumGrowthRateInterval: TimeInterval = 5 * 60
+
+    private static func observedBytePace(growthBytes: Int64, interval: TimeInterval) -> Double? {
+        guard interval.isFinite, interval >= minimumGrowthRateInterval else { return nil }
+        return Double(growthBytes) * 86_400 / interval
+    }
+
     public struct FolderGrowthSignal: Equatable, Identifiable, Sendable {
         public var id: String { folder.path }
         public let folder: FolderObservation
@@ -10,12 +17,11 @@ public enum ObservationComparison {
         /// Straight-line observed pace scaled to 24 hours. Short intervals are
         /// omitted because timestamp and filesystem timing noise can dominate.
         public var observedBytesPerDay: Double? {
-            let interval = folder.finishedAt.timeIntervalSince(previous.finishedAt)
-            guard interval.isFinite, interval >= Self.minimumRateInterval else { return nil }
-            return Double(growthBytes) * 86_400 / interval
+            ObservationComparison.observedBytePace(
+                growthBytes: growthBytes,
+                interval: folder.finishedAt.timeIntervalSince(previous.finishedAt)
+            )
         }
-
-        private static let minimumRateInterval: TimeInterval = 5 * 60
     }
 
     public struct FileExtensionGrowthSignal: Equatable, Identifiable, Sendable {
@@ -32,6 +38,15 @@ public enum ObservationComparison {
         public let directory: DirectoryUsage
         public let previousDirectory: DirectoryUsage
         public let growthBytes: Int64
+
+        /// Straight-line observed pace scaled to 24 hours, omitted for short
+        /// intervals where timestamp and filesystem timing noise can dominate.
+        public var observedBytesPerDay: Double? {
+            ObservationComparison.observedBytePace(
+                growthBytes: growthBytes,
+                interval: folder.finishedAt.timeIntervalSince(previousFolder.finishedAt)
+            )
+        }
     }
 
     public struct FileGrowthSignal: Equatable, Identifiable, Sendable {

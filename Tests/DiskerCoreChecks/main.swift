@@ -2797,6 +2797,22 @@ private struct DiskerCoreChecks {
                    && directoryGrowth[0].directory.rootRelativePath == "Projects/Example"
                    && directoryGrowth[0].growthBytes == 875,
                    "directory highlights should compare the latest complete same-path subfolder observation")
+        let rateStart = Date(timeIntervalSince1970: 70_000)
+        let rateEarlier = folderWithDirectory(
+            id: UUID(), path: "/selected/rate-project", bytes: 1_000, complete: true,
+            directory: directory("Sources", bytes: 1_000, complete: true), finishedAt: rateStart
+        )
+        let rateCurrent = folderWithDirectory(
+            id: UUID(), path: "/selected/rate-project", bytes: 60_001_000, complete: true,
+            directory: directory("Sources", bytes: 60_001_000, complete: true),
+            finishedAt: rateStart.addingTimeInterval(3_600)
+        )
+        let directoryRate = ObservationComparison.growingDirectories(in: LocalHistory(observations: [
+            ScanObservation(startedAt: rateStart, folders: [rateEarlier], cancelled: false),
+            ScanObservation(startedAt: rateStart.addingTimeInterval(3_600), folders: [rateCurrent], cancelled: false),
+        ])).first
+        try expect(directoryRate?.observedBytesPerDay == 1_440_000_000,
+                   "subfolder growth pace should use the same exact-root one-hour comparison interval")
         try expect(ObservationComparison.growingDirectories(in: history, limit: 0).isEmpty,
                    "directory growth highlights should honor an empty limit")
         let changedPath = directory("Projects/Other", bytes: 100, complete: true)
