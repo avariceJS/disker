@@ -6,6 +6,16 @@ public enum ObservationComparison {
         public let folder: FolderObservation
         public let previous: FolderObservation
         public let growthBytes: Int64
+
+        /// Straight-line observed pace scaled to 24 hours. Short intervals are
+        /// omitted because timestamp and filesystem timing noise can dominate.
+        public var observedBytesPerDay: Double? {
+            let interval = folder.finishedAt.timeIntervalSince(previous.finishedAt)
+            guard interval.isFinite, interval >= Self.minimumRateInterval else { return nil }
+            return Double(growthBytes) * 86_400 / interval
+        }
+
+        private static let minimumRateInterval: TimeInterval = 5 * 60
     }
 
     public struct FileExtensionGrowthSignal: Equatable, Identifiable, Sendable {

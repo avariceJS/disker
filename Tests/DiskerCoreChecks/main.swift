@@ -2657,6 +2657,33 @@ private struct DiskerCoreChecks {
                    "growth highlights should report allocated-byte deltas against prior complete scans")
         try expect(signals.allSatisfy { $0.folder.complete && $0.previous.complete },
                    "growth highlights must never use a partial observation")
+
+        let rateStart = Date(timeIntervalSince1970: 50_000)
+        let rateHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: rateStart, folders: [
+                syntheticFolder(path: "/selected/rate", bytes: 1_000, complete: true,
+                                finishedAt: rateStart),
+            ], cancelled: false),
+            ScanObservation(startedAt: rateStart.addingTimeInterval(3_600), folders: [
+                syntheticFolder(path: "/selected/rate", bytes: 1_000 + 60_000_000,
+                                complete: true, finishedAt: rateStart.addingTimeInterval(3_600)),
+            ], cancelled: false),
+        ])
+        let rateSignal = ObservationComparison.growingFolders(in: rateHistory).first
+        try expect(rateSignal?.observedBytesPerDay == 1_440_000_000,
+                   "growth pace should scale the measured delta over a full one-hour interval")
+        let shortRateHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: rateStart, folders: [
+                syntheticFolder(path: "/selected/rate", bytes: 1_000, complete: true,
+                                finishedAt: rateStart),
+            ], cancelled: false),
+            ScanObservation(startedAt: rateStart.addingTimeInterval(299), folders: [
+                syntheticFolder(path: "/selected/rate", bytes: 2_000, complete: true,
+                                finishedAt: rateStart.addingTimeInterval(299)),
+            ], cancelled: false),
+        ])
+        try expect(ObservationComparison.growingFolders(in: shortRateHistory).first?.observedBytesPerDay == nil,
+                   "growth rate should be hidden for intervals shorter than five minutes")
         try expect(ObservationComparison.growingFolders(in: history, limit: 1).map(\.folder.path)
                    == ["/selected/largest-growth"],
                    "growth highlights should respect the requested result limit")

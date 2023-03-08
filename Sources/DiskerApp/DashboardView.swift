@@ -1255,6 +1255,11 @@ struct DashboardView: View {
                                 Text("At latest scan ~\(format(signal.folder.allocatedBytes)) allocated")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
+                                if let bytesPerDay = signal.observedBytesPerDay {
+                                    Text("Observed pace \(formattedByteRate(bytesPerDay))/day")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                             Button {
                                 NSWorkspace.shared.activateFileViewerSelecting([
@@ -3163,6 +3168,12 @@ struct DashboardView: View {
 
     private func format(_ bytes: UInt64) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(min(bytes, UInt64(Int64.max))), countStyle: .memory)
+    }
+
+    private func formattedByteRate(_ bytesPerDay: Double) -> String {
+        let maximum = Double(Int64.max) * 0.999
+        let bounded = min(max(bytesPerDay, 0), maximum)
+        return format(Int64(bounded.rounded()))
     }
 
     private func formattedDelta(_ bytes: Int64) -> String {
