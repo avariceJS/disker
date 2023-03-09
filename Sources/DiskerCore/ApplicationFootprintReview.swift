@@ -11,7 +11,7 @@ public struct ApplicationFootprintReview: Equatable, Sendable {
 
         public var title: String {
             switch self {
-            case .sharedOrMultiOwner: "Shared or multi-owner · review all consumers"
+            case .sharedOrMultiOwner: "Shared claim or linked elsewhere · verify consumers"
             case .possibleCache: "Possible cache · regeneration unverified"
             case .selectedBundle: "Application bundle · replacement unverified"
             case .unknownOrPotentiallyUnique: "Unknown or user data · preserve"
@@ -21,7 +21,7 @@ public struct ApplicationFootprintReview: Equatable, Sendable {
         public var guidance: String {
             switch self {
             case .sharedOrMultiOwner:
-                "Current use is unknown. Removing this path for one app may affect other consumers; do not treat it as app-exclusive data."
+                "An App Group claim or another app's saved association links this path; current use is unknown. Do not treat it as app-exclusive data."
             case .possibleCache:
                 "This path matches a conventional Caches location by name only. Freshness, current use, and whether its contents can be regenerated are unverified."
             case .selectedBundle:

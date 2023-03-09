@@ -662,7 +662,7 @@ private struct DiskerCoreChecks {
                    "signature-covered group data must remain explicitly shared in the review")
         try expect(byPath[groupPath]?.cleanupReviewClass == .sharedOrMultiOwner
                    && byPath[unknownPath]?.cleanupReviewClass == .sharedOrMultiOwner,
-                   "group and multiply-associated paths must be categorized as shared rather than app-exclusive")
+                   "group claims and multiply-associated paths must disclose linked consumers without asserting current use")
         try expect(byPath[cachePath]?.cleanupReviewClass == .possibleCache
                    && byPath[cachePath]?.cleanupReviewClass.guidance.contains("unverified") == true,
                    "a cache name may only produce a low-confidence review class with explicit recovery uncertainty")
