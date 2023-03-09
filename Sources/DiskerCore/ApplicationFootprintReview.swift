@@ -3,6 +3,35 @@ import Foundation
 /// Read-only evidence for reviewing the measured paths related to one selected app.
 /// The entries are deliberately not summed into an app footprint or reclaimable total.
 public struct ApplicationFootprintReview: Equatable, Sendable {
+    public enum CleanupReviewClass: Equatable, Sendable {
+        case sharedOrMultiOwner
+        case possibleCache
+        case selectedBundle
+        case unknownOrPotentiallyUnique
+
+        public var title: String {
+            switch self {
+            case .sharedOrMultiOwner: "Shared or multi-owner · review all consumers"
+            case .possibleCache: "Possible cache · regeneration unverified"
+            case .selectedBundle: "Application bundle · replacement unverified"
+            case .unknownOrPotentiallyUnique: "Unknown or user data · preserve"
+            }
+        }
+
+        public var guidance: String {
+            switch self {
+            case .sharedOrMultiOwner:
+                "Current use is unknown. Removing this path for one app may affect other consumers; do not treat it as app-exclusive data."
+            case .possibleCache:
+                "This path matches a conventional Caches location by name only. Freshness, current use, and whether its contents can be regenerated are unverified."
+            case .selectedBundle:
+                "Reinstallation might restore the app, but a trusted installer has not been verified. Related support data can remain."
+            case .unknownOrPotentiallyUnique:
+                "Ownership, current use, and recovery options are unknown. Treat this as potentially unique user data and preserve it until verified."
+            }
+        }
+    }
+
     public enum ScopeKind: Equatable, Sendable {
         case applicationBundle
         case associatedFolder
@@ -25,6 +54,16 @@ public struct ApplicationFootprintReview: Equatable, Sendable {
             !otherAssociatedBundlePaths.isEmpty
                 || attribution?.evidence == .declaredSharedGroupContainerClaim
                 || attribution?.evidence == .signatureCoveredSharedGroupClaim
+        }
+
+        public var cleanupReviewClass: CleanupReviewClass {
+            if isShared { return .sharedOrMultiOwner }
+            if kind == .applicationBundle { return .selectedBundle }
+            if attribution?.evidence == .probableNamedSupportPathMatch,
+               URL(fileURLWithPath: path).pathComponents.contains("Caches") {
+                return .possibleCache
+            }
+            return .unknownOrPotentiallyUnique
         }
     }
 

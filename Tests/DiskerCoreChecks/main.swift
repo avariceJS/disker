@@ -660,6 +660,16 @@ private struct DiskerCoreChecks {
         try expect(byPath[groupPath]?.isShared == true
                    && byPath[groupPath]?.attribution?.evidence == .signatureCoveredSharedGroupClaim,
                    "signature-covered group data must remain explicitly shared in the review")
+        try expect(byPath[groupPath]?.cleanupReviewClass == .sharedOrMultiOwner
+                   && byPath[unknownPath]?.cleanupReviewClass == .sharedOrMultiOwner,
+                   "group and multiply-associated paths must be categorized as shared rather than app-exclusive")
+        try expect(byPath[cachePath]?.cleanupReviewClass == .possibleCache
+                   && byPath[cachePath]?.cleanupReviewClass.guidance.contains("unverified") == true,
+                   "a cache name may only produce a low-confidence review class with explicit recovery uncertainty")
+        try expect(byPath[bundlePath]?.cleanupReviewClass == .selectedBundle
+                   && byPath[supportPath]?.cleanupReviewClass == .unknownOrPotentiallyUnique
+                   && byPath[containerPath]?.cleanupReviewClass == .unknownOrPotentiallyUnique,
+                   "bundle replacement uncertainty and potential user data must remain distinct from possible caches")
         try expect(byPath[containerPath]?.overlappingPaths == [containerChild]
                    && byPath[containerChild]?.overlappingPaths == [containerPath],
                    "nested reviewed scopes must be marked as overlapping rather than summed")

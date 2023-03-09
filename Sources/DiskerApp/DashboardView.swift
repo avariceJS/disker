@@ -3465,6 +3465,14 @@ private struct ApplicationFootprintReviewSheet: View {
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
 
+            Label(entry.cleanupReviewClass.title, systemImage: cleanupReviewSymbol(for: entry.cleanupReviewClass))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(entry.cleanupReviewClass == .sharedOrMultiOwner ? Color.orange : Color.secondary)
+            Text(entry.cleanupReviewClass.guidance)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
             if let observation = entry.observation {
                 Text("Last measured \(observation.finishedAt.formatted(date: .abbreviated, time: .shortened))")
                     .font(.caption.weight(.medium))
@@ -3514,10 +3522,6 @@ private struct ApplicationFootprintReviewSheet: View {
                 .foregroundStyle(.orange)
             }
 
-            Text(consequence(for: entry))
-                .font(.caption)
-                .fixedSize(horizontal: false, vertical: true)
-
             if !entry.overlappingPaths.isEmpty {
                 VStack(alignment: .leading, spacing: 3) {
                     Label("Overlaps another reviewed path", systemImage: "square.stack.3d.up")
@@ -3538,22 +3542,13 @@ private struct ApplicationFootprintReviewSheet: View {
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
     }
 
-    private func consequence(for entry: ApplicationFootprintReview.Entry) -> String {
-        guard entry.kind == .associatedFolder else {
-            return "Removing the bundle may leave related data behind. Reinstallation might restore the app, but availability of a trusted installer has not been checked."
+    private func cleanupReviewSymbol(for classification: ApplicationFootprintReview.CleanupReviewClass) -> String {
+        switch classification {
+        case .sharedOrMultiOwner: "person.2"
+        case .possibleCache: "arrow.clockwise.circle"
+        case .selectedBundle: "app.badge.checkmark"
+        case .unknownOrPotentiallyUnique: "lock.shield"
         }
-        if entry.isShared {
-            if entry.attribution?.evidence == .declaredSharedGroupContainerClaim
-                || entry.attribution?.evidence == .signatureCoveredSharedGroupClaim {
-                return "This path has a shared App Group claim; current use by other apps is unverified. It is excluded from any app-exclusive cleanup estimate."
-            }
-            return "Other app records also link this exact path; current use is unverified. It is excluded from any app-exclusive cleanup estimate."
-        }
-        if entry.attribution?.evidence == .probableNamedSupportPathMatch,
-           URL(fileURLWithPath: entry.path).pathComponents.contains("Caches") {
-            return "This path is under a conventional cache location. Its name does not prove that its contents are safe to remove or regenerate."
-        }
-        return "This location may contain unique documents, settings, databases, licenses, or app state. Ownership and recovery options are unverified."
     }
 
     private func unmeasuredSummary(_ observation: FolderObservation, wasCancelled: Bool) -> String {
