@@ -1069,6 +1069,11 @@ struct DashboardView: View {
                     .font(.caption)
                     .foregroundStyle(delta >= 0 ? .green : .orange)
                     .accessibilityElement(children: .combine)
+                    if let interval = ObservationComparison.folderGrowthDuringLatestCapacityLoss(
+                        in: model.history
+                    ) {
+                        capacityIntervalGrowthCard(interval)
+                    }
                 } else {
                         Text("No earlier comparable measurement for this volume and availability method is available.")
                         .font(.caption)
@@ -1105,6 +1110,55 @@ struct DashboardView: View {
         .padding(22)
         .background(.background, in: RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
+    }
+
+    private func capacityIntervalGrowthCard(
+        _ interval: ObservationComparison.CapacityIntervalFolderGrowth
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Selected-folder changes during this interval", systemImage: "clock.arrow.circlepath")
+                .font(.subheadline.weight(.semibold))
+            Text("Capacity decreased by \(format(interval.availableBytesLost)) from \(interval.previousCapacity.observedAt.formatted(date: .abbreviated, time: .shortened)) to \(interval.currentCapacity.observedAt.formatted(date: .abbreviated, time: .shortened)).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if interval.folderGrowth.isEmpty {
+                Text("No complete same-path folder comparison overlaps this interval or its 60-second sampling boundary.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(interval.folderGrowth.prefix(3)) { signal in
+                    HStack(alignment: .top, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(signal.folder.path)
+                                .font(.caption)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                            Text("Complete scans: \(signal.previous.finishedAt.formatted(date: .abbreviated, time: .shortened)) → \(signal.folder.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 6)
+                        Text("+\(format(signal.growthBytes)) allocated")
+                            .font(.caption.weight(.medium).monospacedDigit())
+                            .foregroundStyle(.orange)
+                    }
+                }
+                if interval.folderGrowth.count > 3 {
+                    Text("Showing 3 of \(interval.folderGrowth.count) aligned selected paths. Open Folders to review others.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Text("These folder comparison spans overlap or closely border the capacity interval; the full growth may have happened at another time. This does not prove what caused the capacity movement. Overlapping selected paths may include the same files, so do not add their values. Unselected and system-managed storage remains unassigned.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.blue.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityElement(children: .contain)
     }
 
     private var scanCard: some View {

@@ -28,6 +28,7 @@ private struct DiskerCoreChecks {
             ("capacity clamping", testCapacityClamping),
             ("low available capacity warning threshold", testLowAvailableCapacityWarning),
             ("comparable capacity history", testCapacityHistoryComparison),
+            ("selected-folder growth aligned with capacity loss", testCapacityIntervalFolderGrowth),
             ("bounded history chart ranges", testObservationTimeRanges),
             ("explicit application bundle history index", testApplicationBundleIndex),
             ("explicitly selected app bundle identity read", testApplicationBundleMetadata),
@@ -2762,6 +2763,113 @@ private struct DiskerCoreChecks {
         ])
         try expect(ObservationComparison.growingFileExtensions(for: extensionCurrent, in: partialExtensionHistory) == nil,
                    "a newer partial scan must suppress filename-category growth from an older complete observation")
+    }
+
+    private static func testCapacityIntervalFolderGrowth() throws {
+        let start = Date(timeIntervalSince1970: 10_000)
+        let end = start.addingTimeInterval(1_000)
+        let capacityBefore = CapacityObservation(
+            observedAt: start, totalBytes: 10_000, availableBytes: 8_000, volumeUUID: "internal"
+        )
+        let capacityAfter = CapacityObservation(
+            observedAt: end, totalBytes: 10_000, availableBytes: 7_000, volumeUUID: "internal"
+        )
+        let parentBefore = syntheticFolder(
+            path: "/selected/project", bytes: 100, complete: true,
+            finishedAt: start.addingTimeInterval(-10)
+        )
+        let parentAfter = syntheticFolder(
+            path: "/selected/project", bytes: 180, complete: true,
+            finishedAt: end.addingTimeInterval(-10)
+        )
+        let nestedBefore = syntheticFolder(
+            path: "/selected/project/.build", bytes: 20, complete: true,
+            finishedAt: start.addingTimeInterval(-5)
+        )
+        let nestedAfter = syntheticFolder(
+            path: "/selected/project/.build", bytes: 45, complete: true,
+            finishedAt: end.addingTimeInterval(-20)
+        )
+        let outsideBefore = syntheticFolder(
+            path: "/selected/outside-window", bytes: 10, complete: true,
+            finishedAt: start.addingTimeInterval(-61)
+        )
+        let outsideAfter = syntheticFolder(
+            path: "/selected/outside-window", bytes: 30, complete: true,
+            finishedAt: end.addingTimeInterval(-20)
+        )
+        let partialBefore = syntheticFolder(
+            path: "/selected/partial", bytes: 10, complete: true,
+            finishedAt: start.addingTimeInterval(100)
+        )
+        let partialDuring = syntheticFolder(
+            path: "/selected/partial", bytes: 50, complete: true,
+            finishedAt: end.addingTimeInterval(-100)
+        )
+        let partialLatest = syntheticFolder(
+            path: "/selected/partial", bytes: 900, complete: false,
+            finishedAt: end.addingTimeInterval(-10)
+        )
+        let lateBefore = syntheticFolder(
+            path: "/selected/late-result", bytes: 10, complete: true,
+            finishedAt: start.addingTimeInterval(100)
+        )
+        let lateAfter = syntheticFolder(
+            path: "/selected/late-result", bytes: 30, complete: true,
+            finishedAt: end.addingTimeInterval(61)
+        )
+        let history = LocalHistory(
+            observations: [
+                ScanObservation(startedAt: start, folders: [
+                    parentBefore, nestedBefore, outsideBefore, partialBefore, lateBefore,
+                ], cancelled: false),
+                ScanObservation(startedAt: end, folders: [
+                    parentAfter, nestedAfter, outsideAfter, partialDuring, lateAfter,
+                ], cancelled: false),
+                ScanObservation(startedAt: end, folders: [partialLatest], cancelled: true),
+            ],
+            capacityObservations: [capacityBefore, capacityAfter]
+        )
+
+        let interval = ObservationComparison.folderGrowthDuringLatestCapacityLoss(in: history)
+        try expect(interval?.availableBytesLost == 1_000,
+                   "the joined interval should retain the system-reported available-space loss")
+        try expect(interval?.folderGrowth.map(\.folder.path) == [
+            "/selected/project", "/selected/project/.build",
+        ], "complete root comparisons overlapping the capacity interval should be shown independently, including nested roots")
+        try expect(interval?.folderGrowth.map(\.growthBytes) == [80, 25],
+                   "aligned signals should use exact same-path allocated-byte deltas")
+        try expect(interval?.folderGrowth.allSatisfy {
+            $0.previous.finishedAt >= start.addingTimeInterval(-60)
+                && $0.folder.finishedAt <= end.addingTimeInterval(60)
+                && $0.previous.complete && $0.folder.complete
+        } == true, "the joined signal should use complete scans within the interval or its 60-second sampling boundary tolerance")
+        try expect(interval?.folderGrowth.contains(where: {
+            $0.folder.path == outsideAfter.path || $0.folder.path == partialLatest.path
+                || $0.folder.path == lateAfter.path
+        }) == false, "out-of-window comparisons and paths with a newer partial scan must remain unknown")
+
+        let noLoss = LocalHistory(
+            observations: history.observations,
+            capacityObservations: [capacityBefore, CapacityObservation(
+                observedAt: end, totalBytes: 10_000, availableBytes: 8_100, volumeUUID: "internal"
+            )]
+        )
+        try expect(ObservationComparison.folderGrowthDuringLatestCapacityLoss(in: noLoss) == nil,
+                   "folder growth must not be framed as accompanying a capacity loss when available space did not decrease")
+
+        let incompatibleCapacityBasis = CapacityObservation(
+            observedAt: end, totalBytes: 10_000, availableBytes: 7_000,
+            availabilityBasis: .standardVolume, volumeUUID: "internal"
+        )
+        try expect(ObservationComparison.folderGrowthDuringLatestCapacityLoss(in: LocalHistory(
+            observations: history.observations,
+            capacityObservations: [capacityBefore, incompatibleCapacityBasis]
+        )) == nil, "a change in volume or availability basis must break the capacity interval")
+
+        let noAlignedGrowth = LocalHistory(capacityObservations: [capacityBefore, capacityAfter])
+        try expect(ObservationComparison.folderGrowthDuringLatestCapacityLoss(in: noAlignedGrowth)?.folderGrowth.isEmpty == true,
+                   "a real capacity loss with no aligned selected scans must remain explicitly unassigned")
     }
 
     private static func testDirectoryGrowthComparison() throws {

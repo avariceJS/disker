@@ -2,6 +2,7 @@ import Foundation
 
 public enum ObservationComparison {
     private static let minimumGrowthRateInterval: TimeInterval = 5 * 60
+    private static let capacityScanBoundaryTolerance: TimeInterval = 60
 
     private static func observedBytePace(growthBytes: Int64, interval: TimeInterval) -> Double? {
         guard interval.isFinite, interval >= minimumGrowthRateInterval else { return nil }
@@ -22,6 +23,16 @@ public enum ObservationComparison {
                 interval: folder.finishedAt.timeIntervalSince(previous.finishedAt)
             )
         }
+    }
+
+    /// Complete selected-root changes observed entirely inside the latest
+    /// comparable interval where macOS reported less available capacity.
+    /// This is temporal correlation only; it does not attribute capacity use.
+    public struct CapacityIntervalFolderGrowth: Equatable, Sendable {
+        public let previousCapacity: CapacityObservation
+        public let currentCapacity: CapacityObservation
+        public let availableBytesLost: UInt64
+        public let folderGrowth: [FolderGrowthSignal]
     }
 
     public struct FileExtensionGrowthSignal: Equatable, Identifiable, Sendable {
@@ -263,6 +274,45 @@ public enum ObservationComparison {
         }
         .prefix(limit)
         .map { $0 }
+    }
+
+    /// Joins a capacity loss interval to selected-root growth when the complete
+    /// folder comparison overlaps the same most-recent capacity interval, with
+    /// a small boundary tolerance for the scan→capacity sampling order.
+    /// Overlapping roots remain independent signals; callers must not sum them
+    /// or describe them as causes of the capacity movement.
+    public static func folderGrowthDuringLatestCapacityLoss(
+        in history: LocalHistory, limit: Int = 5
+    ) -> CapacityIntervalFolderGrowth? {
+        let capacitySeries = comparableCapacitySeries(in: history)
+        guard limit > 0,
+              let currentCapacity = capacitySeries.last,
+              history.capacityObservations.last == currentCapacity,
+              let previousCapacity = capacitySeries.dropLast().last,
+              currentCapacity.observedAt > previousCapacity.observedAt,
+              let availableDelta = availableCapacityDelta(
+                  current: currentCapacity, previous: previousCapacity
+              ),
+              availableDelta < 0 else { return nil }
+
+        let intervalStart = previousCapacity.observedAt
+        let intervalEnd = currentCapacity.observedAt
+        let earliestFolderBaseline = intervalStart.addingTimeInterval(-capacityScanBoundaryTolerance)
+        let latestFolderResult = intervalEnd.addingTimeInterval(capacityScanBoundaryTolerance)
+        let alignedGrowth = growingFolders(in: history, limit: Int.max).filter {
+            $0.previous.finishedAt >= earliestFolderBaseline
+                && $0.previous.finishedAt <= intervalEnd
+                && $0.folder.finishedAt >= intervalStart
+                && $0.folder.finishedAt <= latestFolderResult
+                && $0.previous.finishedAt <= $0.folder.finishedAt
+        }
+
+        return CapacityIntervalFolderGrowth(
+            previousCapacity: previousCapacity,
+            currentCapacity: currentCapacity,
+            availableBytesLost: availableDelta.magnitude,
+            folderGrowth: Array(alignedGrowth.prefix(limit))
+        )
     }
 
     /// Positive allocated-byte changes for filename categories across the
