@@ -42,6 +42,7 @@ private struct DiskerCoreChecks {
             ("live RAM and process sample", testLiveRAMSample),
             ("opt-in RAM monitoring policy", testRAMMonitoringPolicy),
             ("opt-in selected-root storage monitoring policy", testStorageMonitoringPolicy),
+            ("scheduled scans produce same-path growth after cadence", testScheduledStorageGrowthSequence),
             ("system memory-pressure transition mapping", testMemoryPressureEventMapping),
             ("cautious sustained process growth signal", testPossibleProcessGrowth),
             ("metadata scan and symlink exclusion", testMetadataScanAndSymlinkExclusion),
@@ -1336,6 +1337,96 @@ private struct DiskerCoreChecks {
         )
         try expect(malformedCadence.effectiveInterval == StorageMonitoringPolicy.defaultInterval,
                    "non-finite interval settings should fall back to the safe default")
+    }
+
+    private static func testScheduledStorageGrowthSequence() throws {
+        let root = "/synthetic/watched-project"
+        let interval = StorageMonitoringPolicy.minimumInterval
+        let enabledAt = Date(timeIntervalSince1970: 20_000)
+        let firstFolder = syntheticFolder(
+            path: root, bytes: 1_000, complete: true,
+            finishedAt: enabledAt.addingTimeInterval(-10)
+        )
+        let firstDue = enabledAt.addingTimeInterval(interval)
+        let firstDecision = StorageMonitoringPolicy.evaluate(
+            StorageMonitoringPolicy.Input(
+                enabled: true, interval: interval, enabledAt: enabledAt, appIsActive: true,
+                savedRootIdentifiers: [root], selectedRootIdentifiers: [root]
+            ),
+            at: firstDue.addingTimeInterval(-1)
+        )
+        try expect(firstDecision.nextScheduledRootIdentifier == nil,
+                   "an opted-in root must not be scanned before its full five-minute interval")
+        let dueDecision = StorageMonitoringPolicy.evaluate(
+            StorageMonitoringPolicy.Input(
+                enabled: true, interval: interval, enabledAt: enabledAt, appIsActive: true,
+                savedRootIdentifiers: [root], selectedRootIdentifiers: [root]
+            ),
+            at: firstDue
+        )
+        try expect(dueDecision.nextScheduledRootIdentifier == root,
+                   "the selected saved root should become due at the five-minute boundary")
+
+        let firstScanFinished = firstDue.addingTimeInterval(30)
+        let secondDue = firstScanFinished.addingTimeInterval(interval)
+        let secondDecisionBeforeDue = StorageMonitoringPolicy.evaluate(
+            StorageMonitoringPolicy.Input(
+                enabled: true, interval: interval, enabledAt: enabledAt, appIsActive: true,
+                savedRootIdentifiers: [root], selectedRootIdentifiers: [root],
+                lastScheduledStartByRoot: [root: firstScanFinished]
+            ),
+            at: secondDue.addingTimeInterval(-1)
+        )
+        try expect(secondDecisionBeforeDue.nextScheduledRootIdentifier == nil,
+                   "the next scheduled scan must wait a full interval after the prior scan finishes")
+        let secondDueDecision = StorageMonitoringPolicy.evaluate(
+            StorageMonitoringPolicy.Input(
+                enabled: true, interval: interval, enabledAt: enabledAt, appIsActive: true,
+                savedRootIdentifiers: [root], selectedRootIdentifiers: [root],
+                lastScheduledStartByRoot: [root: firstScanFinished]
+            ),
+            at: secondDue
+        )
+        try expect(secondDueDecision.nextScheduledRootIdentifier == root,
+                   "the saved root should become eligible for its second observation after the full cadence")
+
+        let secondFolder = syntheticFolder(
+            path: root, bytes: 1_200, complete: true,
+            finishedAt: secondDue.addingTimeInterval(20)
+        )
+        let history = LocalHistory(observations: [
+            ScanObservation(startedAt: firstFolder.finishedAt, folders: [firstFolder], cancelled: false),
+            ScanObservation(startedAt: firstScanFinished, folders: [
+                syntheticFolder(path: root, bytes: 1_100, complete: true, finishedAt: firstScanFinished),
+            ], cancelled: false),
+            ScanObservation(startedAt: secondFolder.finishedAt, folders: [secondFolder], cancelled: false),
+        ])
+        let growth = ObservationComparison.growingFolders(in: history)
+        try expect(growth.count == 1 && growth[0].folder.path == root
+                   && growth[0].growthBytes == 100,
+                   "two complete scheduled observations should yield a same-path allocated-growth signal")
+
+        let partial = syntheticFolder(
+            path: root, bytes: 9_000, complete: false,
+            finishedAt: secondFolder.finishedAt.addingTimeInterval(5)
+        )
+        let partialHistory = LocalHistory(observations: history.observations + [
+            ScanObservation(startedAt: partial.finishedAt, folders: [partial], cancelled: true),
+        ])
+        try expect(ObservationComparison.growingFolders(in: partialHistory).isEmpty,
+                   "a later incomplete scheduled result must suppress the prior complete growth signal")
+
+        let inactiveDecision = StorageMonitoringPolicy.evaluate(
+            StorageMonitoringPolicy.Input(
+                enabled: true, interval: interval, enabledAt: enabledAt, appIsActive: false,
+                savedRootIdentifiers: [root], selectedRootIdentifiers: [root],
+                scheduledScanRootIdentifiers: [root]
+            ),
+            at: partial.finishedAt.addingTimeInterval(1)
+        )
+        try expect(inactiveDecision.cancelScheduledRootIdentifiers == [root]
+                   && inactiveDecision.nextScheduledRootIdentifier == nil,
+                   "an in-flight scheduled root must be cancelled from the scheduling decision when the app becomes inactive")
     }
 
     private static func testMemoryPressureEventMapping() throws {
