@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Charts
 import DiskerCore
 import Observation
@@ -255,12 +256,34 @@ final class DashboardModel {
         panel.prompt = "Measure Bundle"
         panel.message = "Disker measures only the selected .app bundle. Signature validation reads its signed executable and resources locally, in addition to the declared bundle ID and App Groups claim. It does not verify notarization or current use; group data is shared. No file contents are uploaded."
         panel.directoryURL = directory
-        panel.canChooseDirectories = false
+        // NSOpenPanel may expose app bundles as package directories on macOS.
+        // Allow both selection forms, then validate application metadata below.
+        panel.canChooseDirectories = true
         panel.canChooseFiles = true
+        panel.treatsFilePackagesAsDirectories = false
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
         panel.allowedContentTypes = [.applicationBundle]
         guard panel.runModal() == .OK, let bundleURL = panel.urls.first else { return }
+        guard bundleURL.pathExtension.lowercased() == "app" else {
+            errorMessage = "Choose an application bundle (.app). Ordinary folders are not measured as applications."
+            return
+        }
+        var rootStat = stat()
+        let selectedPathIsRealDirectory = bundleURL.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return false }
+            return lstat(path, &rootStat) == 0 && (rootStat.st_mode & S_IFMT) == S_IFDIR
+        }
+        guard selectedPathIsRealDirectory else {
+            errorMessage = "The selected application bundle is unavailable or is a symbolic link."
+            return
+        }
+        guard let selectedBundle = Bundle(url: bundleURL),
+              selectedBundle.object(forInfoDictionaryKey: "CFBundlePackageType") as? String == "APPL",
+              selectedBundle.bundleIdentifier?.isEmpty == false else {
+            errorMessage = "The selected .app does not contain a valid application bundle identity."
+            return
+        }
         applicationBundlePathCheckIDs.removeValue(forKey: bundleURL.path)
         checkingApplicationBundlePaths.remove(bundleURL.path)
         applicationBundlePathAvailability[bundleURL.path] = true
