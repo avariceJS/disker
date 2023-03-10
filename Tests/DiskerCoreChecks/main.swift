@@ -2113,6 +2113,84 @@ private struct DiskerCoreChecks {
                    "artifact review must not present a reclaimable-byte estimate")
         try expect(!review.entries.contains(where: { $0.relativePath == traversalPath.rootRelativePath }),
                    "persisted candidate paths containing traversal components must not escape the selected root")
+
+        let growthStart = Date(timeIntervalSince1970: 1_800_000_000)
+        let priorBuild = directory("Source/.build", bytes: 10_000, complete: true)
+        let priorNested = directory("Source/.build/node_modules", bytes: 4_000, complete: true)
+        let currentBuild = directory("Source/.build", bytes: 70_000, complete: true)
+        let currentNested = directory("Source/.build/node_modules", bytes: 9_000, complete: true)
+        let priorFolder = FolderObservation(
+            path: "/selected/project", volumeDeviceID: 42, displayName: "project",
+            logicalBytes: 20_000, allocatedBytes: 20_000, fileCount: 2,
+            inaccessibleCount: 0, finishedAt: growthStart, complete: true,
+            projectDirectorySummaries: [priorBuild, priorNested]
+        )
+        let currentFolder = FolderObservation(
+            path: "/selected/project", volumeDeviceID: 42, displayName: "project",
+            logicalBytes: 80_000, allocatedBytes: 80_000, fileCount: 2,
+            inaccessibleCount: 0, finishedAt: growthStart.addingTimeInterval(3_600), complete: true,
+            projectDirectorySummaries: [currentBuild, currentNested]
+        )
+        let growthHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: growthStart, folders: [priorFolder], cancelled: false),
+            ScanObservation(startedAt: currentFolder.finishedAt, folders: [currentFolder], cancelled: false),
+        ])
+        let growthReview = DeveloperArtifactReview.make(from: currentFolder, in: growthHistory)
+        let growthRows = Dictionary(uniqueKeysWithValues: growthReview.entries.map { ($0.relativePath, $0) })
+        try expect(growthRows["Source/.build"]?.historicalChange?.allocatedBytesChange == 60_000
+                   && growthRows["Source/.build"]?.historicalChange?.previousObservedAt == priorFolder.finishedAt
+                   && growthRows["Source/.build"]?.historicalChange?.observedBytesPerDay == 1_440_000,
+                   "artifact review should attach exact-path allocated growth, scan dates, and qualified observed pace")
+        try expect(growthRows["Source/.build"]?.overlappingCandidatePaths == growthRows["Source/.build/node_modules"].map { [$0.path] }
+                   && growthRows["Source/.build/node_modules"]?.historicalChange?.allocatedBytesChange == 5_000,
+                   "nested artifact growth should stay separate and retain overlap disclosure")
+        let newerPartial = FolderObservation(
+            path: currentFolder.path, volumeDeviceID: 42, displayName: "project",
+            logicalBytes: 80_000, allocatedBytes: 80_000, fileCount: 2,
+            inaccessibleCount: 1, finishedAt: growthStart.addingTimeInterval(7_200), complete: false,
+            projectDirectorySummaries: [currentBuild]
+        )
+        let partialHistory = LocalHistory(observations: growthHistory.observations + [
+            ScanObservation(startedAt: newerPartial.finishedAt, folders: [newerPartial], cancelled: true),
+        ])
+        try expect(DeveloperArtifactReview.make(from: currentFolder, in: partialHistory)
+            .entries.first(where: { $0.relativePath == "Source/.build" })?.historicalChange == nil,
+                   "a newer partial same-root scan must suppress stale artifact growth")
+        let otherVolumeFolder = FolderObservation(
+            path: currentFolder.path, volumeDeviceID: 99, displayName: "project",
+            logicalBytes: 80_000, allocatedBytes: 80_000, fileCount: 2,
+            inaccessibleCount: 0, finishedAt: currentFolder.finishedAt, complete: true,
+            projectDirectorySummaries: [currentBuild]
+        )
+        let otherVolumeHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: growthStart, folders: [priorFolder], cancelled: false),
+            ScanObservation(startedAt: otherVolumeFolder.finishedAt, folders: [otherVolumeFolder], cancelled: false),
+        ])
+        try expect(DeveloperArtifactReview.make(from: otherVolumeFolder, in: otherVolumeHistory)
+            .entries.first(where: { $0.relativePath == "Source/.build" })?.historicalChange == nil,
+                   "artifact history must not compare a path across volume identity changes")
+        let quickCurrent = FolderObservation(
+            path: currentFolder.path, volumeDeviceID: 42, displayName: "project",
+            logicalBytes: 80_000, allocatedBytes: 80_000, fileCount: 2,
+            inaccessibleCount: 0, finishedAt: growthStart.addingTimeInterval(60), complete: true,
+            projectDirectorySummaries: [currentBuild, currentNested]
+        )
+        let quickHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: growthStart, folders: [priorFolder], cancelled: false),
+            ScanObservation(startedAt: quickCurrent.finishedAt, folders: [quickCurrent], cancelled: false),
+        ])
+        try expect(DeveloperArtifactReview.make(from: quickCurrent, in: quickHistory)
+            .entries.first(where: { $0.relativePath == "Source/.build" })?.historicalChange?.observedBytesPerDay == nil,
+                   "artifact growth pace should be omitted for intervals shorter than five minutes")
+        let priorGit = folderWithGitMetadata(id: UUID(), path: "/selected/git-project", bytes: 100, complete: true)
+        let currentGit = folderWithGitMetadata(id: UUID(), path: "/selected/git-project", bytes: 200, complete: true)
+        let gitReviewHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: priorGit.finishedAt, folders: [priorGit], cancelled: false),
+            ScanObservation(startedAt: currentGit.finishedAt, folders: [currentGit], cancelled: false),
+        ])
+        try expect(DeveloperArtifactReview.make(from: currentGit, in: gitReviewHistory)
+            .entries.first(where: { $0.relativePath == ".git" })?.historicalChange?.allocatedBytesChange == 100,
+                   "dedicated direct Git metadata summaries should participate in exact-path history")
     }
 
     private static func testFileArtifactHints() throws {

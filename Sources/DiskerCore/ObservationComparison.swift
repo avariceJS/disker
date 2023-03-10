@@ -491,7 +491,9 @@ public enum ObservationComparison {
         previousCompleteDirectoryObservation(for: current, in: folder, history: history)?.directory
     }
 
-    private static func previousCompleteDirectoryObservation(
+    /// Returns the prior complete observation and its directory summary for
+    /// the exact selected root, volume identity, and relative directory path.
+    public static func previousCompleteDirectoryObservation(
         for current: DirectoryUsage,
         in folder: FolderObservation,
         history: LocalHistory

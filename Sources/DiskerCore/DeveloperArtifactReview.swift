@@ -31,8 +31,26 @@ public struct DeveloperArtifactReview: Equatable, Sendable {
         /// Exact candidate paths whose measured subtrees intersect this entry.
         /// Entries remain separate and must not be added together.
         public let overlappingCandidatePaths: [String]
+        /// A signed change in the filesystem's allocated-byte estimate, only
+        /// when this exact retained candidate appeared in two complete scans
+        /// of this same selected root and volume.
+        public let historicalChange: HistoricalChange?
 
         public var id: String { path }
+    }
+
+    public struct HistoricalChange: Equatable, Sendable {
+        public let previousObservedAt: Date
+        public let currentObservedAt: Date
+        public let allocatedBytesChange: Int64
+
+        /// A descriptive straight-line pace, shown only for increases over
+        /// intervals long enough to reduce timestamp noise.
+        public var observedBytesPerDay: Double? {
+            let interval = currentObservedAt.timeIntervalSince(previousObservedAt)
+            guard allocatedBytesChange > 0, interval.isFinite, interval >= 5 * 60 else { return nil }
+            return Double(allocatedBytesChange) * 86_400 / interval
+        }
     }
 
     public enum Category: String, CaseIterable, Equatable, Sendable {
@@ -65,7 +83,10 @@ public struct DeveloperArtifactReview: Equatable, Sendable {
     /// summaries. No file contents, ownership, last-use, or reclaimable bytes
     /// are inferred. Since summaries are subtree measurements, overlapping
     /// candidate sizes are intentionally never aggregated.
-    public static func make(from folder: FolderObservation) -> DeveloperArtifactReview {
+    public static func make(
+        from folder: FolderObservation,
+        in history: LocalHistory? = nil
+    ) -> DeveloperArtifactReview {
         var summariesByPath: [String: DirectoryUsage] = [:]
         for summary in folder.projectDirectorySummaries {
             summariesByPath[summary.rootRelativePath] = summary
@@ -96,6 +117,7 @@ public struct DeveloperArtifactReview: Equatable, Sendable {
 
         let sortedCandidates = candidates.sorted { $0.0 < $1.0 }
         let absolutePaths = sortedCandidates.map { absolutePath(root: folder.path, relative: $0.0) }
+        let historyByPath = historicalChanges(for: folder, in: history)
         let entries = sortedCandidates.enumerated().map { index, candidate in
             let (relativePath, summary, category, evidence) = candidate
             let path = absolutePaths[index]
@@ -128,7 +150,8 @@ public struct DeveloperArtifactReview: Equatable, Sendable {
                 risk: risk(for: category),
                 possibleConsequence: consequence(for: category),
                 caution: caution + overlapNote,
-                overlappingCandidatePaths: overlaps.sorted()
+                overlappingCandidatePaths: overlaps.sorted(),
+                historicalChange: historyByPath[relativePath]
             )
         }
 
@@ -139,6 +162,40 @@ public struct DeveloperArtifactReview: Equatable, Sendable {
             candidatesTruncated: folder.projectDirectorySummariesTruncated,
             entries: entries
         )
+    }
+
+    private static func historicalChanges(
+        for folder: FolderObservation,
+        in history: LocalHistory?
+    ) -> [String: HistoricalChange] {
+        guard folder.complete, let history,
+              history.observations.reversed().lazy.compactMap({ observation in
+                  observation.folders.first(where: { $0.path == folder.path })
+              }).first?.id == folder.id
+        else { return [:] }
+
+        var currentSummaries = Dictionary(
+            folder.projectDirectorySummaries.map { ($0.rootRelativePath, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        if let gitUsage = folder.gitMetadataUsage {
+            currentSummaries[gitUsage.rootRelativePath] = gitUsage
+        }
+        var changes: [String: HistoricalChange] = [:]
+        for (relativePath, current) in currentSummaries where current.complete {
+            guard let previous = ObservationComparison.previousCompleteDirectoryObservation(
+                for: current, in: folder, history: history
+            ),
+                  let delta = ObservationComparison.allocatedByteDelta(
+                      current: current, previous: previous.directory
+                  ) else { continue }
+            changes[relativePath] = HistoricalChange(
+                previousObservedAt: previous.folder.finishedAt,
+                currentObservedAt: folder.finishedAt,
+                allocatedBytesChange: delta
+            )
+        }
+        return changes
     }
 
     private static func category(for hint: StorageAreaHint?) -> Category {

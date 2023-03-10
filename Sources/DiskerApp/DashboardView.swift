@@ -846,7 +846,7 @@ struct DashboardView: View {
             .frame(minWidth: 580, minHeight: 520)
         }
         .sheet(item: $developerArtifactReviewFolder) { folder in
-            DeveloperArtifactReviewSheet(folder: folder) { url in
+            DeveloperArtifactReviewSheet(folder: folder, history: model.history) { url in
                 model.chooseFolders(startingAt: url)
             }
             .frame(minWidth: 620, minHeight: 560)
@@ -3313,10 +3313,11 @@ private struct DeveloperArtifactReviewSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let folder: FolderObservation
+    let history: LocalHistory
     let onRescan: (URL) -> Void
 
     private var review: DeveloperArtifactReview {
-        DeveloperArtifactReview.make(from: folder)
+        DeveloperArtifactReview.make(from: folder, in: history)
     }
 
     var body: some View {
@@ -3428,6 +3429,25 @@ private struct DeveloperArtifactReviewSheet: View {
                 .foregroundStyle(entry.subtreeComplete && entry.selectedRootComplete ? Color.secondary : Color.orange)
                 .fixedSize(horizontal: false, vertical: true)
 
+            if let change = entry.historicalChange {
+                Label(historicalChangeTitle(change.allocatedBytesChange), systemImage: historicalChangeSymbol(change.allocatedBytesChange))
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(change.allocatedBytesChange > 0 ? Color.orange : Color.secondary)
+                Text("Allocated estimate \(signed(change.allocatedBytesChange)) between complete scans on \(change.previousObservedAt.formatted(date: .abbreviated, time: .shortened)) and \(change.currentObservedAt.formatted(date: .abbreviated, time: .shortened)). This describes measured change; it does not identify cause or reclaimable space.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let pace = change.observedBytesPerDay {
+                    Text("Observed pace over that interval: ~\(format(Int64(min(pace, Double(Int64.max))))) per day; descriptive only.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text("Growth unknown: no comparable complete measurement of this exact path is retained.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             if !entry.overlappingCandidatePaths.isEmpty {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Overlapping candidate measurements · do not add")
@@ -3478,6 +3498,26 @@ private struct DeveloperArtifactReviewSheet: View {
 
     private func format(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    private func signed(_ bytes: Int64) -> String {
+        let magnitude = bytes.magnitude > UInt64(Int64.max) ? Int64.max : Int64(bytes.magnitude)
+        let formatted = format(magnitude)
+        if bytes > 0 { return "+\(formatted)" }
+        if bytes < 0 { return "−\(formatted)" }
+        return formatted
+    }
+
+    private func historicalChangeTitle(_ bytes: Int64) -> String {
+        if bytes > 0 { return "Observed growth" }
+        if bytes < 0 { return "Observed decrease" }
+        return "No allocated-size change observed"
+    }
+
+    private func historicalChangeSymbol(_ bytes: Int64) -> String {
+        if bytes > 0 { return "arrow.up.right" }
+        if bytes < 0 { return "arrow.down.right" }
+        return "equal"
     }
 }
 
