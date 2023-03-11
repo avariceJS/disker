@@ -55,6 +55,8 @@ private struct DiskerCoreChecks {
             ("Disker own-footprint scan stays in app-owned scope", testDiskerFootprintScope),
             ("selected-scope duplicate verification", testDuplicateVerification),
             ("duplicate reads stay inside selected root volumes", testDuplicateVolumeBoundary),
+            ("duplicate selected roots reject ancestor symlinks", testDuplicateSelectedRootAncestorSymlink),
+            ("duplicate groups are withheld when selected roots move", testDuplicateSelectedRootMutation),
             ("duplicate verification root limit", testDuplicateVerificationRootLimit),
             ("duplicate verification cancellation", testDuplicateVerificationCancellation),
             ("duplicate directory mutation coverage", testDuplicateDirectoryMutationCoverage),
@@ -2134,6 +2136,62 @@ private struct DiskerCoreChecks {
                        "cross-volume candidates should not be read and should make verification partial")
             try expect(result.selectedRootPaths == [root.path],
                        "verification provenance should retain the single explicitly selected root")
+        }
+    }
+
+    private static func testDuplicateSelectedRootAncestorSymlink() throws {
+        try withTemporaryDirectory { base in
+            let selectedRoot = base.appendingPathComponent("selected-root", isDirectory: true)
+            let outsideParent = base.appendingPathComponent("outside-parent", isDirectory: true)
+            let outsideRoot = outsideParent.appendingPathComponent("selected", isDirectory: true)
+            let alias = base.appendingPathComponent("outside-alias", isDirectory: true)
+            try FileManager.default.createDirectory(at: selectedRoot, withIntermediateDirectories: false)
+            try FileManager.default.createDirectory(at: outsideRoot, withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: outsideParent)
+            let matchingContents = Data("synthetic duplicate root boundary".utf8)
+            try matchingContents.write(to: selectedRoot.appendingPathComponent("match.bin"))
+            try matchingContents.write(to: outsideRoot.appendingPathComponent("match.bin"))
+
+            var contentReadAuthorizationRequested = false
+            let result = DuplicateVerifier.verify(
+                roots: [selectedRoot, alias.appendingPathComponent("selected", isDirectory: true)],
+                authorizeContentRead: { _ in
+                    contentReadAuthorizationRequested = true
+                    return true
+                }
+            )
+            try expect(!contentReadAuthorizationRequested && result.checkedFileCount == 0,
+                       "an ancestor symlink must be rejected before duplicate content reads are requested")
+            try expect(result.groups.isEmpty && result.excludedSymlinkCount == 1 && !result.complete,
+                       "the outside matching file must not enter the selected-root duplicate result")
+        }
+    }
+
+    private static func testDuplicateSelectedRootMutation() throws {
+        try withTemporaryDirectory { base in
+            let selectedRoot = base.appendingPathComponent("selected-root", isDirectory: true)
+            let movedRoot = base.appendingPathComponent("moved-root", isDirectory: true)
+            try FileManager.default.createDirectory(at: selectedRoot, withIntermediateDirectories: false)
+            let matchingContents = Data("synthetic duplicate root mutation".utf8)
+            try matchingContents.write(to: selectedRoot.appendingPathComponent("first.bin"))
+            try matchingContents.write(to: selectedRoot.appendingPathComponent("second.bin"))
+
+            var rootMoved = false
+            let result = DuplicateVerifier.verify(roots: [selectedRoot], authorizeContentRead: { _ in
+                do {
+                    try FileManager.default.moveItem(at: selectedRoot, to: movedRoot)
+                    rootMoved = true
+                } catch {
+                    return false
+                }
+                return true
+            })
+            try expect(rootMoved, "the synthetic selected root should move during the consent boundary")
+            try expect(result.changedDuringCheckCount > 0 && !result.complete,
+                       "a selected root that no longer names its opened directory must leave coverage partial")
+            let plan = try CleanupPlanner.makePlan(from: result, preserving: [:])
+            try expect(result.groups.isEmpty && plan.entries.isEmpty,
+                       "moved-root paths must not appear in a duplicate group or dry-run plan")
         }
     }
 

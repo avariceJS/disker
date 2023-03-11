@@ -170,6 +170,13 @@ public enum DuplicateVerifier {
         case unavailable
     }
 
+    private enum SelectedRootOpenResult {
+        case opened(Int32, stat)
+        case symbolicLink
+        case changed
+        case unavailable
+    }
+
     private enum MetadataResult {
         case unchanged
         case changed
@@ -218,6 +225,7 @@ public enum DuplicateVerifier {
 
         var rootDescriptors: [Int32] = []
         var scopedURLs: [URL] = []
+        var rootIdentityByPath: [String: FileIdentity] = [:]
         defer {
             rootDescriptors.forEach { close($0) }
             scopedURLs.forEach { $0.stopAccessingSecurityScopedResource() }
@@ -238,28 +246,24 @@ public enum DuplicateVerifier {
         for root in roots {
             if shouldCancel() { cancelled = true; break }
             if root.startAccessingSecurityScopedResource() { scopedURLs.append(root) }
-            var metadata = stat()
-            guard root.path.withCString({ lstat($0, &metadata) }) == 0 else {
+            let rootDescriptor: Int32
+            let metadata: stat
+            switch openSelectedRootWithoutFollowingLinks(root.path) {
+            case .opened(let descriptor, let openedMetadata):
+                rootDescriptor = descriptor
+                metadata = openedMetadata
+            case .symbolicLink:
+                excludedSymlinkCount += 1
+                continue
+            case .changed:
+                changedDuringCheckCount += 1
+                continue
+            case .unavailable:
                 inaccessibleCount += 1
                 continue
             }
-            guard metadata.st_mode & S_IFMT == S_IFDIR else {
-                if metadata.st_mode & S_IFMT == S_IFLNK { excludedSymlinkCount += 1 }
-                else { inaccessibleCount += 1 }
-                continue
-            }
-            let rootDescriptor = root.path.withCString {
-                open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-            }
-            guard rootDescriptor >= 0 else { inaccessibleCount += 1; continue }
-            var openedRoot = stat()
-            guard fstat(rootDescriptor, &openedRoot) == 0,
-                  sameIdentity(metadata, openedRoot) else {
-                close(rootDescriptor)
-                changedDuringCheckCount += 1
-                continue
-            }
             rootDescriptors.append(rootDescriptor)
+            rootIdentityByPath[root.path] = fileIdentity(metadata)
             let rootDeviceID = UInt64(truncatingIfNeeded: metadata.st_dev)
 
             var pending = [PendingDirectory(
@@ -508,6 +512,27 @@ public enum DuplicateVerifier {
             }
         }
 
+        var selectedRootPathsStable = true
+        for (path, expectedIdentity) in rootIdentityByPath {
+            switch openSelectedRootWithoutFollowingLinks(path) {
+            case .opened(let descriptor, let metadata):
+                close(descriptor)
+                if fileIdentity(metadata) != expectedIdentity {
+                    changedDuringCheckCount += 1
+                    selectedRootPathsStable = false
+                }
+            case .symbolicLink:
+                excludedSymlinkCount += 1
+                selectedRootPathsStable = false
+            case .changed:
+                changedDuringCheckCount += 1
+                selectedRootPathsStable = false
+            case .unavailable:
+                inaccessibleCount += 1
+                selectedRootPathsStable = false
+            }
+        }
+
         let groups = filesByHash.compactMap { digest, files -> DuplicateGroup? in
             let validatedFiles = files.filter { finalMetadataValidatedPaths.contains($0.path) }
             guard validatedFiles.count > 1 else { return nil }
@@ -515,7 +540,8 @@ public enum DuplicateVerifier {
         }.sorted { utf8LessThan($0.sha256, $1.sha256) }
 
         return DuplicateVerificationResult(
-            verifiedAt: .now, selectedRootPaths: roots.map(\.path), groups: groups,
+            verifiedAt: .now, selectedRootPaths: roots.map(\.path),
+            groups: selectedRootPathsStable ? groups : [],
             checkedFileCount: checkedFileCount,
             inaccessibleCount: inaccessibleCount,
             excludedSymlinkCount: excludedSymlinkCount,
@@ -618,6 +644,74 @@ public enum DuplicateVerifier {
         }
         guard result == 0 else { return itemChanged(errno) ? .changed : .unavailable }
         return fileMetadataChanged(candidate.metadata, current) ? .changed : .unchanged
+    }
+
+    /// Opens a selected directory root without following symlinks in any path
+    /// component. The returned descriptor is pinned to the metadata identity
+    /// that will seed the traversal.
+    private static func openSelectedRootWithoutFollowingLinks(_ path: String) -> SelectedRootOpenResult {
+        let rawComponents = path.split(separator: "/", omittingEmptySubsequences: true)
+        guard path.hasPrefix("/"),
+              !rawComponents.contains("."), !rawComponents.contains("..") else {
+            return .unavailable
+        }
+
+        var descriptor = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { return .unavailable }
+        let components = Array(URL(fileURLWithPath: path).standardizedFileURL.pathComponents.dropFirst())
+        var metadata = stat()
+        for component in components {
+            guard !component.isEmpty, component != ".", component != ".." else {
+                close(descriptor)
+                return .unavailable
+            }
+            var enumerated = stat()
+            let lookup = component.withCString {
+                fstatat(descriptor, $0, &enumerated, AT_SYMLINK_NOFOLLOW)
+            }
+            guard lookup == 0 else {
+                let error = errno
+                close(descriptor)
+                return error == ELOOP ? .symbolicLink : .unavailable
+            }
+            guard enumerated.st_mode & S_IFMT == S_IFDIR else {
+                close(descriptor)
+                return enumerated.st_mode & S_IFMT == S_IFLNK ? .symbolicLink : .unavailable
+            }
+
+            let nextDescriptor = component.withCString {
+                openat(descriptor, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            }
+            guard nextDescriptor >= 0 else {
+                let error = errno
+                close(descriptor)
+                if error == ELOOP { return .symbolicLink }
+                if error == ENOENT || error == ENOTDIR { return .changed }
+                return .unavailable
+            }
+            var opened = stat()
+            guard fstat(nextDescriptor, &opened) == 0 else {
+                close(nextDescriptor)
+                close(descriptor)
+                return .unavailable
+            }
+            guard sameIdentity(enumerated, opened), opened.st_mode & S_IFMT == S_IFDIR else {
+                close(nextDescriptor)
+                close(descriptor)
+                return .changed
+            }
+            close(descriptor)
+            descriptor = nextDescriptor
+            metadata = opened
+        }
+
+        if components.isEmpty {
+            guard fstat(descriptor, &metadata) == 0 else {
+                close(descriptor)
+                return .unavailable
+            }
+        }
+        return .opened(descriptor, metadata)
     }
 
     private static func openDirectory(
