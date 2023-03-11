@@ -1005,10 +1005,11 @@ private struct DiskerCoreChecks {
             try expect(resolved.standardizedFileURL.path == root.standardizedFileURL.path,
                        "a bookmark should resolve to its selected folder")
             let scopeStoreBeforeProbe = try Data(contentsOf: storeURL)
-            try expect(SelectedScopePathProbe.isAvailable(
-                at: root.path, using: loaded[0]
-            ),
-                       "a saved read-only scope should permit a no-follow metadata availability check at its exact path")
+            try expect(SelectedScopePathProbe.probe(at: root.path) == .availableDirectory,
+                       "a canonical synthetic scope should permit a no-bookmark availability check")
+            let savedScopeProbe = SelectedScopePathProbe.probe(at: root.path, using: loaded[0])
+            try expect(savedScopeProbe == .availableDirectory,
+                       "a saved read-only scope should permit a no-follow metadata availability check at its exact path (got \(savedScopeProbe), path \(root.path))")
             let differentPath = base.appendingPathComponent("different-folder", isDirectory: true)
             try FileManager.default.createDirectory(at: differentPath, withIntermediateDirectories: false)
             let movedBookmarkData = try differentPath.bookmarkData(
@@ -1148,10 +1149,15 @@ private struct DiskerCoreChecks {
         try withTemporaryDirectory { base in
             let directory = base.appendingPathComponent("selected-directory", isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+            let childDirectory = directory.appendingPathComponent("child", isDirectory: true)
+            try FileManager.default.createDirectory(at: childDirectory, withIntermediateDirectories: false)
             let file = base.appendingPathComponent("selected-file")
             try Data("small synthetic fixture".utf8).write(to: file)
             let symlink = base.appendingPathComponent("selected-symlink", isDirectory: true)
             try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: directory)
+            let symlinkAncestor = base.appendingPathComponent("selected-parent-link", isDirectory: true)
+            try FileManager.default.createSymbolicLink(at: symlinkAncestor, withDestinationURL: directory)
+            let pathThroughSymlinkAncestor = symlinkAncestor.appendingPathComponent("child", isDirectory: true)
             let missing = base.appendingPathComponent("missing-directory", isDirectory: true)
 
             try expect(SelectedScopePathProbe.probe(at: directory.path) == .availableDirectory,
@@ -1160,6 +1166,12 @@ private struct DiskerCoreChecks {
                        "an existing regular file should be distinguished from a missing directory")
             try expect(SelectedScopePathProbe.probe(at: symlink.path) == .symbolicLink,
                        "a selected symlink must be reported without following its target")
+            try expect(SelectedScopePathProbe.probe(at: pathThroughSymlinkAncestor.path) == .symbolicLink,
+                       "an ancestor symlink must be rejected instead of probing a directory outside the exact path")
+            try expect(SelectedScopePathProbe.probe(
+                at: "\(symlink.path)/../selected-directory"
+            ) == .permissionOrAccessUnknown,
+                       "a path containing dot-dot must be rejected before lexical normalization hides a symlink")
             try expect(SelectedScopePathProbe.probe(at: missing.path) == .missingOrUnreachable,
                        "a missing selected path should be reported as unavailable")
             try expect(!SelectedScopePathProbe.isAvailable(at: symlink.path)
@@ -4423,7 +4435,8 @@ private struct DiskerCoreChecks {
     }
 
     private static func withTemporaryDirectory(_ body: (URL) throws -> Void) throws {
-        let root = FileManager.default.temporaryDirectory
+        let testArea = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let root = testArea
             .appendingPathComponent("DiskerChecks-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }

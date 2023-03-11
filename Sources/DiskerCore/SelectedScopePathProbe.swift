@@ -1,7 +1,8 @@
 import Darwin
 import Foundation
 
-/// Checks one already selected directory path without opening or traversing it.
+/// Checks one already selected directory path without enumerating descendants
+/// or reading file contents.
 /// If a bookmark is supplied, it must still resolve to the exact recorded path.
 public enum SelectedScopePathProbe {
     public enum Status: Equatable, Sendable {
@@ -17,11 +18,16 @@ public enum SelectedScopePathProbe {
 
     /// Reports metadata availability for one exact user-selected path. It does
     /// not enumerate descendants, read file contents, or refresh bookmarks.
-    /// `lstat` ensures the selected final path is not followed when it is a symlink.
+    /// Every path component is opened relative to a directory descriptor with
+    /// `O_NOFOLLOW`, so ancestor symlinks are rejected as well as final links.
     public static func probe(
         at path: String,
         using bookmark: SelectedScopeBookmark? = nil
     ) -> Status {
+        let rawComponents = path.split(separator: "/", omittingEmptySubsequences: true)
+        guard !rawComponents.contains("."), !rawComponents.contains("..") else {
+            return .permissionOrAccessUnknown
+        }
         let requestedURL = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
         let url: URL
         if let bookmark {
@@ -65,25 +71,52 @@ public enum SelectedScopePathProbe {
             if accessGranted { url.stopAccessingSecurityScopedResource() }
         }
 
-        var metadata = stat()
-        let result = url.path.withCString { lstat($0, &metadata) }
-        guard result == 0 else {
-            switch errno {
-            case ENOENT, ENOTDIR:
-                return .missingOrUnreachable
-            case EACCES, EPERM:
-                return .permissionOrAccessUnknown
-            case ELOOP:
-                return .symbolicLink
-            default:
+        guard url.path.hasPrefix("/") else { return .permissionOrAccessUnknown }
+        var descriptor = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { return status(forErrno: errno) }
+        defer { close(descriptor) }
+
+        let components = Array(url.standardizedFileURL.pathComponents.dropFirst())
+        for component in components {
+            guard !component.isEmpty, component != ".", component != ".." else {
                 return .permissionOrAccessUnknown
             }
+            var enumerated = stat()
+            let lookup = component.withCString {
+                fstatat(descriptor, $0, &enumerated, AT_SYMLINK_NOFOLLOW)
+            }
+            guard lookup == 0 else { return status(forErrno: errno) }
+
+            switch enumerated.st_mode & S_IFMT {
+            case S_IFLNK:
+                return .symbolicLink
+            case S_IFDIR:
+                break
+            default:
+                return .notDirectory
+            }
+
+            let nextDescriptor = component.withCString {
+                openat(descriptor, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            }
+            guard nextDescriptor >= 0 else { return status(forErrno: errno) }
+            var opened = stat()
+            guard fstat(nextDescriptor, &opened) == 0 else {
+                let failure = status(forErrno: errno)
+                close(nextDescriptor)
+                return failure
+            }
+            guard opened.st_mode & S_IFMT == S_IFDIR,
+                  opened.st_dev == enumerated.st_dev,
+                  opened.st_ino == enumerated.st_ino else {
+                close(nextDescriptor)
+                return .permissionOrAccessUnknown
+            }
+
+            close(descriptor)
+            descriptor = nextDescriptor
         }
-        switch metadata.st_mode & S_IFMT {
-        case S_IFLNK: return .symbolicLink
-        case S_IFDIR: return .availableDirectory
-        default: return .notDirectory
-        }
+        return .availableDirectory
     }
 
     public static func isAvailable(
@@ -91,5 +124,15 @@ public enum SelectedScopePathProbe {
         using bookmark: SelectedScopeBookmark? = nil
     ) -> Bool {
         probe(at: path, using: bookmark) == .availableDirectory
+    }
+
+    private static func status(forErrno code: Int32) -> Status {
+        switch code {
+        case ENOENT: .missingOrUnreachable
+        case ENOTDIR: .notDirectory
+        case EACCES, EPERM: .permissionOrAccessUnknown
+        case ELOOP: .symbolicLink
+        default: .permissionOrAccessUnknown
+        }
     }
 }

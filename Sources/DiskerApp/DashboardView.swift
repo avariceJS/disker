@@ -145,6 +145,14 @@ final class DashboardModel {
         }
     }
 
+    private func invalidateAssociatedPathProbe(for bundlePath: String, clearing paths: [String]) {
+        applicationAssociatedPathCheckIDs.removeValue(forKey: bundlePath)
+        checkingApplicationAssociatedPaths.remove(bundlePath)
+        for path in paths {
+            applicationAssociatedPathStatuses.removeValue(forKey: path)
+        }
+    }
+
     func applicationBundleIdentifier(for bundlePath: String) -> String? {
         history.observations.reversed().lazy
             .flatMap(\.folders)
@@ -337,6 +345,8 @@ final class DashboardModel {
                 panel.urls.map(\.path), with: bundlePath,
                 bundleIdentifier: applicationBundleIdentifier(for: bundlePath)
             )
+            invalidateAssociatedPathProbe(for: bundlePath, clearing: history.applicationAssociations
+                .first(where: { $0.bundlePath == bundlePath })?.relatedFolderPaths ?? [])
             rememberFolders(panel.urls)
             scan(panel.urls)
         } catch {
@@ -347,7 +357,7 @@ final class DashboardModel {
     func removeRelatedFolder(_ path: String, from bundlePath: String) {
         do {
             history = try ObservationStore.removeApplicationFolderAssociation(path, from: bundlePath)
-            applicationAssociatedPathStatuses.removeValue(forKey: path)
+            invalidateAssociatedPathProbe(for: bundlePath, clearing: [path])
         } catch {
             errorMessage = "The saved folder association could not be removed: \(error.localizedDescription)"
         }
@@ -356,8 +366,17 @@ final class DashboardModel {
     private func rememberFolders(_ urls: [URL]) {
         do {
             rememberedScopes = try SelectedScopeBookmarkStore.remember(urls)
-            for url in urls {
-                applicationAssociatedPathStatuses.removeValue(forKey: url.standardizedFileURL.path)
+            let updatedPaths = Set(urls.map { $0.standardizedFileURL.path })
+            let affectedBundles = history.applicationAssociations.filter { association in
+                association.relatedFolderPaths.contains(where: {
+                    updatedPaths.contains(URL(fileURLWithPath: $0).standardizedFileURL.path)
+                })
+            }
+            for association in affectedBundles {
+                invalidateAssociatedPathProbe(
+                    for: association.bundlePath,
+                    clearing: Array(updatedPaths)
+                )
             }
         } catch {
             errorMessage = "The scan can continue, but Disker could not save a reusable read-only location: \(error.localizedDescription)"
