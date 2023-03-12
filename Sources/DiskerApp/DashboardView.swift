@@ -6,6 +6,44 @@ import Observation
 import SwiftUI
 import UniformTypeIdentifiers
 
+private func folderMeasurementSummary(_ observation: FolderObservation) -> String {
+    let logical = ByteCountFormatter.string(fromByteCount: observation.logicalBytes, countStyle: .file)
+    let allocated = ByteCountFormatter.string(fromByteCount: observation.allocatedBytes, countStyle: .file)
+    guard observation.complete else {
+        guard observation.logicalBytes > 0 || observation.allocatedBytes > 0 else {
+            return "No bytes measured · total unknown"
+        }
+        return "Measured so far · logical \(logical) · allocated estimate ~\(allocated) · total unknown"
+    }
+    return "Logical \(logical) · allocated estimate ~\(allocated)"
+}
+
+private func directoryMeasurementSummary(_ usage: DirectoryUsage) -> String {
+    let logical = ByteCountFormatter.string(fromByteCount: usage.logicalBytes, countStyle: .file)
+    let allocated = ByteCountFormatter.string(fromByteCount: usage.allocatedBytes, countStyle: .file)
+    guard usage.complete else {
+        guard usage.logicalBytes > 0 || usage.allocatedBytes > 0 else {
+            return "No bytes measured · total unknown"
+        }
+        return "Measured so far · logical \(logical) · allocated estimate ~\(allocated) · total unknown"
+    }
+    return "Logical \(logical) · allocated estimate ~\(allocated)"
+}
+
+private func directoryAllocatedValue(_ usage: DirectoryUsage) -> String {
+    let allocated = ByteCountFormatter.string(fromByteCount: usage.allocatedBytes, countStyle: .file)
+    guard !usage.complete else { return allocated }
+    guard usage.allocatedBytes > 0 else { return "Unknown total" }
+    return "~\(allocated) measured so far"
+}
+
+private func folderAllocatedValue(_ observation: FolderObservation) -> String {
+    let allocated = ByteCountFormatter.string(fromByteCount: observation.allocatedBytes, countStyle: .file)
+    guard !observation.complete else { return allocated }
+    guard observation.allocatedBytes > 0 else { return "Unknown total" }
+    return "~\(allocated) measured so far"
+}
+
 @MainActor
 @Observable
 final class DashboardModel {
@@ -1731,8 +1769,7 @@ struct DashboardView: View {
                                 .background(.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
                             }
                             HStack(spacing: 12) {
-                                Text("Logical \(format(bundle.logicalBytes))")
-                                Text("Allocated estimate \(format(bundle.allocatedBytes))")
+                                Text(folderMeasurementSummary(bundle))
                                 Text("\(bundle.fileCount) files")
                                 if let previous = model.previousCompleteObservation(for: bundle),
                                    let delta = ObservationComparison.allocatedByteDelta(current: bundle, previous: previous) {
@@ -1869,7 +1906,7 @@ struct DashboardView: View {
                                             }
                                         }
                                         if let observation = model.latestFolderObservation(at: scope.path) {
-                                            Text("Measured \(observation.finishedAt.formatted(date: .abbreviated, time: .shortened)) · Logical \(format(observation.logicalBytes)) · Allocated ~\(format(observation.allocatedBytes))")
+                                            Text("\(folderMeasurementSummary(observation)) · measured \(observation.finishedAt.formatted(date: .abbreviated, time: .shortened))")
                                                 .font(.caption2)
                                                 .foregroundStyle(.secondary)
                                                 .lineLimit(2)
@@ -1974,7 +2011,7 @@ struct DashboardView: View {
                                     }
                                     Spacer(minLength: 12)
                                     VStack(alignment: .trailing, spacing: 3) {
-                                        Text(ByteCountFormatter.string(fromByteCount: folder.allocatedBytes, countStyle: .file))
+                                        Text(folderAllocatedValue(folder))
                                         if let previous = ObservationComparison.previousCompleteFolder(for: folder, in: model.history),
                                            let delta = ObservationComparison.allocatedByteDelta(current: folder, previous: previous) {
                                             Text(changeDescription(delta))
@@ -2079,7 +2116,7 @@ struct DashboardView: View {
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2)
                                     .truncationMode(.middle)
-                                Text("Logical \(format(folder.logicalBytes)) · allocated estimate \(format(folder.allocatedBytes)) · \(folder.fileCount) files")
+                                Text("\(folderMeasurementSummary(folder)) · \(folder.fileCount) files")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                 if !folder.complete {
@@ -2606,8 +2643,7 @@ struct DashboardView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 if let observation = model.latestFolderObservation(at: path) {
                     HStack(spacing: 8) {
-                        Text("Logical \(format(observation.logicalBytes))")
-                        Text("Allocated estimate \(format(observation.allocatedBytes))")
+                        Text(folderMeasurementSummary(observation))
                         Text("Measured \(observation.finishedAt.formatted(date: .abbreviated, time: .shortened))")
                         if observation.complete {
                             Text("Complete")
@@ -3009,8 +3045,7 @@ struct DashboardView: View {
                                 .foregroundStyle(.blue)
                         }
                         HStack(spacing: 8) {
-                            Text("Logical \(format(folder.logicalBytes))")
-                            Text("Allocated estimate \(format(folder.allocatedBytes))")
+                            Text(folderMeasurementSummary(folder))
                             if !folder.complete {
                                 Text(coverageSummary(
                                     inaccessible: folder.inaccessibleCount,
@@ -3043,7 +3078,7 @@ struct DashboardView: View {
                         }
                     }
                     Spacer(minLength: 8)
-                    Text(format(folder.allocatedBytes))
+                    Text(folderAllocatedValue(folder))
                         .font(.system(.body, design: .rounded).weight(.semibold))
                     Button {
                         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: folder.path)])
@@ -3071,8 +3106,7 @@ struct DashboardView: View {
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         HStack(spacing: 9) {
-                            Text("Logical \(format(gitUsage.logicalBytes))")
-                            Text("Allocated ~\(format(gitUsage.allocatedBytes))")
+                            Text(directoryMeasurementSummary(gitUsage))
                                 .help("Allocated-byte estimate from filesystem metadata")
                             Text("\(gitUsage.fileCount) files")
                             if !gitUsage.complete {
@@ -3137,9 +3171,7 @@ struct DashboardView: View {
                                             .foregroundStyle(.blue)
                                     }
                                     HStack(spacing: 8) {
-                                        Text("Logical \(format(directory.logicalBytes))")
-                                Text("Allocated ~\(format(directory.allocatedBytes))")
-                                    .help("Allocated-byte estimate from filesystem metadata")
+                                        Text(directoryMeasurementSummary(directory))
                                         Text("\(directory.fileCount) files")
                                         if directory.gitMetadataEntryDetected {
                                             Text("Git metadata marker detected")
@@ -3170,7 +3202,7 @@ struct DashboardView: View {
                                     .foregroundStyle(.secondary)
                                 }
                                 Spacer(minLength: 4)
-                                Text(format(directory.allocatedBytes))
+                                Text(directoryAllocatedValue(directory))
                                     .font(.system(.caption, design: .rounded).weight(.semibold))
                                 Button("Scan this folder…") {
                                     model.chooseFolders(startingAt: directoryURL)
@@ -3245,9 +3277,7 @@ struct DashboardView: View {
                                 .foregroundStyle(.blue)
                         }
                         HStack(spacing: 8) {
-                            Text("Logical \(format(directory.logicalBytes))")
-                            Text("Allocated ~\(format(directory.allocatedBytes))")
-                                .help("Allocated-byte estimate from filesystem metadata")
+                            Text(directoryMeasurementSummary(directory))
                             Text("\(directory.fileCount) files")
                             if !directory.complete {
                                 Text(coverageSummary(
@@ -4211,8 +4241,7 @@ private struct ApplicationFootprintReviewSheet: View {
                 Text("Last measured \(observation.finishedAt.formatted(date: .abbreviated, time: .shortened))")
                     .font(.caption.weight(.medium))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Logical size: \(format(observation.logicalBytes))")
-                    Text("Allocated estimate: ~\(format(observation.allocatedBytes))")
+                    Text(folderMeasurementSummary(observation))
                     Text("\(observation.fileCount) files")
                 }
                 .font(.caption.monospacedDigit())
