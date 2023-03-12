@@ -35,6 +35,7 @@ private struct DiskerCoreChecks {
             ("evidence-scoped application container attribution", testApplicationPathAttribution),
             ("read-only app footprint review", testApplicationFootprintReview),
             ("measured selected-scope subtotal safety", testApplicationFootprintSubtotal),
+            ("read-only application-removal review planner", testApplicationRemovalReviewPlanner),
             ("explicit app-folder associations", testApplicationFolderAssociations),
             ("bounded read-only selected-scope bookmarks", testSelectedScopeBookmarks),
             ("typed no-follow selected-scope path probe", testSelectedScopePathProbeStatuses),
@@ -820,6 +821,182 @@ private struct DiskerCoreChecks {
                        $0.reason == .subtotalOverflow
                    }),
                    "subtotal arithmetic overflow must suppress the total rather than saturate it")
+    }
+
+    private static func testApplicationRemovalReviewPlanner() throws {
+        let reviewedAt = Date(timeIntervalSince1970: 2_000_000)
+        let home = "/Users/synthetic"
+        let bundlePath = "/Applications/Synthetic.app"
+        let bundleIdentifier = "com.example.Synthetic"
+        let identity = ApplicationBundleIdentity(bundleIdentifier: bundleIdentifier)
+
+        func observation(
+            _ path: String, bytes: Int64 = 100, complete: Bool = true,
+            inaccessible: Int = 0, symlinks: Int = 0, special: Int = 0, volumes: Int = 0,
+            changed: Int = 0, overflow: Bool = false, finishedAt: Date = Date(timeIntervalSince1970: 1_999_900)
+        ) -> FolderObservation {
+            FolderObservation(
+                path: path, displayName: URL(fileURLWithPath: path).lastPathComponent,
+                logicalBytes: bytes, allocatedBytes: bytes + 20, fileCount: 1,
+                inaccessibleCount: inaccessible, finishedAt: finishedAt, complete: complete,
+                excludedSymlinkCount: symlinks, excludedSpecialFileCount: special,
+                excludedVolumeBoundaryCount: volumes, changedDuringScanCount: changed,
+                byteAccountingOverflowed: overflow
+            )
+        }
+
+        func review(
+            paths: [String], observations: [FolderObservation], cancelledPaths: Set<String> = [],
+            otherLinks: [String] = []
+        ) -> ApplicationFootprintReview {
+            let bundle = observation(bundlePath).includingApplicationBundleIdentity(
+                identity, selectedAsApplicationBundle: true
+            )
+            let scans = observations + [bundle]
+            let cancelledFolders = scans.filter { cancelledPaths.contains($0.path) }
+            let completeFolders = scans.filter { !cancelledPaths.contains($0.path) }
+            var scanHistory: [ScanObservation] = []
+            if !completeFolders.isEmpty {
+                scanHistory.append(ScanObservation(
+                    startedAt: reviewedAt.addingTimeInterval(-100), folders: completeFolders, cancelled: false
+                ))
+            }
+            if !cancelledFolders.isEmpty {
+                scanHistory.append(ScanObservation(
+                    startedAt: reviewedAt.addingTimeInterval(-50), folders: cancelledFolders, cancelled: true
+                ))
+            }
+            var associations = [ApplicationFolderAssociation(
+                bundlePath: bundlePath, relatedFolderPaths: paths
+            )]
+            if !otherLinks.isEmpty {
+                associations.append(ApplicationFolderAssociation(
+                    bundlePath: "/Applications/Other.app", relatedFolderPaths: otherLinks
+                ))
+            }
+            return ApplicationFootprintReview.make(
+                for: bundle,
+                in: LocalHistory(observations: scanHistory, applicationAssociations: associations),
+                homeDirectoryPath: home
+            )
+        }
+
+        let sharedPath = "\(home)/Library/Group Containers/shared.example/data.db"
+        let sharedReview = review(
+            paths: [sharedPath], observations: [observation(sharedPath)], otherLinks: [sharedPath]
+        )
+        let sharedPlan = ApplicationRemovalReviewPlanner.makePlan(from: sharedReview, asOf: reviewedAt)
+        let sharedRow = sharedPlan.rows.first { $0.path == sharedPath }
+        try expect(sharedRow?.disposition == .excludedFromCleanup
+                   && sharedRow?.reasons.contains(.sharedOrMultiOwner) == true
+                   && sharedRow?.otherAssociatedBundlePaths == ["/Applications/Other.app"]
+                   && sharedRow?.attribution?.evidence == .userSelectedOnly
+                   && sharedRow?.attribution?.title == "User-selected association"
+                   && sharedRow?.attribution?.explanation.contains("no verified ownership") == true,
+                   "a path linked to another app must be excluded from cleanup candidacy")
+
+        let parent = "\(home)/Library/Application Support/\(bundleIdentifier)"
+        let child = parent + "/Database"
+        let overlapReview = review(
+            paths: [parent, child], observations: [observation(parent), observation(child)]
+        )
+        let overlapPlan = ApplicationRemovalReviewPlanner.makePlan(from: overlapReview, asOf: reviewedAt)
+        let parentRow = overlapPlan.rows.first { $0.path == parent }
+        let childRow = overlapPlan.rows.first { $0.path == child }
+        try expect(overlapPlan.rows.filter { $0.path == parent || $0.path == child }.allSatisfy {
+            $0.disposition == .excludedFromCleanup && $0.reasons.contains(.overlappingScope)
+        } && parentRow?.overlappingPaths == [child] && childRow?.overlappingPaths == [parent],
+                   "both nested scopes must retain exact overlap paths and be excluded from independent cleanup review")
+
+        let missing = "\(home)/Library/Application Support/missing"
+        let stale = "\(home)/Library/Application Support/stale"
+        let partial = "\(home)/Library/Application Support/partial"
+        let cancelled = "\(home)/Library/Application Support/cancelled"
+        let overflow = "\(home)/Library/Application Support/overflow"
+        let invalid = "\(home)/Library/Application Support/invalid"
+        let unreadable = "\(home)/Library/Application Support/unreadable"
+        let linked = "\(home)/Library/Application Support/linked"
+        let incompleteReview = review(
+            paths: [missing, stale, partial, cancelled, overflow, invalid, unreadable, linked],
+            observations: [
+                observation(stale, finishedAt: reviewedAt.addingTimeInterval(-ApplicationRemovalReviewPlan.defaultMaximumMeasurementAge - 1)),
+                observation(partial, complete: false, inaccessible: 1),
+                observation(cancelled),
+                observation(overflow, overflow: true),
+                observation(invalid, bytes: -1),
+                observation(unreadable, complete: false, inaccessible: 1),
+                observation(linked, complete: false, symlinks: 1),
+            ],
+            cancelledPaths: [cancelled]
+        )
+        let incompletePlan = ApplicationRemovalReviewPlanner.makePlan(from: incompleteReview, asOf: reviewedAt)
+        let incompleteRows = Dictionary(uniqueKeysWithValues: incompletePlan.rows.map { ($0.path, $0) })
+        let expectedReasons: [(String, ApplicationRemovalReviewPlan.Reason)] = [
+            (missing, .missingObservation), (stale, .staleObservation),
+            (partial, .incompleteObservation), (cancelled, .cancelledObservation),
+            (overflow, .byteAccountingOverflow), (invalid, .invalidByteCount),
+            (unreadable, .inaccessibleCoverage), (linked, .symlinkCoverage),
+        ]
+        try expect(expectedReasons.allSatisfy { path, reason in
+            incompleteRows[path]?.disposition == .excludedFromCleanup
+                && incompleteRows[path]?.reasons.contains(reason) == true
+        }, "missing, stale, partial, cancelled, overflowed, invalid, inaccessible, and symlink coverage must each be explained and excluded")
+        try expect(incompleteRows[partial]?.measurement?.inaccessibleCount == 1
+                   && incompleteRows[overflow]?.measurement?.byteAccountingOverflowed == true,
+                   "excluded rows must retain current measurement metadata for an honest review")
+
+        let cachePath = "\(home)/Library/Caches/\(bundleIdentifier)"
+        let cacheReview = review(paths: [cachePath], observations: [observation(cachePath)])
+        let cachePlan = ApplicationRemovalReviewPlanner.makePlan(from: cacheReview, asOf: reviewedAt)
+        let cacheRow = cachePlan.rows.first { $0.path == cachePath }
+        try expect(cacheReview.entries.first(where: { $0.path == cachePath })?.cleanupReviewClass == .possibleCache
+                   && cacheRow?.disposition == .inspectOnly
+                   && cacheRow?.reasons.contains(.cacheRegenerationUnverified) == true
+                   && cacheRow?.attribution?.evidence == .probableNamedSupportPathMatch
+                   && cacheRow?.attribution?.title.contains("name match") == true
+                   && cacheRow?.attribution?.explanation.contains("name match only") == true,
+                   "a weak name-only cache match must remain inspect-only when regeneration is unverified")
+
+        let userDataPath = "\(home)/Library/Application Support/Unrelated Project/important.db"
+        let userDataReview = review(paths: [userDataPath], observations: [observation(userDataPath)])
+        let userDataPlan = ApplicationRemovalReviewPlanner.makePlan(from: userDataReview, asOf: reviewedAt)
+        let userDataRow = userDataPlan.rows.first { $0.path == userDataPath }
+        try expect(userDataRow?.disposition == .inspectOnly
+                   && userDataRow?.reasons.contains(.unknownOrPotentiallyUniqueData) == true,
+                   "a fresh unknown path must remain inspect-only and preserve possible unique user data")
+
+        let selectedBundle = observation(bundlePath)
+            .includingApplicationBundleIdentity(identity, selectedAsApplicationBundle: true)
+        let bundleReview = review(paths: [], observations: [selectedBundle])
+        let bundlePlan = ApplicationRemovalReviewPlanner.makePlan(from: bundleReview, asOf: reviewedAt)
+        let bundleRow = bundlePlan.rows.first { $0.path == bundlePath }
+        try expect(bundleRow?.disposition == .ownerReviewCandidate
+                   && bundleRow?.reasons.contains(.bundleRecoveryUnverified) == true
+                   && bundleRow?.measurement?.logicalBytes == 100
+                   && bundleRow?.measurement?.allocatedBytesEstimate == 120,
+                   "a measured selected app bundle may only be an owner-review candidate contingent on verified replacement")
+        try expect(!bundlePlan.rows.contains(where: { $0.disposition == .excludedFromCleanup && $0.path == bundlePath })
+                   && bundlePlan.rows.allSatisfy({ !$0.reasons.isEmpty }),
+                   "every row must carry an explanation and the review must not imply an executable cleanup target")
+
+        let calculatorPath = "/System/Applications/Calculator.app"
+        let calculator = observation(calculatorPath).includingApplicationBundleIdentity(
+            identity, selectedAsApplicationBundle: true
+        )
+        let calculatorReview = ApplicationFootprintReview.make(
+            for: calculator,
+            in: LocalHistory(observations: [ScanObservation(
+                startedAt: reviewedAt.addingTimeInterval(-100), folders: [calculator], cancelled: false
+            )]),
+            homeDirectoryPath: home
+        )
+        let calculatorPlan = ApplicationRemovalReviewPlanner.makePlan(
+            from: calculatorReview, asOf: reviewedAt
+        )
+        let calculatorRow = calculatorPlan.rows.first { $0.path == calculatorPath }
+        try expect(calculatorRow?.disposition == .excludedFromCleanup
+                   && calculatorRow?.reasons.contains(.protectedSystemPath) == true,
+                   "a complete selected Calculator bundle under /System must never become an app-removal candidate")
     }
 
     private static func testApplicationBundleMetadata() throws {
@@ -3636,7 +3813,9 @@ private struct DiskerCoreChecks {
             capacityObservations: [capacityBefore, capacityAfter]
         )
 
-        let interval = ObservationComparison.folderGrowthDuringLatestCapacityLoss(in: history)
+        let interval = ObservationComparison.folderGrowthDuringMostRecentCapacityLoss(
+            in: history, minimumLossBytes: 1
+        )
         try expect(interval?.availableBytesLost == 1_000,
                    "the joined interval should retain the system-reported available-space loss")
         try expect(interval?.folderGrowth.map(\.folder.path) == [
@@ -3660,21 +3839,73 @@ private struct DiskerCoreChecks {
                 observedAt: end, totalBytes: 10_000, availableBytes: 8_100, volumeUUID: "internal"
             )]
         )
-        try expect(ObservationComparison.folderGrowthDuringLatestCapacityLoss(in: noLoss) == nil,
+        try expect(ObservationComparison.folderGrowthDuringMostRecentCapacityLoss(
+            in: noLoss, minimumLossBytes: 1
+        ) == nil,
                    "folder growth must not be framed as accompanying a capacity loss when available space did not decrease")
 
         let incompatibleCapacityBasis = CapacityObservation(
             observedAt: end, totalBytes: 10_000, availableBytes: 7_000,
             availabilityBasis: .standardVolume, volumeUUID: "internal"
         )
-        try expect(ObservationComparison.folderGrowthDuringLatestCapacityLoss(in: LocalHistory(
+        try expect(ObservationComparison.folderGrowthDuringMostRecentCapacityLoss(in: LocalHistory(
             observations: history.observations,
             capacityObservations: [capacityBefore, incompatibleCapacityBasis]
-        )) == nil, "a change in volume or availability basis must break the capacity interval")
+        ), minimumLossBytes: 1) == nil, "a change in volume or availability basis must break the capacity interval")
 
         let noAlignedGrowth = LocalHistory(capacityObservations: [capacityBefore, capacityAfter])
-        try expect(ObservationComparison.folderGrowthDuringLatestCapacityLoss(in: noAlignedGrowth)?.folderGrowth.isEmpty == true,
+        try expect(ObservationComparison.folderGrowthDuringMostRecentCapacityLoss(
+            in: noAlignedGrowth, minimumLossBytes: 1
+        )?.folderGrowth.isEmpty == true,
                    "a real capacity loss with no aligned selected scans must remain explicitly unassigned")
+
+        let smallLossAfterEvent = CapacityObservation(
+            observedAt: end.addingTimeInterval(60), totalBytes: 10_000,
+            availableBytes: 6_950, volumeUUID: "internal"
+        )
+        let recoveredSmallLoss = CapacityObservation(
+            observedAt: end.addingTimeInterval(120), totalBytes: 10_000,
+            availableBytes: 6_975, volumeUUID: "internal"
+        )
+        let persistentLoss = ObservationComparison.folderGrowthDuringMostRecentCapacityLoss(
+            in: LocalHistory(capacityObservations: [capacityBefore, capacityAfter, smallLossAfterEvent, recoveredSmallLoss]),
+            minimumLossBytes: 900
+        )
+        try expect(persistentLoss?.previousCapacity == capacityBefore
+                   && persistentLoss?.currentCapacity == capacityAfter
+                   && persistentLoss?.availableBytesLost == 1_000,
+                   "small later losses or rebounds must not erase the latest unrecovered material capacity drop")
+
+        let restoredCapacity = CapacityObservation(
+            observedAt: end.addingTimeInterval(180), totalBytes: 10_000,
+            availableBytes: capacityBefore.availableBytes, volumeUUID: "internal"
+        )
+        try expect(ObservationComparison.folderGrowthDuringMostRecentCapacityLoss(in: LocalHistory(
+            capacityObservations: [capacityBefore, capacityAfter, smallLossAfterEvent, recoveredSmallLoss, restoredCapacity]
+        ), minimumLossBytes: 900) == nil,
+                   "a material capacity loss should stop being current context after available space returns to its pre-loss level")
+
+        let largeCapacityBefore = CapacityObservation(
+            observedAt: start, totalBytes: 400 * 1_048_576,
+            availableBytes: 300 * 1_048_576, volumeUUID: "internal"
+        )
+        let subthresholdDrop = CapacityObservation(
+            observedAt: end, totalBytes: 400 * 1_048_576,
+            availableBytes: 200 * 1_048_576 + 1, volumeUUID: "internal"
+        )
+        try expect(ObservationComparison.folderGrowthDuringMostRecentCapacityLoss(in: LocalHistory(
+            capacityObservations: [largeCapacityBefore, subthresholdDrop]
+        )) == nil,
+                   "default capacity context should ignore losses smaller than 100 MiB")
+
+        let thresholdDrop = CapacityObservation(
+            observedAt: end, totalBytes: 400 * 1_048_576,
+            availableBytes: 200 * 1_048_576, volumeUUID: "internal"
+        )
+        try expect(ObservationComparison.folderGrowthDuringMostRecentCapacityLoss(in: LocalHistory(
+            capacityObservations: [largeCapacityBefore, thresholdDrop]
+        ))?.availableBytesLost == UInt64(ObservationComparison.minimumReportedCapacityLossBytes),
+                   "default capacity context should include a loss at exactly 100 MiB")
     }
 
     private static func testDirectoryGrowthComparison() throws {

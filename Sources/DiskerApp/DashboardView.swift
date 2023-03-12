@@ -1082,6 +1082,26 @@ struct DashboardView: View {
                     .tint(.blue)
                     .accessibilityLabel("Available capacity")
                     .accessibilityValue("\(format(capacity.availableBytes)) of \(format(capacity.totalBytes))")
+                if let interval = ObservationComparison.folderGrowthDuringMostRecentCapacityLoss(in: model.history),
+                   interval.folderGrowth.isEmpty {
+                    HStack(alignment: .center, spacing: 10) {
+                        Label("Source not identified", systemImage: "questionmark.folder")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.orange)
+                        Text("No selected-folder scans match this drop; capacity alone cannot name the files or their size.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        Button("Choose folders") { model.chooseFolders() }
+                            .buttonStyle(.link)
+                            .disabled(model.isScanning)
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: 9))
+                    .accessibilityElement(children: .contain)
+                }
                 if capacity.isLowOnAvailableCapacity {
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -1152,7 +1172,7 @@ struct DashboardView: View {
                     .font(.caption)
                     .foregroundStyle(delta >= 0 ? .green : .orange)
                     .accessibilityElement(children: .combine)
-                    if let interval = ObservationComparison.folderGrowthDuringLatestCapacityLoss(
+                    if let interval = ObservationComparison.folderGrowthDuringMostRecentCapacityLoss(
                         in: model.history
                     ) {
                         capacityIntervalGrowthCard(interval)
@@ -1204,10 +1224,27 @@ struct DashboardView: View {
             Text("Capacity decreased by \(format(interval.availableBytesLost)) from \(interval.previousCapacity.observedAt.formatted(date: .abbreviated, time: .shortened)) to \(interval.currentCapacity.observedAt.formatted(date: .abbreviated, time: .shortened)).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Text("This is the latest drop over \(format(ObservationComparison.minimumReportedCapacityLossBytes)) that later readings have not fully recovered.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
             if interval.folderGrowth.isEmpty {
-                Text("No complete same-path folder comparison overlaps this interval or its 60-second sampling boundary.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("No selected folder has complete before-and-after scans aligned with this capacity drop. The graph alone cannot identify which files changed or how large they were.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Choose exact project folders to measure them now. A later complete scan can show growth; Disker cannot reconstruct a baseline from before the first scan.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button {
+                        model.chooseFolders()
+                    } label: {
+                        Label("Choose folders to measure", systemImage: "folder.badge.plus")
+                    }
+                    .buttonStyle(.link)
+                    .disabled(model.isScanning)
+                }
             } else {
                 ForEach(interval.folderGrowth.prefix(3)) { signal in
                     HStack(alignment: .top, spacing: 10) {
@@ -4022,6 +4059,10 @@ private struct ApplicationFootprintReviewSheet: View {
     let bundleName: String
     let review: ApplicationFootprintReview
 
+    private var removalReviewPlan: ApplicationRemovalReviewPlan {
+        ApplicationRemovalReviewPlanner.makePlan(from: review)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -4124,6 +4165,7 @@ private struct ApplicationFootprintReviewSheet: View {
 
     @ViewBuilder
     private func entryCard(_ entry: ApplicationFootprintReview.Entry) -> some View {
+        let planRow = removalReviewPlan.rows.first { $0.path == entry.path }
         VStack(alignment: .leading, spacing: 9) {
             HStack {
                 Label(
@@ -4144,6 +4186,18 @@ private struct ApplicationFootprintReviewSheet: View {
                 .font(.caption.monospaced())
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if let planRow {
+                Label(planRow.disposition.title, systemImage: removalDispositionSymbol(planRow.disposition))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(removalDispositionColor(planRow.disposition))
+                ForEach(planRow.reasons, id: \.self) { reason in
+                    Text(reason.explanation)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
 
             Label(entry.cleanupReviewClass.title, systemImage: cleanupReviewSymbol(for: entry.cleanupReviewClass))
                 .font(.caption.weight(.semibold))
@@ -4220,6 +4274,22 @@ private struct ApplicationFootprintReviewSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.background, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
+    }
+
+    private func removalDispositionSymbol(_ disposition: ApplicationRemovalReviewPlan.Disposition) -> String {
+        switch disposition {
+        case .excludedFromCleanup: "hand.raised.fill"
+        case .inspectOnly: "eye"
+        case .ownerReviewCandidate: "exclamationmark.shield"
+        }
+    }
+
+    private func removalDispositionColor(_ disposition: ApplicationRemovalReviewPlan.Disposition) -> Color {
+        switch disposition {
+        case .excludedFromCleanup: .orange
+        case .inspectOnly: .secondary
+        case .ownerReviewCandidate: .orange
+        }
     }
 
     private func cleanupReviewSymbol(for classification: ApplicationFootprintReview.CleanupReviewClass) -> String {
