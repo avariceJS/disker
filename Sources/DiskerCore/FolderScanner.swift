@@ -99,6 +99,14 @@ public enum FolderScanner {
         case unavailable
     }
 
+    private enum SelectedRootOpenResult {
+        case openedDirectory(Int32, stat)
+        case metadata(stat)
+        case symbolicLink
+        case changed
+        case unavailable
+    }
+
     private struct DirectoryMetrics {
         var logicalBytes: Int64 = 0
         var allocatedBytes: Int64 = 0
@@ -156,20 +164,29 @@ public enum FolderScanner {
             defer {
                 if accessGranted { root.stopAccessingSecurityScopedResource() }
             }
-            var rootMetadata = stat()
-            guard root.path.withCString({ lstat($0, &rootMetadata) }) == 0 else {
+            let rootMetadata: stat
+            let directoryRootDescriptor: Int32?
+            let rootType: UInt32
+            switch openSelectedRootWithoutFollowingLinks(root.path) {
+            case .openedDirectory(let descriptor, let metadata):
+                directoryRootDescriptor = descriptor
+                rootMetadata = metadata
+                rootType = UInt32(S_IFDIR)
+            case .metadata(let metadata):
+                directoryRootDescriptor = nil
+                rootMetadata = metadata
+                rootType = UInt32(metadata.st_mode & S_IFMT)
+            case .symbolicLink:
+                results.append(emptyObservation(root: root, excludedSymlinkCount: 1))
+                continue
+            case .changed:
+                results.append(emptyObservation(root: root, changedDuringScanCount: 1))
+                continue
+            case .unavailable:
                 results.append(emptyObservation(root: root, inaccessibleCount: 1))
                 continue
             }
-
-            let rootType = rootMetadata.st_mode & S_IFMT
-            if rootType == S_IFLNK {
-                // The selected link is explicitly excluded, not reported as an
-                // inaccessible metadata lookup. Its target is never opened.
-                results.append(emptyObservation(root: root, excludedSymlinkCount: 1))
-                continue
-            }
-            let rootVolumeDeviceID = UInt64(truncatingIfNeeded: rootMetadata.st_dev)
+            var rootVolumeDeviceID = UInt64(truncatingIfNeeded: rootMetadata.st_dev)
 
             var linkedFilesByIdentity: [FileIdentity: LinkedFileRecord] = [:]
             // Keep the scanner's prior identity-only dedup set. Path-bearing
@@ -183,7 +200,7 @@ public enum FolderScanner {
             var visitedEntryCountForProgress = 0
             var scanComplete = true
             var accountingOverflow = false
-            let selectedFileMetadata = rootType == S_IFREG
+            let selectedFileMetadata = rootType == UInt32(S_IFREG)
                 ? ScannedFileMetadata(name: root.lastPathComponent, metadata: rootMetadata)
                 : nil
             var rootLogicalBytes: Int64 = 0
@@ -193,8 +210,8 @@ public enum FolderScanner {
             var extensionMetrics: [String: FileExtensionMetrics] = [:]
             var largestUniqueFiles: [FileUsageSummary] = []
 
-            if rootType != S_IFDIR {
-                guard rootType == S_IFREG else {
+            if rootType != UInt32(S_IFDIR) {
+                guard rootType == UInt32(S_IFREG) else {
                     results.append(emptyObservation(root: root, volumeDeviceID: rootVolumeDeviceID, excludedSpecialFileCount: 1))
                     continue
                 }
@@ -220,24 +237,10 @@ public enum FolderScanner {
                     )
                 }
             } else {
-                let rootFD = root.path.withCString {
-                    open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-                }
-                guard rootFD >= 0 else {
-                    results.append(emptyObservation(root: root, volumeDeviceID: rootVolumeDeviceID, inaccessibleCount: 1))
-                    continue
-                }
+                guard let rootFD = directoryRootDescriptor else { continue }
                 defer { close(rootFD) }
 
-                var openedRootMetadata = stat()
-                guard fstat(rootFD, &openedRootMetadata) == 0 else {
-                    results.append(emptyObservation(root: root, volumeDeviceID: rootVolumeDeviceID, inaccessibleCount: 1))
-                    continue
-                }
-                guard sameIdentity(rootMetadata, openedRootMetadata) else {
-                    results.append(emptyObservation(root: root, volumeDeviceID: rootVolumeDeviceID, changedDuringScanCount: 1))
-                    continue
-                }
+                rootVolumeDeviceID = UInt64(truncatingIfNeeded: rootMetadata.st_dev)
 
                 var pending = [PendingDirectory(
                     components: [], relativePath: "", path: root.path,
@@ -610,21 +613,30 @@ public enum FolderScanner {
             )
 
             if rootType == S_IFDIR {
-                var finalRootMetadata = stat()
-                let finalRootResult = root.path.withCString { lstat($0, &finalRootMetadata) }
-                if finalRootResult == 0 {
+                switch openSelectedRootWithoutFollowingLinks(root.path) {
+                case .openedDirectory(let finalRootFD, let finalRootMetadata):
+                    close(finalRootFD)
                     if !sameIdentity(rootMetadata, finalRootMetadata) {
                         scanComplete = false
                         var rootMetrics = metrics["", default: DirectoryMetrics()]
                         rootMetrics.changedDuringScanCount += 1
                         metrics[""] = rootMetrics
                     }
-                } else if errno == ENOENT || errno == ENOTDIR || errno == ELOOP {
+                case .metadata:
                     scanComplete = false
                     var rootMetrics = metrics["", default: DirectoryMetrics()]
                     rootMetrics.changedDuringScanCount += 1
                     metrics[""] = rootMetrics
-                } else {
+                case .symbolicLink:
+                    scanComplete = false
+                    excludedSymlinkCount += 1
+                    addCoverageEvent("", symlink: true, to: &metrics)
+                case .changed:
+                    scanComplete = false
+                    var rootMetrics = metrics["", default: DirectoryMetrics()]
+                    rootMetrics.changedDuringScanCount += 1
+                    metrics[""] = rootMetrics
+                case .unavailable:
                     scanComplete = false
                     inaccessibleCount += 1
                     var rootMetrics = metrics["", default: DirectoryMetrics()]
@@ -683,18 +695,25 @@ public enum FolderScanner {
         // with changes to an earlier selected file.
         for selected in selectedFileRoots {
             let accessGranted = selected.path.startAccessingSecurityScopedResource()
-            var current = stat()
-            let result = selected.path.path.withCString { lstat($0, &current) }
-            let statError = result == 0 ? 0 : errno
+            let current: stat?
+            switch openSelectedRootWithoutFollowingLinks(selected.path.path) {
+            case .metadata(let metadata):
+                current = metadata
+            case .openedDirectory(let descriptor, let metadata):
+                close(descriptor)
+                current = metadata
+            case .symbolicLink, .changed:
+                current = nil
+            case .unavailable:
+                current = nil
+            }
             if accessGranted { selected.path.stopAccessingSecurityScopedResource() }
 
-            if result != 0 {
-                if statError == ENOENT || statError == ENOTDIR || statError == ELOOP {
-                    results[selected.index] = markingChangedDuringScan(results[selected.index])
-                } else {
-                    results[selected.index] = markingInaccessible(results[selected.index])
-                }
-            } else if selected.metadata.differs(from: current) {
+            guard let current else {
+                results[selected.index] = markingChangedDuringScan(results[selected.index])
+                continue
+            }
+            if selected.metadata.differs(from: current) {
                 results[selected.index] = markingChangedDuringScan(results[selected.index])
             }
         }
@@ -965,6 +984,122 @@ public enum FolderScanner {
 
     private static func sameIdentity(_ lhs: stat, _ rhs: stat) -> Bool {
         identity(of: lhs) == identity(of: rhs)
+    }
+
+    /// Resolves an exact selected root by walking every absolute path component
+    /// with no-follow metadata and descriptor-relative opens. Only directories
+    /// are opened; a selected regular file is inspected with `fstatat` metadata.
+    private static func openSelectedRootWithoutFollowingLinks(
+        _ path: String
+    ) -> SelectedRootOpenResult {
+        let rawComponents = path.split(separator: "/", omittingEmptySubsequences: true)
+        guard path.hasPrefix("/"),
+              !rawComponents.contains("."), !rawComponents.contains("..") else {
+            return .unavailable
+        }
+
+        var descriptor = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { return .unavailable }
+        let components = Array(URL(fileURLWithPath: path).standardizedFileURL.pathComponents.dropFirst())
+        guard !components.isEmpty else {
+            var metadata = stat()
+            guard fstat(descriptor, &metadata) == 0 else {
+                close(descriptor)
+                return .unavailable
+            }
+            return .openedDirectory(descriptor, metadata)
+        }
+
+        for component in components.dropLast() {
+            guard !component.isEmpty, component != ".", component != ".." else {
+                close(descriptor)
+                return .unavailable
+            }
+            var enumerated = stat()
+            let lookup = component.withCString {
+                fstatat(descriptor, $0, &enumerated, AT_SYMLINK_NOFOLLOW)
+            }
+            guard lookup == 0 else {
+                let error = errno
+                close(descriptor)
+                if error == ENOTDIR { return .changed }
+                return .unavailable
+            }
+            guard enumerated.st_mode & S_IFMT == S_IFDIR else {
+                close(descriptor)
+                return enumerated.st_mode & S_IFMT == S_IFLNK ? .symbolicLink : .changed
+            }
+
+            let nextDescriptor = component.withCString {
+                openat(descriptor, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            }
+            guard nextDescriptor >= 0 else {
+                let error = errno
+                close(descriptor)
+                if error == ELOOP { return .symbolicLink }
+                if error == ENOENT || error == ENOTDIR { return .changed }
+                return .unavailable
+            }
+            var opened = stat()
+            guard fstat(nextDescriptor, &opened) == 0 else {
+                close(nextDescriptor)
+                close(descriptor)
+                return .unavailable
+            }
+            guard sameIdentity(enumerated, opened), opened.st_mode & S_IFMT == S_IFDIR else {
+                close(nextDescriptor)
+                close(descriptor)
+                return .changed
+            }
+            close(descriptor)
+            descriptor = nextDescriptor
+        }
+
+        guard let finalComponent = components.last else {
+            close(descriptor)
+            return .unavailable
+        }
+        var metadata = stat()
+        let lookup = finalComponent.withCString {
+            fstatat(descriptor, $0, &metadata, AT_SYMLINK_NOFOLLOW)
+        }
+        guard lookup == 0 else {
+            let error = errno
+            close(descriptor)
+            return error == ENOTDIR ? .changed : .unavailable
+        }
+        let type = metadata.st_mode & S_IFMT
+        if type == S_IFLNK {
+            close(descriptor)
+            return .symbolicLink
+        }
+        guard type == S_IFDIR else {
+            close(descriptor)
+            return .metadata(metadata)
+        }
+
+        let rootDescriptor = finalComponent.withCString {
+            openat(descriptor, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        }
+        guard rootDescriptor >= 0 else {
+            let error = errno
+            close(descriptor)
+            if error == ELOOP { return .symbolicLink }
+            if error == ENOENT || error == ENOTDIR { return .changed }
+            return .unavailable
+        }
+        var openedRoot = stat()
+        guard fstat(rootDescriptor, &openedRoot) == 0 else {
+            close(rootDescriptor)
+            close(descriptor)
+            return .unavailable
+        }
+        close(descriptor)
+        guard sameIdentity(metadata, openedRoot), openedRoot.st_mode & S_IFMT == S_IFDIR else {
+            close(rootDescriptor)
+            return .changed
+        }
+        return .openedDirectory(rootDescriptor, openedRoot)
     }
 
     private static func directoryMetadataChanged(_ before: stat, _ after: stat) -> Bool {

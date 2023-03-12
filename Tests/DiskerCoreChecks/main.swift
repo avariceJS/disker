@@ -69,6 +69,7 @@ private struct DiskerCoreChecks {
             ("Git metadata marker detection", testGitMetadataMarkerDetection),
             ("Git metadata footprint survives summary cap", testGitMetadataUsageSurvivesSummaryCap),
             ("selected symlink root is incomplete", testSelectedSymlinkRootIsIncomplete),
+            ("selected directory roots reject ancestor symlinks", testSelectedDirectoryRootAncestorSymlink),
             ("hard-link deduplication", testHardLinkDeduplication),
             ("hard-link mutation between directory revalidations", testHardLinkMutationBetweenDirectories),
             ("directory summary cap and stable order", testDirectorySummaryCap),
@@ -3054,13 +3055,49 @@ private struct DiskerCoreChecks {
         }
     }
 
+    private static func testSelectedDirectoryRootAncestorSymlink() throws {
+        try withTemporaryDirectory { base in
+            let outsideParent = base.appendingPathComponent("outside-parent", isDirectory: true)
+            let outsideChild = outsideParent.appendingPathComponent("child", isDirectory: true)
+            let alias = base.appendingPathComponent("selected-parent-link", isDirectory: true)
+            try FileManager.default.createDirectory(at: outsideChild, withIntermediateDirectories: true)
+            try Data(repeating: 0x6B, count: 2048).write(to: outsideChild.appendingPathComponent("payload.bin"))
+            try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: outsideParent)
+
+            let selectedThroughAlias = alias.appendingPathComponent("child", isDirectory: true)
+            let result = FolderScanner.scan(roots: [selectedThroughAlias])
+            guard let folder = result.folders.first(where: { $0.path == selectedThroughAlias.path }) else {
+                throw CheckFailure.assertion("the selected aliased root should retain an incomplete observation")
+            }
+            try expect(folder.logicalBytes == 0 && folder.allocatedBytes == 0 && folder.fileCount == 0,
+                       "a directory behind an ancestor symlink must not contribute outside file metadata")
+            try expect(!folder.complete && folder.excludedSymlinkCount == 1 && folder.inaccessibleCount == 0,
+                       "an ancestor symlink must be reported as excluded and leave selected-root coverage incomplete")
+            try expect(folder.volumeDeviceID == nil,
+                       "a rejected selected path must not retain volume attribution obtained by following its symlink ancestor")
+
+            let selectedFileThroughAlias = alias.appendingPathComponent("outside-file.bin")
+            let outsideFile = outsideParent.appendingPathComponent("outside-file.bin")
+            try Data(repeating: 0x5C, count: 1024).write(to: outsideFile)
+            let fileResult = FolderScanner.scan(roots: [selectedFileThroughAlias])
+            let file = fileResult.folders[0]
+            try expect(file.logicalBytes == 0 && file.allocatedBytes == 0 && file.fileCount == 0,
+                       "a regular file behind an ancestor symlink must not contribute outside file metadata")
+            try expect(!file.complete && file.excludedSymlinkCount == 1 && file.inaccessibleCount == 0,
+                       "a selected file behind an ancestor symlink must be reported as excluded")
+            try expect(file.volumeDeviceID == nil,
+                       "a rejected selected file must not retain volume attribution through its symlink ancestor")
+        }
+    }
+
     private static func testMissingRootCoverage() throws {
-        let path = FileManager.default.temporaryDirectory
-            .appendingPathComponent("DiskerMissing-\(UUID().uuidString)")
-        let result = FolderScanner.scan(roots: [path])
-        try expect(result.folders[0].logicalBytes == 0, "missing root has no measured bytes")
-        try expect(!result.folders[0].complete, "missing root must be marked incomplete")
-        try expect(result.folders[0].inaccessibleCount == 1, "missing root must count an access failure")
+        try withTemporaryDirectory { base in
+            let path = base.appendingPathComponent("missing-root", isDirectory: true)
+            let result = FolderScanner.scan(roots: [path])
+            try expect(result.folders[0].logicalBytes == 0, "missing root has no measured bytes")
+            try expect(!result.folders[0].complete, "missing root must be marked incomplete")
+            try expect(result.folders[0].inaccessibleCount == 1, "missing root must count an access failure")
+        }
     }
 
     private static func testPermissionDeniedSubtreeCoverage() throws {
