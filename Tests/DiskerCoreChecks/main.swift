@@ -49,6 +49,7 @@ private struct DiskerCoreChecks {
             ("system memory-pressure transition mapping", testMemoryPressureEventMapping),
             ("cautious sustained process growth signal", testPossibleProcessGrowth),
             ("metadata scan and symlink exclusion", testMetadataScanAndSymlinkExclusion),
+            ("bounded excluded symlink path summaries", testExcludedSymlinkPathSummaries),
             ("selected root overlap boundaries", testSelectedRootOverlap),
             ("nested volume boundaries are skipped and partial", testNestedVolumeBoundary),
             ("special filesystem entries remain partial and uncounted", testSpecialFileExclusion),
@@ -1890,12 +1891,42 @@ private struct DiskerCoreChecks {
             try expect(result.folders[0].logicalBytes == Int64(data.count + 1024), "nested files should count while symlink targets remain excluded")
             try expect(result.folders[0].fileCount == 2, "both regular files should be counted once")
             try expect(result.folders[0].excludedSymlinkCount == 2, "root coverage should count nested symlinks separately")
+            try expect(result.folders[0].excludedSymlinkPaths == ["external-link", "nested/loop"]
+                       && !result.folders[0].excludedSymlinkPathsTruncated,
+                       "root observations should retain exact relative paths for excluded links without target paths")
             try expect(result.folders[0].inaccessibleCount == 0, "excluded symlinks should not inflate access errors")
             try expect(!result.folders[0].complete, "excluded symlink targets should make coverage explicitly partial")
             let nestedSummary = try requireSummary("nested", in: result.folders[0])
             try expect(nestedSummary.logicalBytes == 1024, "nested summary should include its measured descendant files")
             try expect(nestedSummary.excludedSymlinkCount == 1, "nested summary should report its own excluded symlink")
             try expect(!nestedSummary.complete, "a subtree with an excluded symlink should not look fully measured")
+        }
+    }
+
+    private static func testExcludedSymlinkPathSummaries() throws {
+        try withTemporaryDirectory { root in
+            for index in 0..<40 {
+                let name = String(format: "link-%02d", index)
+                try FileManager.default.createSymbolicLink(
+                    at: root.appendingPathComponent(name),
+                    withDestinationURL: URL(fileURLWithPath: "/dev/null")
+                )
+            }
+            let folder = FolderScanner.scan(roots: [root]).folders[0]
+            try expect(folder.excludedSymlinkCount == 40,
+                       "all skipped symlinks should be counted even when path summaries are bounded")
+            try expect(folder.excludedSymlinkPaths.count == 32 && folder.excludedSymlinkPathsTruncated,
+                       "symlink path details should be capped at 32 and disclose omitted entries")
+            try expect(folder.excludedSymlinkPaths == folder.excludedSymlinkPaths.sorted()
+                       && folder.excludedSymlinkPaths.first == "link-00"
+                       && folder.excludedSymlinkPaths.last == "link-31",
+                       "the bounded symlink path sample should be deterministic and lexically ranked")
+
+            let encoded = try JSONEncoder().encode(folder)
+            let restored = try JSONDecoder().decode(FolderObservation.self, from: encoded)
+            try expect(restored.excludedSymlinkPaths == folder.excludedSymlinkPaths
+                       && restored.excludedSymlinkPathsTruncated,
+                       "excluded link details should survive local history encoding")
         }
     }
 
@@ -3131,6 +3162,8 @@ private struct DiskerCoreChecks {
         }
         try expect(folder.volumeDeviceID == nil, "legacy folder history should default to unknown volume identity")
         try expect(folder.excludedSymlinkCount == 0, "old folder history should default symlink count to zero")
+        try expect(folder.excludedSymlinkPaths.isEmpty && !folder.excludedSymlinkPathsTruncated,
+                   "old folder history should default excluded link paths to an empty untruncated list")
         try expect(folder.excludedSpecialFileCount == 0, "old folder history should default special-file count to zero")
         try expect(folder.changedDuringScanCount == 0, "old folder history should default mutation count to zero")
         try expect(!folder.byteAccountingOverflowed, "old folder history should default byte-overflow disclosure to false")

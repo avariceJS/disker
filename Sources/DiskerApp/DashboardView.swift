@@ -1087,6 +1087,42 @@ struct DashboardView: View {
         }
     }
 
+    /// Most recent partial observation for each exact selected path. These
+    /// values are useful context beside an unexplained capacity movement,
+    /// but never represent the amount added during that movement.
+    private var latestPartialFolderMeasurements: [FolderObservation] {
+        guard let latest = model.history.observations.last else { return [] }
+        return latest.folders
+            .filter { !$0.complete }
+            .sorted {
+                if $0.finishedAt != $1.finishedAt { return $0.finishedAt > $1.finishedAt }
+                return $0.path < $1.path
+            }
+            .prefix(3)
+            .map { $0 }
+    }
+
+    private func partialFolderCoverageReason(_ folder: FolderObservation) -> String {
+        var reasons: [String] = []
+        if folder.excludedSymlinkCount > 0 {
+            reasons.append("\(folder.excludedSymlinkCount) symlinks not followed")
+        }
+        if folder.inaccessibleCount > 0 {
+            reasons.append("\(folder.inaccessibleCount) items inaccessible")
+        }
+        if folder.changedDuringScanCount > 0 {
+            reasons.append("\(folder.changedDuringScanCount) items changed during scan")
+        }
+        if folder.excludedVolumeBoundaryCount > 0 {
+            reasons.append("\(folder.excludedVolumeBoundaryCount) volume boundaries excluded")
+        }
+        if folder.excludedSpecialFileCount > 0 {
+            reasons.append("\(folder.excludedSpecialFileCount) special files excluded")
+        }
+        if folder.byteAccountingOverflowed { reasons.append("byte total capped") }
+        return reasons.isEmpty ? "coverage incomplete" : reasons.joined(separator: " · ")
+    }
+
     private var capacityCard: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack {
@@ -1126,7 +1162,7 @@ struct DashboardView: View {
                         Label("Source not identified", systemImage: "questionmark.folder")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.orange)
-                        Text("No selected-folder scans match this drop; capacity alone cannot name the files or their size.")
+                        Text("No complete before-and-after scan of a selected folder matches this drop. Capacity history cannot name the files or measure what was added.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -1139,6 +1175,32 @@ struct DashboardView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: 9))
                     .accessibilityElement(children: .contain)
+                    if !latestPartialFolderMeasurements.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Latest selected-folder measurements")
+                                .font(.caption.weight(.semibold))
+                            ForEach(latestPartialFolderMeasurements) { folder in
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text(folder.displayName)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    Spacer(minLength: 4)
+                                    Text(folderAllocatedValue(folder))
+                                        .monospacedDigit()
+                                    Text(partialFolderCoverageReason(folder))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
+                                .font(.caption2)
+                                .accessibilityElement(children: .combine)
+                            }
+                            Text("These are partial current-size estimates, not new bytes. Disker cannot reconstruct a before-scan it did not record; a complete baseline and later scan are needed to show future growth.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.leading, 4)
+                    }
                 }
                 if capacity.isLowOnAvailableCapacity {
                     HStack(alignment: .top, spacing: 10) {
@@ -3231,6 +3293,9 @@ struct DashboardView: View {
                     .padding(.horizontal, 14)
                     .padding(.bottom, 8)
                 }
+                if includeDetails && folder.excludedSymlinkCount > 0 {
+                    excludedSymlinkSection(for: folder)
+                }
                 if includeDetails && !folder.largestFiles.isEmpty {
                     largestFileSection(for: folder, scanCancelled: scanCancelled)
                 }
@@ -3240,6 +3305,54 @@ struct DashboardView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private func excludedSymlinkSection(for folder: FolderObservation) -> some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Disker did not follow these links or inspect their targets. Select a target as a separate folder if you want to measure it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if folder.excludedSymlinkPaths.isEmpty {
+                    Text("A symlink was rejected in the selected root path before scanning began.")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(folder.excludedSymlinkPaths, id: \.self) { relativePath in
+                        HStack(spacing: 8) {
+                            Text(relativePath == "." ? "Selected root" : relativePath)
+                                .font(.caption.monospaced())
+                                .lineLimit(2)
+                                .truncationMode(.middle)
+                            Spacer(minLength: 4)
+                            if relativePath != "." {
+                                Button {
+                                    let link = URL(fileURLWithPath: folder.path)
+                                        .appendingPathComponent(relativePath)
+                                    NSWorkspace.shared.activateFileViewerSelecting([link])
+                                } label: {
+                                    Image(systemName: "arrow.up.right.square")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Reveal the excluded link in Finder")
+                                .accessibilityLabel("Reveal excluded link \(relativePath) in Finder")
+                            }
+                        }
+                    }
+                }
+                if folder.excludedSymlinkPathsTruncated {
+                    Text("Showing \(folder.excludedSymlinkPaths.count) of \(folder.excludedSymlinkCount) excluded links. The list is capped to keep local history bounded.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.top, 6)
+        } label: {
+            Label("Review \(folder.excludedSymlinkCount) skipped symbolic links", systemImage: "arrow.turn.up.right")
+                .font(.caption.weight(.medium))
         }
     }
 

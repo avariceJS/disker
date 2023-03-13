@@ -146,6 +146,10 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     public let otherFileExtensionCategoryCount: Int
     public let inaccessibleCount: Int
     public let excludedSymlinkCount: Int
+    /// Bounded, root-relative paths of symlink entries rejected during the scan.
+    /// Target paths and target contents are never read.
+    public let excludedSymlinkPaths: [String]
+    public let excludedSymlinkPathsTruncated: Bool
     public let excludedSpecialFileCount: Int
     public let excludedVolumeBoundaryCount: Int
     public let changedDuringScanCount: Int
@@ -190,6 +194,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         otherFileExtensionCategoryCount: Int = 0,
         inaccessibleCount: Int, finishedAt: Date = .now, complete: Bool,
         excludedSymlinkCount: Int = 0,
+        excludedSymlinkPaths: [String] = [],
+        excludedSymlinkPathsTruncated: Bool = false,
         excludedSpecialFileCount: Int = 0,
         excludedVolumeBoundaryCount: Int = 0,
         changedDuringScanCount: Int = 0,
@@ -221,6 +227,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         self.otherFileExtensionCategoryCount = otherFileExtensionCategoryCount
         self.inaccessibleCount = inaccessibleCount
         self.excludedSymlinkCount = excludedSymlinkCount
+        self.excludedSymlinkPaths = excludedSymlinkPaths
+        self.excludedSymlinkPathsTruncated = excludedSymlinkPathsTruncated
         self.excludedSpecialFileCount = excludedSpecialFileCount
         self.excludedVolumeBoundaryCount = excludedVolumeBoundaryCount
         self.changedDuringScanCount = changedDuringScanCount
@@ -246,7 +254,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         case id, path, volumeDeviceID, displayName, logicalBytes, allocatedBytes, fileCount
         case fileExtensionSummaries, fileExtensionSummariesTruncated
         case otherFileExtensionUsage, otherFileExtensionCategoryCount
-        case inaccessibleCount, excludedSymlinkCount, excludedSpecialFileCount, excludedVolumeBoundaryCount
+        case inaccessibleCount, excludedSymlinkCount, excludedSymlinkPaths, excludedSymlinkPathsTruncated
+        case excludedSpecialFileCount, excludedVolumeBoundaryCount
         case changedDuringScanCount, byteAccountingOverflowed, gitMetadataEntryDetected
         case finishedAt, complete
         case subdirectorySummaries, subdirectorySummariesTruncated, gitMetadataUsage
@@ -273,6 +282,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         otherFileExtensionCategoryCount = try values.decodeIfPresent(Int.self, forKey: .otherFileExtensionCategoryCount) ?? 0
         inaccessibleCount = try values.decode(Int.self, forKey: .inaccessibleCount)
         excludedSymlinkCount = try values.decodeIfPresent(Int.self, forKey: .excludedSymlinkCount) ?? 0
+        excludedSymlinkPaths = try values.decodeIfPresent([String].self, forKey: .excludedSymlinkPaths) ?? []
+        excludedSymlinkPathsTruncated = try values.decodeIfPresent(Bool.self, forKey: .excludedSymlinkPathsTruncated) ?? false
         excludedSpecialFileCount = try values.decodeIfPresent(Int.self, forKey: .excludedSpecialFileCount) ?? 0
         excludedVolumeBoundaryCount = try values.decodeIfPresent(Int.self, forKey: .excludedVolumeBoundaryCount) ?? 0
         changedDuringScanCount = try values.decodeIfPresent(Int.self, forKey: .changedDuringScanCount) ?? 0
@@ -310,6 +321,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         try values.encode(otherFileExtensionCategoryCount, forKey: .otherFileExtensionCategoryCount)
         try values.encode(inaccessibleCount, forKey: .inaccessibleCount)
         try values.encode(excludedSymlinkCount, forKey: .excludedSymlinkCount)
+        try values.encode(excludedSymlinkPaths, forKey: .excludedSymlinkPaths)
+        try values.encode(excludedSymlinkPathsTruncated, forKey: .excludedSymlinkPathsTruncated)
         try values.encode(excludedSpecialFileCount, forKey: .excludedSpecialFileCount)
         try values.encode(excludedVolumeBoundaryCount, forKey: .excludedVolumeBoundaryCount)
         try values.encode(changedDuringScanCount, forKey: .changedDuringScanCount)
@@ -344,6 +357,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
             inaccessibleCount: inaccessibleCount,
             finishedAt: finishedAt, complete: complete,
             excludedSymlinkCount: excludedSymlinkCount,
+            excludedSymlinkPaths: excludedSymlinkPaths,
+            excludedSymlinkPathsTruncated: excludedSymlinkPathsTruncated,
             excludedSpecialFileCount: excludedSpecialFileCount,
             excludedVolumeBoundaryCount: excludedVolumeBoundaryCount,
             changedDuringScanCount: changedDuringScanCount,

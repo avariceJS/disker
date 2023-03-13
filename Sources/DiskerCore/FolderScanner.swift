@@ -11,6 +11,7 @@ public enum FolderScanner {
     private static let maximumProjectDirectorySummaries = 20
     private static let maximumLargestFileSummaries = 20
     private static let maximumFileExtensionSummaries = 30
+    private static let maximumExcludedSymlinkPathSummaries = 32
 
     private struct FileIdentity: Hashable {
         let device: UInt64
@@ -202,6 +203,7 @@ public enum FolderScanner {
             var metrics: [String: DirectoryMetrics] = ["": DirectoryMetrics()]
             var inaccessibleCount = 0
             var excludedSymlinkCount = 0
+            var excludedSymlinkPaths: [String] = []
             var excludedVolumeBoundaryCount = 0
             var fileCountForProgress = 0
             var visitedEntryCountForProgress = 0
@@ -356,6 +358,7 @@ public enum FolderScanner {
                         }
                         if type == S_IFLNK {
                             excludedSymlinkCount += 1
+                            retainExcludedSymlinkPath(relativePath, in: &excludedSymlinkPaths)
                             addCoverageEvent(directory.relativePath, symlink: true, to: &metrics)
                         } else if type == S_IFDIR {
                             if entryDeviceID != rootVolumeDeviceID {
@@ -639,6 +642,7 @@ public enum FolderScanner {
                 case .symbolicLink:
                     scanComplete = false
                     excludedSymlinkCount += 1
+                    retainExcludedSymlinkPath(".", in: &excludedSymlinkPaths)
                     addCoverageEvent("", symlink: true, to: &metrics)
                 case .changed:
                     scanComplete = false
@@ -676,6 +680,8 @@ public enum FolderScanner {
                 inaccessibleCount: inaccessibleCount,
                 complete: folderComplete,
                 excludedSymlinkCount: excludedSymlinkCount,
+                excludedSymlinkPaths: excludedSymlinkPaths.sorted(by: utf8LessThan),
+                excludedSymlinkPathsTruncated: excludedSymlinkCount > excludedSymlinkPaths.count,
                 excludedSpecialFileCount: excludedSpecialFileCount,
                 excludedVolumeBoundaryCount: excludedVolumeBoundaryCount,
                 changedDuringScanCount: rootMetrics.changedDuringScanCount,
@@ -741,7 +747,10 @@ public enum FolderScanner {
             otherFileExtensionUsage: folder.otherFileExtensionUsage,
             otherFileExtensionCategoryCount: folder.otherFileExtensionCategoryCount,
             inaccessibleCount: folder.inaccessibleCount, finishedAt: folder.finishedAt, complete: false,
-            excludedSymlinkCount: folder.excludedSymlinkCount, excludedSpecialFileCount: folder.excludedSpecialFileCount,
+            excludedSymlinkCount: folder.excludedSymlinkCount,
+            excludedSymlinkPaths: folder.excludedSymlinkPaths,
+            excludedSymlinkPathsTruncated: folder.excludedSymlinkPathsTruncated,
+            excludedSpecialFileCount: folder.excludedSpecialFileCount,
             excludedVolumeBoundaryCount: folder.excludedVolumeBoundaryCount,
             changedDuringScanCount: folder.changedDuringScanCount + 1,
             byteAccountingOverflowed: folder.byteAccountingOverflowed,
@@ -778,6 +787,8 @@ public enum FolderScanner {
             otherFileExtensionCategoryCount: folder.otherFileExtensionCategoryCount,
             inaccessibleCount: folder.inaccessibleCount + 1, finishedAt: folder.finishedAt, complete: false,
             excludedSymlinkCount: folder.excludedSymlinkCount,
+            excludedSymlinkPaths: folder.excludedSymlinkPaths,
+            excludedSymlinkPathsTruncated: folder.excludedSymlinkPathsTruncated,
             excludedSpecialFileCount: folder.excludedSpecialFileCount,
             excludedVolumeBoundaryCount: folder.excludedVolumeBoundaryCount,
             changedDuringScanCount: folder.changedDuringScanCount,
@@ -951,6 +962,17 @@ public enum FolderScanner {
         else if changed { value.changedDuringScanCount += 1 }
         else { value.incompleteCount += 1 }
         metrics[path] = value
+    }
+
+    private static func retainExcludedSymlinkPath(_ path: String, in paths: inout [String]) {
+        guard !paths.contains(path) else { return }
+        if paths.count < maximumExcludedSymlinkPathSummaries {
+            paths.append(path)
+            return
+        }
+        guard let largestIndex = paths.indices.max(by: { utf8LessThan(paths[$0], paths[$1]) }),
+              utf8LessThan(path, paths[largestIndex]) else { return }
+        paths[largestIndex] = path
     }
 
     private static func parentPath(of path: String) -> String {
