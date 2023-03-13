@@ -3886,7 +3886,7 @@ private struct DiskerCoreChecks {
             capacityObservations: [capacityBefore, capacityAfter]
         )
 
-        let interval = ObservationComparison.folderGrowthDuringMostRecentCapacityLoss(
+        let interval = ObservationComparison.folderGrowthDuringLargestUnrecoveredCapacityLoss(
             in: history, minimumLossBytes: 1
         )
         try expect(interval?.availableBytesLost == 1_000,
@@ -3912,7 +3912,7 @@ private struct DiskerCoreChecks {
                 observedAt: end, totalBytes: 10_000, availableBytes: 8_100, volumeUUID: "internal"
             )]
         )
-        try expect(ObservationComparison.folderGrowthDuringMostRecentCapacityLoss(
+        try expect(ObservationComparison.folderGrowthDuringLargestUnrecoveredCapacityLoss(
             in: noLoss, minimumLossBytes: 1
         ) == nil,
                    "folder growth must not be framed as accompanying a capacity loss when available space did not decrease")
@@ -3921,13 +3921,13 @@ private struct DiskerCoreChecks {
             observedAt: end, totalBytes: 10_000, availableBytes: 7_000,
             availabilityBasis: .standardVolume, volumeUUID: "internal"
         )
-        try expect(ObservationComparison.folderGrowthDuringMostRecentCapacityLoss(in: LocalHistory(
+        try expect(ObservationComparison.folderGrowthDuringLargestUnrecoveredCapacityLoss(in: LocalHistory(
             observations: history.observations,
             capacityObservations: [capacityBefore, incompatibleCapacityBasis]
         ), minimumLossBytes: 1) == nil, "a change in volume or availability basis must break the capacity interval")
 
         let noAlignedGrowth = LocalHistory(capacityObservations: [capacityBefore, capacityAfter])
-        try expect(ObservationComparison.folderGrowthDuringMostRecentCapacityLoss(
+        try expect(ObservationComparison.folderGrowthDuringLargestUnrecoveredCapacityLoss(
             in: noAlignedGrowth, minimumLossBytes: 1
         )?.folderGrowth.isEmpty == true,
                    "a real capacity loss with no aligned selected scans must remain explicitly unassigned")
@@ -3940,20 +3940,26 @@ private struct DiskerCoreChecks {
             observedAt: end.addingTimeInterval(120), totalBytes: 10_000,
             availableBytes: 6_975, volumeUUID: "internal"
         )
-        let persistentLoss = ObservationComparison.folderGrowthDuringMostRecentCapacityLoss(
-            in: LocalHistory(capacityObservations: [capacityBefore, capacityAfter, smallLossAfterEvent, recoveredSmallLoss]),
+        let laterMaterialLoss = CapacityObservation(
+            observedAt: end.addingTimeInterval(180), totalBytes: 10_000,
+            availableBytes: 6_000, volumeUUID: "internal"
+        )
+        let persistentLoss = ObservationComparison.folderGrowthDuringLargestUnrecoveredCapacityLoss(
+            in: LocalHistory(capacityObservations: [
+                capacityBefore, capacityAfter, smallLossAfterEvent, recoveredSmallLoss, laterMaterialLoss,
+            ]),
             minimumLossBytes: 900
         )
         try expect(persistentLoss?.previousCapacity == capacityBefore
                    && persistentLoss?.currentCapacity == capacityAfter
                    && persistentLoss?.availableBytesLost == 1_000,
-                   "small later losses or rebounds must not erase the latest unrecovered material capacity drop")
+                   "smaller later unrecovered losses and rebounds must not hide the largest unrecovered material capacity drop")
 
         let restoredCapacity = CapacityObservation(
             observedAt: end.addingTimeInterval(180), totalBytes: 10_000,
             availableBytes: capacityBefore.availableBytes, volumeUUID: "internal"
         )
-        try expect(ObservationComparison.folderGrowthDuringMostRecentCapacityLoss(in: LocalHistory(
+        try expect(ObservationComparison.folderGrowthDuringLargestUnrecoveredCapacityLoss(in: LocalHistory(
             capacityObservations: [capacityBefore, capacityAfter, smallLossAfterEvent, recoveredSmallLoss, restoredCapacity]
         ), minimumLossBytes: 900) == nil,
                    "a material capacity loss should stop being current context after available space returns to its pre-loss level")
@@ -3966,7 +3972,7 @@ private struct DiskerCoreChecks {
             observedAt: end, totalBytes: 400 * 1_048_576,
             availableBytes: 200 * 1_048_576 + 1, volumeUUID: "internal"
         )
-        try expect(ObservationComparison.folderGrowthDuringMostRecentCapacityLoss(in: LocalHistory(
+        try expect(ObservationComparison.folderGrowthDuringLargestUnrecoveredCapacityLoss(in: LocalHistory(
             capacityObservations: [largeCapacityBefore, subthresholdDrop]
         )) == nil,
                    "default capacity context should ignore losses smaller than 100 MiB")
@@ -3975,7 +3981,7 @@ private struct DiskerCoreChecks {
             observedAt: end, totalBytes: 400 * 1_048_576,
             availableBytes: 200 * 1_048_576, volumeUUID: "internal"
         )
-        try expect(ObservationComparison.folderGrowthDuringMostRecentCapacityLoss(in: LocalHistory(
+        try expect(ObservationComparison.folderGrowthDuringLargestUnrecoveredCapacityLoss(in: LocalHistory(
             capacityObservations: [largeCapacityBefore, thresholdDrop]
         ))?.availableBytesLost == UInt64(ObservationComparison.minimumReportedCapacityLossBytes),
                    "default capacity context should include a loss at exactly 100 MiB")

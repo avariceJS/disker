@@ -293,12 +293,13 @@ public enum ObservationComparison {
         .map { $0 }
     }
 
-    /// Joins the most recent material, not-yet-recovered capacity loss to
-    /// selected-root growth. Small later fluctuations do not erase the event.
+    /// Joins the largest material, not-yet-recovered capacity loss in retained
+    /// comparable history to selected-root growth. Smaller later fluctuations
+    /// do not hide a still-unrecovered major drop.
     /// Folder comparisons must be complete, same-path, and overlap that exact
     /// interval within a small scan→capacity sampling tolerance. Overlapping
     /// roots remain independent signals and are never presented as causes.
-    public static func folderGrowthDuringMostRecentCapacityLoss(
+    public static func folderGrowthDuringLargestUnrecoveredCapacityLoss(
         in history: LocalHistory, limit: Int = 5,
         minimumLossBytes: Int64 = minimumReportedCapacityLossBytes
     ) -> CapacityIntervalFolderGrowth? {
@@ -306,6 +307,7 @@ public enum ObservationComparison {
         guard limit > 0, capacitySeries.count > 1 else { return nil }
         let lossThreshold = max(0, minimumLossBytes)
 
+        var largestUnrecoveredLoss: CapacityIntervalFolderGrowth?
         for index in stride(from: capacitySeries.count - 2, through: 0, by: -1) {
             let previousCapacity = capacitySeries[index]
             let currentCapacity = capacitySeries[index + 1]
@@ -333,14 +335,20 @@ public enum ObservationComparison {
                     && $0.previous.finishedAt <= $0.folder.finishedAt
             }
 
-            return CapacityIntervalFolderGrowth(
+            let candidate = CapacityIntervalFolderGrowth(
                 previousCapacity: previousCapacity,
                 currentCapacity: currentCapacity,
                 availableBytesLost: availableDelta.magnitude,
                 folderGrowth: Array(alignedGrowth.prefix(limit))
             )
+            if let existing = largestUnrecoveredLoss,
+               candidate.availableBytesLost > existing.availableBytesLost {
+                largestUnrecoveredLoss = candidate
+            } else if largestUnrecoveredLoss == nil {
+                largestUnrecoveredLoss = candidate
+            }
         }
-        return nil
+        return largestUnrecoveredLoss
     }
 
     /// Positive allocated-byte changes for filename categories across the

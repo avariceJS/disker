@@ -1156,7 +1156,7 @@ struct DashboardView: View {
                     .tint(.blue)
                     .accessibilityLabel("Available capacity")
                     .accessibilityValue("\(format(capacity.availableBytes)) of \(format(capacity.totalBytes))")
-                if let interval = ObservationComparison.folderGrowthDuringMostRecentCapacityLoss(in: model.history),
+                if let interval = ObservationComparison.folderGrowthDuringLargestUnrecoveredCapacityLoss(in: model.history),
                    interval.folderGrowth.isEmpty {
                     HStack(alignment: .center, spacing: 10) {
                         Label("Source not identified", systemImage: "questionmark.folder")
@@ -1272,7 +1272,7 @@ struct DashboardView: View {
                     .font(.caption)
                     .foregroundStyle(delta >= 0 ? .green : .orange)
                     .accessibilityElement(children: .combine)
-                    if let interval = ObservationComparison.folderGrowthDuringMostRecentCapacityLoss(
+                    if let interval = ObservationComparison.folderGrowthDuringLargestUnrecoveredCapacityLoss(
                         in: model.history
                     ) {
                         capacityIntervalGrowthCard(interval)
@@ -1324,7 +1324,7 @@ struct DashboardView: View {
             Text("Capacity decreased by \(format(interval.availableBytesLost)) from \(interval.previousCapacity.observedAt.formatted(date: .abbreviated, time: .shortened)) to \(interval.currentCapacity.observedAt.formatted(date: .abbreviated, time: .shortened)).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text("This is the latest drop over \(format(ObservationComparison.minimumReportedCapacityLossBytes)) that later readings have not fully recovered.")
+            Text("This is the largest drop of at least \(format(ObservationComparison.minimumReportedCapacityLossBytes)) in retained history that later readings have not fully recovered.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             if interval.folderGrowth.isEmpty {
