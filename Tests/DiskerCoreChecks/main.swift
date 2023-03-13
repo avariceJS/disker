@@ -19,6 +19,10 @@ private struct DiskerCoreChecks {
             try benchmarkSelectedRoot(at: URL(fileURLWithPath: CommandLine.arguments[2]))
             return
         }
+        if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--benchmark-inventory-root" {
+            try benchmarkSelectedRootInventory(at: URL(fileURLWithPath: CommandLine.arguments[2]))
+            return
+        }
 
         let checks: [(String, () throws -> Void)] = [
             ("capacity math", testCapacityMath),
@@ -77,6 +81,7 @@ private struct DiskerCoreChecks {
             ("hard-link mutation between directory revalidations", testHardLinkMutationBetweenDirectories),
             ("directory summary cap and stable order", testDirectorySummaryCap),
             ("bounded largest-file metadata summaries", testLargestFileSummaries),
+            ("complete selected-root file inventory and change history", testFileInventoryHistory),
             ("cautious large-file modification-age review", testLargeFileModificationReview),
             ("old history JSON defaults new fields", testOldHistoryDecoding),
             ("sparse file size accounting", testSparseFileAccounting),
@@ -132,6 +137,33 @@ private struct DiskerCoreChecks {
         print("Process peak RSS after scan: \(String(format: "%.1f", Double(peakRSSAfterScan) / 1_048_576)) MiB · high-water increase during scan: \(String(format: "%.1f", Double(peakRSSIncreaseDuringScan) / 1_048_576)) MiB (process-level; not scanner-only allocation)")
         print("Logical: \(folder.logicalBytes) bytes · allocated estimate: \(folder.allocatedBytes) bytes")
         print("Coverage: \(folder.complete ? "complete" : "partial") · inaccessible: \(folder.inaccessibleCount) · symlinks excluded: \(folder.excludedSymlinkCount) · changed: \(folder.changedDuringScanCount)")
+    }
+
+    private static func benchmarkSelectedRootInventory(at root: URL) throws {
+        var before = rusage()
+        _ = getrusage(RUSAGE_SELF, &before)
+        let start = ContinuousClock.now
+        let result = FolderScanner.scanWithFileInventories(roots: [root])
+        let scanElapsed = start.duration(to: .now).components
+        let snapshot = result.fileInventories.first
+        let encoded = try snapshot.map { value -> Data in
+            let encoder = PropertyListEncoder()
+            encoder.outputFormat = .binary
+            return try encoder.encode(value)
+        }
+        var after = rusage()
+        _ = getrusage(RUSAGE_SELF, &after)
+        guard let folder = result.observation.folders.first else {
+            throw CheckFailure.assertion("inventory benchmark produced no selected-root observation")
+        }
+        let userCPU = timevalSeconds(after.ru_utime) - timevalSeconds(before.ru_utime)
+        let systemCPU = timevalSeconds(after.ru_stime) - timevalSeconds(before.ru_stime)
+        let peakRSSIncrease = max(0, after.ru_maxrss - before.ru_maxrss)
+        let seconds = Double(scanElapsed.seconds) + Double(scanElapsed.attoseconds) / 1e18
+        print("Selected-root metadata inventory (no file contents): \(snapshot?.entries.count ?? 0) unique paths")
+        print("Scan and sort: \(String(format: "%.3f", seconds)) s · process CPU including encode: \(String(format: "%.3f", userCPU + systemCPU)) s")
+        print("Encoded baseline: \(encoded?.count ?? 0) bytes · high-water RSS increase: \(String(format: "%.1f", Double(peakRSSIncrease) / 1_048_576)) MiB (process-level)")
+        print("Inventory: \(snapshot?.complete == true ? "complete" : "incomplete") · aggregate: \(folder.complete ? "complete" : "partial") · symlinks excluded: \(folder.excludedSymlinkCount)")
     }
 
     private static func timevalSeconds(_ value: timeval) -> Double {
@@ -3151,6 +3183,81 @@ private struct DiskerCoreChecks {
             try expect(capped.largestFiles.first?.rootRelativePath == "file-22.bin"
                        && capped.largestFiles.last?.rootRelativePath == "file-03.bin",
                        "the bounded file summary should retain the 20 largest allocated estimates")
+        }
+    }
+
+    private static func testFileInventoryHistory() throws {
+        try withTemporaryDirectory { temporaryRoot in
+            let root = temporaryRoot.appendingPathComponent("project", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+            let resize = root.appendingPathComponent("resize.bin")
+            let remove = root.appendingPathComponent("remove.bin")
+            try Data(repeating: 0x01, count: 128).write(to: resize)
+            try Data(repeating: 0x02, count: 512).write(to: remove)
+            for index in 0..<30 {
+                try Data([UInt8(index)]).write(to: root.appendingPathComponent(String(format: "small-%02d.bin", index)))
+            }
+            let alias = root.appendingPathComponent("z-alias.bin")
+            try FileManager.default.linkItem(at: resize, to: alias)
+            let linkTarget = temporaryRoot.appendingPathComponent("outside", isDirectory: true)
+            try FileManager.default.createDirectory(at: linkTarget, withIntermediateDirectories: false)
+            try Data(repeating: 0x03, count: 8192).write(to: linkTarget.appendingPathComponent("not-followed.bin"))
+            let link = root.appendingPathComponent("linked-outside", isDirectory: true)
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: linkTarget)
+
+            let first = FolderScanner.scanWithFileInventories(roots: [root])
+            guard let baseline = first.fileInventories.first else {
+                throw CheckFailure.assertion("complete file inventory should be returned for a selected root")
+            }
+            try expect(!first.observation.folders[0].complete && baseline.complete,
+                       "excluded symlinks should keep aggregate coverage partial while regular files remain comparable in the no-follow scope")
+            try expect(baseline.entries.count == 32 && baseline.excludedSymlinkCount == 1,
+                       "the full inventory should include every unique regular-file object beyond top-file caps and deduplicate hard links (entries=\(baseline.entries.count), paths=\(baseline.entries.map(\.relativePath)), symlinks=\(baseline.excludedSymlinkCount), complete=\(baseline.complete))")
+            try expect(!baseline.entries.contains(where: { $0.relativePath.contains("not-followed") }),
+                       "inventory collection must not follow symlink targets")
+
+            let storeURL = temporaryRoot.appendingPathComponent("local/Disker/file-inventory.plist")
+            let initial = try FileInventoryStore.record(baseline, at: storeURL)
+            try expect(initial?.hasBaseline == false && initial?.previousObservedAt == nil,
+                       "the first full file inventory should establish a baseline, not invent earlier changes")
+            let loadedInitial = try FileInventoryStore.loadReports(at: storeURL)[root.path]
+            try expect(loadedInitial == initial,
+                       "the compact local report should persist and reload independently of scan observations")
+
+            try Data(repeating: 0x04, count: 2048).write(to: resize)
+            try Data(repeating: 0x05, count: 4096).write(to: root.appendingPathComponent("new.bin"))
+            try FileManager.default.removeItem(at: remove)
+            let second = FolderScanner.scanWithFileInventories(roots: [root])
+            guard let next = second.fileInventories.first else {
+                throw CheckFailure.assertion("second file inventory should be returned")
+            }
+            let changes = try FileInventoryStore.record(next, at: storeURL)
+            try expect(changes?.hasBaseline == true && changes?.changedPathCount == 3,
+                       "a later inventory should detect every added, resized, and absent file path")
+            try expect(changes?.netLogicalDelta == 5504,
+                       "net logical change should reconcile additions, size increases, and paths no longer present")
+            try expect(changes?.changes.contains(where: { $0.relativePath == "new.bin" && $0.kind == .added }) == true
+                       && changes?.changes.contains(where: { $0.relativePath == "resize.bin" && $0.kind == .resized }) == true
+                       && changes?.changes.contains(where: { $0.relativePath == "remove.bin" && $0.kind == .noLongerPresent }) == true,
+                       "the bounded change report should retain exact path-level change types")
+            try expect(changes?.netAllocatedDelta != nil,
+                       "allocated-byte estimate change should be computed separately from logical-size change")
+
+            let incomplete = FileInventorySnapshot(
+                rootPath: next.rootPath, volumeDeviceID: next.volumeDeviceID,
+                observedAt: next.observedAt.addingTimeInterval(10), entries: [],
+                complete: false, excludedSymlinkCount: next.excludedSymlinkCount
+            )
+            let rejectedIncomplete = try FileInventoryStore.record(incomplete, at: storeURL)
+            try expect(rejectedIncomplete == nil,
+                       "incomplete scans must not replace the last complete file baseline")
+            let retainedReport = try FileInventoryStore.loadReports(at: storeURL)[root.path]
+            try expect(retainedReport?.observedAt == next.observedAt,
+                       "an incomplete scan must leave the previous complete comparison visible only as stale history")
+            try FileInventoryStore.clear(at: storeURL)
+            let afterClear = try FileInventoryStore.loadReports(at: storeURL)
+            try expect(afterClear.isEmpty,
+                       "Disker history reset should remove only its own separate file inventory store")
         }
     }
 

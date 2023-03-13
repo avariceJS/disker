@@ -478,6 +478,107 @@ public struct ScanObservation: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// One no-follow regular-file record used only for a full selected-root inventory.
+/// This is stored separately from the bounded dashboard observations.
+public struct FileInventoryEntry: Codable, Equatable, Sendable {
+    public let relativePath: String
+    public let logicalBytes: Int64
+    public let allocatedBytes: Int64
+
+    public init(relativePath: String, logicalBytes: Int64, allocatedBytes: Int64) {
+        self.relativePath = relativePath
+        self.logicalBytes = logicalBytes
+        self.allocatedBytes = allocatedBytes
+    }
+}
+
+public struct FileInventorySnapshot: Codable, Equatable, Sendable {
+    public let rootPath: String
+    public let folderObservationID: UUID
+    public let volumeDeviceID: UInt64?
+    public let observedAt: Date
+    public let entries: [FileInventoryEntry]
+    /// True when every regular file in the selected no-follow scope was observed
+    /// and revalidated. Symlink targets remain outside that scope.
+    public let complete: Bool
+    public let excludedSymlinkCount: Int
+
+    public init(rootPath: String, folderObservationID: UUID = UUID(), volumeDeviceID: UInt64?, observedAt: Date,
+                entries: [FileInventoryEntry], complete: Bool, excludedSymlinkCount: Int) {
+        self.rootPath = rootPath
+        self.folderObservationID = folderObservationID
+        self.volumeDeviceID = volumeDeviceID
+        self.observedAt = observedAt
+        self.entries = entries
+        self.complete = complete
+        self.excludedSymlinkCount = excludedSymlinkCount
+    }
+}
+
+public struct FileInventoryChange: Codable, Equatable, Identifiable, Sendable {
+    public enum Kind: String, Codable, Sendable { case added, resized, noLongerPresent }
+    public var id: String { relativePath }
+    public let relativePath: String
+    public let kind: Kind
+    public let logicalDelta: Int64
+    public let allocatedDelta: Int64
+    public let logicalBytes: Int64
+    public let allocatedBytes: Int64
+
+    public init(relativePath: String, kind: Kind, logicalDelta: Int64, allocatedDelta: Int64,
+                logicalBytes: Int64, allocatedBytes: Int64) {
+        self.relativePath = relativePath
+        self.kind = kind
+        self.logicalDelta = logicalDelta
+        self.allocatedDelta = allocatedDelta
+        self.logicalBytes = logicalBytes
+        self.allocatedBytes = allocatedBytes
+    }
+}
+
+public struct FileInventoryChangeSet: Codable, Equatable, Sendable {
+    public let rootPath: String
+    public let folderObservationID: UUID
+    public let previousObservedAt: Date?
+    public let observedAt: Date
+    public let volumeDeviceID: UInt64?
+    public let changes: [FileInventoryChange]
+    public let changedPathCount: Int
+    public let omittedChangeCount: Int
+    public let netLogicalDelta: Int64?
+    public let netAllocatedDelta: Int64?
+    public let symlinkExcludedCount: Int
+    public let hasBaseline: Bool
+
+    public init(rootPath: String, folderObservationID: UUID = UUID(), previousObservedAt: Date?, observedAt: Date, volumeDeviceID: UInt64?,
+                changes: [FileInventoryChange], changedPathCount: Int, omittedChangeCount: Int,
+                netLogicalDelta: Int64?, netAllocatedDelta: Int64?, symlinkExcludedCount: Int,
+                hasBaseline: Bool) {
+        self.rootPath = rootPath
+        self.folderObservationID = folderObservationID
+        self.previousObservedAt = previousObservedAt
+        self.observedAt = observedAt
+        self.volumeDeviceID = volumeDeviceID
+        self.changes = changes
+        self.changedPathCount = changedPathCount
+        self.omittedChangeCount = omittedChangeCount
+        self.netLogicalDelta = netLogicalDelta
+        self.netAllocatedDelta = netAllocatedDelta
+        self.symlinkExcludedCount = symlinkExcludedCount
+        self.hasBaseline = hasBaseline
+    }
+}
+
+public struct DetailedScanObservation: Sendable {
+    public let observation: ScanObservation
+    public let fileInventories: [FileInventorySnapshot]
+
+    public init(observation: ScanObservation, fileInventories: [FileInventorySnapshot]) {
+        self.observation = observation
+        self.fileInventories = fileInventories
+    }
+}
+
 public enum StorageReadError: Error, LocalizedError {
     case capacityUnavailable
     case historyLocationUnavailable

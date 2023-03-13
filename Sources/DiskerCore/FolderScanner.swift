@@ -12,6 +12,7 @@ public enum FolderScanner {
     private static let maximumLargestFileSummaries = 20
     private static let maximumFileExtensionSummaries = 30
     private static let maximumExcludedSymlinkPathSummaries = 32
+    private static let maximumInventoryEntriesPerRoot = 500_000
 
     private struct FileIdentity: Hashable {
         let device: UInt64
@@ -125,9 +126,23 @@ public enum FolderScanner {
         shouldCancel: () -> Bool = { Task.isCancelled },
         progress: (ScanProgress) -> Void = { _ in }
     ) -> ScanObservation {
-        scanInternal(
-            roots: roots, simulatedDeviceIDsByPath: [:], shouldCancel: shouldCancel, progress: progress
+        var inventories: [FileInventorySnapshot] = []
+        return scanInternal(
+            roots: roots, simulatedDeviceIDsByPath: [:], shouldCancel: shouldCancel,
+            progress: progress, collectFileInventories: false, fileInventories: &inventories
         )
+    }
+
+    public static func scanWithFileInventories(
+        roots: [URL], shouldCancel: () -> Bool = { Task.isCancelled },
+        progress: (ScanProgress) -> Void = { _ in }
+    ) -> DetailedScanObservation {
+        var inventories: [FileInventorySnapshot] = []
+        let observation = scanInternal(
+            roots: roots, simulatedDeviceIDsByPath: [:], shouldCancel: shouldCancel,
+            progress: progress, collectFileInventories: true, fileInventories: &inventories
+        )
+        return DetailedScanObservation(observation: observation, fileInventories: inventories)
     }
 
     /// Device-ID injection for deterministic synthetic filesystem boundary checks.
@@ -139,10 +154,12 @@ public enum FolderScanner {
         progress: (ScanProgress) -> Void = { _ in },
         directoryDidFinish: (String) -> Void = { _ in }
     ) -> ScanObservation {
-        scanInternal(
+        var inventories: [FileInventorySnapshot] = []
+        return scanInternal(
             roots: roots, simulatedDeviceIDsByPath: simulatedDeviceIDsByPath,
             sandboxedRootAccessOverride: treatRootsAsSecurityScoped,
-            shouldCancel: shouldCancel, progress: progress, directoryDidFinish: directoryDidFinish
+            shouldCancel: shouldCancel, progress: progress, directoryDidFinish: directoryDidFinish,
+            collectFileInventories: false, fileInventories: &inventories
         )
     }
 
@@ -151,11 +168,13 @@ public enum FolderScanner {
         sandboxedRootAccessOverride: Bool? = nil,
         shouldCancel: () -> Bool,
         progress: (ScanProgress) -> Void,
-        directoryDidFinish: (String) -> Void = { _ in }
+        directoryDidFinish: (String) -> Void = { _ in },
+        collectFileInventories: Bool,
+        fileInventories: inout [FileInventorySnapshot]
     ) -> ScanObservation {
         let startedAt = Date.now
         var results: [FolderObservation] = []
-        var selectedFileRoots: [(index: Int, path: URL, metadata: ScannedFileMetadata)] = []
+        var selectedFileRoots: [(index: Int, inventoryIndex: Int?, path: URL, metadata: ScannedFileMetadata)] = []
         var cancelled = false
         let sandboxedProcess = sandboxedRootAccessOverride
             ?? ((try? SelectedScopeBookmarkStore.isCurrentProcessSandboxed()) ?? false)
@@ -218,6 +237,8 @@ public enum FolderScanner {
             var excludedSpecialFileCount = 0
             var extensionMetrics: [String: FileExtensionMetrics] = [:]
             var largestUniqueFiles: [FileUsageSummary] = []
+            var inventoryEntries: [FileInventoryEntry] = []
+            var inventoryTruncated = false
 
             if rootType != UInt32(S_IFDIR) {
                 guard rootType == UInt32(S_IFREG) else {
@@ -244,6 +265,9 @@ public enum FolderScanner {
                                          lastModifiedAt: file.lastModifiedAt),
                         in: &largestUniqueFiles
                     )
+                    if collectFileInventories {
+                        appendInventoryEntry(file, to: &inventoryEntries, truncated: &inventoryTruncated)
+                    }
                 }
             } else {
                 guard let rootFD = directoryRootDescriptor else { continue }
@@ -439,6 +463,9 @@ public enum FolderScanner {
                                         ),
                                         in: &largestUniqueFiles
                                     )
+                                    if collectFileInventories {
+                                        appendInventoryEntry(file, to: &inventoryEntries, truncated: &inventoryTruncated)
+                                    }
                                 }
                             }
                         }
@@ -542,6 +569,9 @@ public enum FolderScanner {
                 accumulate(file.allocatedBytes, into: &rootAllocatedBytes, overflowed: &accountingOverflow)
                 rootFileCount += 1
                 addFileExtension(file, to: &extensionMetrics, overflowed: &accountingOverflow)
+                if collectFileInventories {
+                    appendInventoryEntry(file, to: &inventoryEntries, truncated: &inventoryTruncated)
+                }
             }
             let rankedLargestFiles = (largestUniqueFiles + linkedFiles.map {
                 FileUsageSummary(
@@ -697,8 +727,31 @@ public enum FolderScanner {
             )
             results.append(folderResult)
 
+            if collectFileInventories {
+                let inventoryComplete = !inventoryTruncated && !cancelled && !accountingOverflow
+                    && inaccessibleCount == 0 && excludedSpecialFileCount == 0
+                    && excludedVolumeBoundaryCount == 0
+                    && rootMetrics.changedDuringScanCount == 0
+                fileInventories.append(FileInventorySnapshot(
+                    rootPath: root.path,
+                    folderObservationID: folderResult.id,
+                    volumeDeviceID: rootVolumeDeviceID,
+                    observedAt: folderResult.finishedAt,
+                    entries: inventoryComplete
+                        ? inventoryEntries.sorted { utf8LessThan($0.relativePath, $1.relativePath) }
+                        : [],
+                    complete: inventoryComplete,
+                    excludedSymlinkCount: excludedSymlinkCount
+                ))
+            }
+
             if let selectedFileMetadata {
-                selectedFileRoots.append((results.count - 1, root, selectedFileMetadata))
+                selectedFileRoots.append((
+                    results.count - 1,
+                    collectFileInventories ? fileInventories.indices.last : nil,
+                    root,
+                    selectedFileMetadata
+                ))
             }
 
             if cancelled { break }
@@ -728,14 +781,43 @@ public enum FolderScanner {
 
             guard let current else {
                 results[selected.index] = markingChangedDuringScan(results[selected.index])
+                markInventoryIncomplete(at: selected.inventoryIndex, in: &fileInventories)
                 continue
             }
             if selected.metadata.differs(from: current) {
                 results[selected.index] = markingChangedDuringScan(results[selected.index])
+                markInventoryIncomplete(at: selected.inventoryIndex, in: &fileInventories)
             }
         }
 
         return ScanObservation(startedAt: startedAt, folders: results, cancelled: cancelled)
+    }
+
+    private static func appendInventoryEntry(
+        _ file: FileRecord, to entries: inout [FileInventoryEntry], truncated: inout Bool
+    ) {
+        guard entries.count < maximumInventoryEntriesPerRoot else {
+            truncated = true
+            return
+        }
+        entries.append(FileInventoryEntry(
+            relativePath: file.relativePath,
+            logicalBytes: file.logicalBytes,
+            allocatedBytes: file.allocatedBytes
+        ))
+    }
+
+    private static func markInventoryIncomplete(
+        at index: Int?, in inventories: inout [FileInventorySnapshot]
+    ) {
+        guard let index, inventories.indices.contains(index) else { return }
+        let current = inventories[index]
+        inventories[index] = FileInventorySnapshot(
+            rootPath: current.rootPath, folderObservationID: current.folderObservationID,
+            volumeDeviceID: current.volumeDeviceID,
+            observedAt: current.observedAt, entries: [], complete: false,
+            excludedSymlinkCount: current.excludedSymlinkCount
+        )
     }
 
     private static func markingChangedDuringScan(_ folder: FolderObservation) -> FolderObservation {
