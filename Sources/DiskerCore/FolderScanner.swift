@@ -133,18 +133,21 @@ public enum FolderScanner {
     @_spi(DiskerTesting)
     public static func scan(
         roots: [URL], simulatedDeviceIDsByPath: [String: UInt64],
+        treatRootsAsSecurityScoped: Bool = false,
         shouldCancel: () -> Bool = { Task.isCancelled },
         progress: (ScanProgress) -> Void = { _ in },
         directoryDidFinish: (String) -> Void = { _ in }
     ) -> ScanObservation {
         scanInternal(
             roots: roots, simulatedDeviceIDsByPath: simulatedDeviceIDsByPath,
+            sandboxedRootAccessOverride: treatRootsAsSecurityScoped,
             shouldCancel: shouldCancel, progress: progress, directoryDidFinish: directoryDidFinish
         )
     }
 
     private static func scanInternal(
         roots: [URL], simulatedDeviceIDsByPath: [String: UInt64],
+        sandboxedRootAccessOverride: Bool? = nil,
         shouldCancel: () -> Bool,
         progress: (ScanProgress) -> Void,
         directoryDidFinish: (String) -> Void = { _ in }
@@ -153,6 +156,8 @@ public enum FolderScanner {
         var results: [FolderObservation] = []
         var selectedFileRoots: [(index: Int, path: URL, metadata: ScannedFileMetadata)] = []
         var cancelled = false
+        let sandboxedProcess = sandboxedRootAccessOverride
+            ?? ((try? SelectedScopeBookmarkStore.isCurrentProcessSandboxed()) ?? false)
 
         for root in roots {
             if shouldCancel() {
@@ -167,7 +172,9 @@ public enum FolderScanner {
             let rootMetadata: stat
             let directoryRootDescriptor: Int32?
             let rootType: UInt32
-            switch openSelectedRootWithoutFollowingLinks(root.path) {
+            switch openSelectedRootWithoutFollowingLinks(
+                root.path, scopedAccessGranted: sandboxedProcess && accessGranted
+            ) {
             case .openedDirectory(let descriptor, let metadata):
                 directoryRootDescriptor = descriptor
                 rootMetadata = metadata
@@ -613,7 +620,9 @@ public enum FolderScanner {
             )
 
             if rootType == S_IFDIR {
-                switch openSelectedRootWithoutFollowingLinks(root.path) {
+                switch openSelectedRootWithoutFollowingLinks(
+                    root.path, scopedAccessGranted: sandboxedProcess && accessGranted
+                ) {
                 case .openedDirectory(let finalRootFD, let finalRootMetadata):
                     close(finalRootFD)
                     if !sameIdentity(rootMetadata, finalRootMetadata) {
@@ -696,7 +705,9 @@ public enum FolderScanner {
         for selected in selectedFileRoots {
             let accessGranted = selected.path.startAccessingSecurityScopedResource()
             let current: stat?
-            switch openSelectedRootWithoutFollowingLinks(selected.path.path) {
+            switch openSelectedRootWithoutFollowingLinks(
+                selected.path.path, scopedAccessGranted: sandboxedProcess && accessGranted
+            ) {
             case .metadata(let metadata):
                 current = metadata
             case .openedDirectory(let descriptor, let metadata):
@@ -990,12 +1001,72 @@ public enum FolderScanner {
     /// with no-follow metadata and descriptor-relative opens. Only directories
     /// are opened; a selected regular file is inspected with `fstatat` metadata.
     private static func openSelectedRootWithoutFollowingLinks(
-        _ path: String
+        _ path: String,
+        scopedAccessGranted: Bool = false
     ) -> SelectedRootOpenResult {
         let rawComponents = path.split(separator: "/", omittingEmptySubsequences: true)
         guard path.hasPrefix("/"),
               !rawComponents.contains("."), !rawComponents.contains("..") else {
             return .unavailable
+        }
+
+        // App Sandbox grants access to the selected bookmark, not to `/` or
+        // its ancestors. In that case open the exact picked root under the
+        // active security scope. O_NOFOLLOW still rejects a selected symlink,
+        // and descendants continue to be opened descriptor-relatively with
+        // O_NOFOLLOW. Unsandboxed builds retain the stronger component walk
+        // from `/`, which also rejects symlink ancestors.
+        if scopedAccessGranted {
+            var selectedMetadata = stat()
+            var checkedAncestors: [(path: String, identity: FileIdentity)] = []
+            var currentPath = ""
+            for (index, component) in rawComponents.enumerated() {
+                currentPath += "/" + component
+                var componentMetadata = stat()
+                let metadataResult = currentPath.withCString { lstat($0, &componentMetadata) }
+                guard metadataResult == 0 else { return .unavailable }
+                let componentType = componentMetadata.st_mode & S_IFMT
+                if componentType == S_IFLNK { return .symbolicLink }
+                if index < rawComponents.count - 1, componentType != S_IFDIR { return .changed }
+                checkedAncestors.append((currentPath, identity(of: componentMetadata)))
+                if index == rawComponents.count - 1 { selectedMetadata = componentMetadata }
+            }
+            let selectedType = selectedMetadata.st_mode & S_IFMT
+            if selectedType == S_IFLNK { return .symbolicLink }
+            guard selectedType == S_IFDIR else {
+                return .metadata(selectedMetadata)
+            }
+
+            let selectedDescriptor = path.withCString {
+                open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            }
+            guard selectedDescriptor >= 0 else {
+                return errno == ELOOP ? .symbolicLink : .unavailable
+            }
+            var openedMetadata = stat()
+            guard fstat(selectedDescriptor, &openedMetadata) == 0 else {
+                close(selectedDescriptor)
+                return .unavailable
+            }
+            guard sameIdentity(selectedMetadata, openedMetadata),
+                  openedMetadata.st_mode & S_IFMT == S_IFDIR else {
+                close(selectedDescriptor)
+                return .changed
+            }
+            for ancestor in checkedAncestors {
+                var currentMetadata = stat()
+                let recheck = ancestor.path.withCString { lstat($0, &currentMetadata) }
+                guard recheck == 0 else {
+                    close(selectedDescriptor)
+                    return .unavailable
+                }
+                guard currentMetadata.st_mode & S_IFMT != S_IFLNK,
+                      identity(of: currentMetadata) == ancestor.identity else {
+                    close(selectedDescriptor)
+                    return .changed
+                }
+            }
+            return .openedDirectory(selectedDescriptor, openedMetadata)
         }
 
         var descriptor = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)

@@ -70,6 +70,7 @@ private struct DiskerCoreChecks {
             ("Git metadata marker detection", testGitMetadataMarkerDetection),
             ("Git metadata footprint survives summary cap", testGitMetadataUsageSurvivesSummaryCap),
             ("selected symlink root is incomplete", testSelectedSymlinkRootIsIncomplete),
+            ("scoped root access scans only selected root metadata", testScopedRootAccess),
             ("selected directory roots reject ancestor symlinks", testSelectedDirectoryRootAncestorSymlink),
             ("hard-link deduplication", testHardLinkDeduplication),
             ("hard-link mutation between directory revalidations", testHardLinkMutationBetweenDirectories),
@@ -3229,6 +3230,45 @@ private struct DiskerCoreChecks {
             try expect(result.folders[0].excludedSymlinkCount == 1, "selected symlink root should be separately counted")
             try expect(result.folders[0].volumeDeviceID == nil,
                        "selected symlinks must not trigger volume identity lookup on their targets")
+        }
+    }
+
+    private static func testScopedRootAccess() throws {
+        try withTemporaryDirectory { base in
+            let root = base.appendingPathComponent("selected", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let payload = root.appendingPathComponent("payload.bin")
+            try Data(repeating: 0x2F, count: 2048).write(to: payload)
+            let target = base.appendingPathComponent("outside", isDirectory: true)
+            try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+            try Data(repeating: 0x6D, count: 4096).write(to: target.appendingPathComponent("excluded.bin"))
+            let childLink = root.appendingPathComponent("linked-child", isDirectory: true)
+            try FileManager.default.createSymbolicLink(at: childLink, withDestinationURL: target)
+
+            let result = FolderScanner.scan(
+                roots: [root], simulatedDeviceIDsByPath: [:], treatRootsAsSecurityScoped: true
+            )
+            guard let folder = result.folders.first else {
+                throw CheckFailure.assertion("a scoped selected root should retain a folder observation")
+            }
+            try expect(folder.logicalBytes == 2048 && folder.fileCount == 1,
+                       "scoped root access should measure regular files below only the selected directory")
+            try expect(folder.excludedSymlinkCount == 1 && !folder.complete,
+                       "scoped root access must still exclude descendant symlinks and disclose partial coverage")
+
+            let alias = base.appendingPathComponent("selected-link", isDirectory: true)
+            try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: target)
+            let targetChild = target.appendingPathComponent("child", isDirectory: true)
+            try FileManager.default.createDirectory(at: targetChild, withIntermediateDirectories: true)
+            try Data(repeating: 0x71, count: 512).write(to: targetChild.appendingPathComponent("payload.bin"))
+            let aliasedRoot = alias.appendingPathComponent("child", isDirectory: true)
+            let aliasResult = FolderScanner.scan(
+                roots: [aliasedRoot], simulatedDeviceIDsByPath: [:], treatRootsAsSecurityScoped: true
+            )
+            try expect(aliasResult.folders[0].logicalBytes == 0
+                       && aliasResult.folders[0].excludedSymlinkCount == 1
+                       && !aliasResult.folders[0].complete,
+                       "scoped root access must reject a symlink ancestor without measuring its target")
         }
     }
 

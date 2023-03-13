@@ -209,7 +209,7 @@ public enum SelectedScopeBookmarkStore {
         resolutionOptions(isSandboxed: try isCurrentProcessSandboxed())
     }
 
-    private static func isCurrentProcessSandboxed() throws -> Bool {
+    static func isCurrentProcessSandboxed() throws -> Bool {
         guard let task = SecTaskCreateFromSelf(kCFAllocatorDefault) else {
             throw SelectedScopeBookmarkError.bookmarkUnavailable(
                 "Disker could not determine whether this build uses App Sandbox."
