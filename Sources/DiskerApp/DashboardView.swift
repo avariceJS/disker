@@ -673,9 +673,7 @@ final class DashboardModel {
             storageMonitoringCooldownByPath[normalizedPath] = .now
             startStorageEventWatchers()
             startStorageMonitoringScheduler()
-            if isAppActive && !isScanning && !isMeasuringOwnFootprint && !isVerifyingDuplicates {
-                rescanRememberedFolder(normalizedPath, origin: .manual)
-            }
+            requestMonitoringBaseline(for: normalizedPath)
         } else {
             monitoredScopePaths.remove(normalizedPath)
             pausedMonitoringReasons.removeValue(forKey: normalizedPath)
@@ -695,9 +693,7 @@ final class DashboardModel {
         storageMonitoringCooldownByPath[path] = .now
         startStorageEventWatchers()
         startStorageMonitoringScheduler()
-        if isAppActive && !isScanning && !isMeasuringOwnFootprint && !isVerifyingDuplicates {
-            rescanRememberedFolder(path, origin: .manual)
-        }
+        requestMonitoringBaseline(for: path)
     }
 
     func setStorageMonitoringInterval(_ interval: TimeInterval) {
@@ -808,6 +804,15 @@ final class DashboardModel {
         storageEventWatcherErrors.removeValue(forKey: path)
         pendingStorageEventPaths.remove(path)
         lastStorageEventScanAt.removeValue(forKey: path)
+    }
+
+    private func requestMonitoringBaseline(for path: String) {
+        guard isAppActive else { return }
+        if isScanning || isMeasuringOwnFootprint || isVerifyingDuplicates {
+            noteStorageChangeEvent(for: path)
+        } else {
+            rescanRememberedFolder(path, origin: .manual)
+        }
     }
 
     private func noteStorageChangeEvent(for path: String) {
@@ -2148,7 +2153,7 @@ struct DashboardView: View {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(alignment: .top) {
-                            Text("Turning monitoring on records a fresh baseline immediately. For each opted-in saved folder, macOS events request debounced metadata-only scans (at most once a minute), with periodic scans for persistent changes. Events can be missed or coalesced; files created and removed between scans cannot be reconstructed. Monitoring stays within selected paths while Disker is active and resets off when Disker quits or relaunches.")
+                            Text("Turning monitoring on requests a fresh baseline scan. For each opted-in saved folder, macOS events request debounced metadata-only scans (at most once a minute), with periodic scans for persistent changes. Events can be missed or coalesced; files created and removed between scans cannot be reconstructed. Monitoring stays within selected paths while Disker is active and resets off when Disker quits or relaunches.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -2207,7 +2212,7 @@ struct DashboardView: View {
                                                     .foregroundStyle(.secondary)
                                             }
                                             if model.isScanning && model.eventTriggeredScanPath == scope.path {
-                                                Text("Change detected · checking selected folder")
+                                                Text("Checking selected folder for path and size changes")
                                                     .font(.caption2)
                                                     .foregroundStyle(.orange)
                                             }
