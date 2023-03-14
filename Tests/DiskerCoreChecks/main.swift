@@ -103,6 +103,7 @@ private struct DiskerCoreChecks {
             ("scan progress callback", testScanProgressCallback),
             ("directory mutations make coverage partial", testDirectoryMutationCoverage),
             ("selected directory root mutations make coverage partial", testSelectedDirectoryRootMutationCoverage),
+            ("selected root replaced by symlink cannot seed file history", testSelectedRootSymlinkReplacementWithholdsInventory),
             ("file mutations during enumeration make coverage partial", testFileMutationCoverage),
             ("removed file timestamps are withheld", testRemovedFileTimestampWithheld),
             ("cancellation preserves partial coverage", testCancellationPreservesPartialCoverage),
@@ -145,12 +146,28 @@ private struct DiskerCoreChecks {
         let start = ContinuousClock.now
         let result = FolderScanner.scanWithFileInventories(roots: [root])
         let scanElapsed = start.duration(to: .now).components
+        var afterScan = rusage()
+        _ = getrusage(RUSAGE_SELF, &afterScan)
         let snapshot = result.fileInventories.first
-        let encoded = try snapshot.map { value -> Data in
-            let encoder = PropertyListEncoder()
-            encoder.outputFormat = .binary
-            return try encoder.encode(value)
+        let persistenceStart = ContinuousClock.now
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DiskerInventoryBenchmark-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("file-inventory.plist")
+        defer { try? FileManager.default.removeItem(at: storeURL.deletingLastPathComponent()) }
+        let firstReport = try snapshot.flatMap { try FileInventoryStore.record($0, at: storeURL) }
+        var afterBaseline = rusage()
+        _ = getrusage(RUSAGE_SELF, &afterBaseline)
+        let nextReport = try snapshot.flatMap { value in
+            try FileInventoryStore.record(FileInventorySnapshot(
+                rootPath: value.rootPath, folderObservationID: UUID(),
+                volumeDeviceID: value.volumeDeviceID,
+                observedAt: value.observedAt.addingTimeInterval(60),
+                entries: value.entries, complete: value.complete,
+                excludedSymlinkCount: value.excludedSymlinkCount
+            ), at: storeURL)
         }
+        let persistenceElapsed = persistenceStart.duration(to: .now).components
+        let storedBytes = (try? FileManager.default.attributesOfItem(atPath: storeURL.path)[.size] as? NSNumber)?.intValue ?? 0
         var after = rusage()
         _ = getrusage(RUSAGE_SELF, &after)
         guard let folder = result.observation.folders.first else {
@@ -158,11 +175,17 @@ private struct DiskerCoreChecks {
         }
         let userCPU = timevalSeconds(after.ru_utime) - timevalSeconds(before.ru_utime)
         let systemCPU = timevalSeconds(after.ru_stime) - timevalSeconds(before.ru_stime)
-        let peakRSSIncrease = max(0, after.ru_maxrss - before.ru_maxrss)
+        let scanRSSIncrease = max(0, afterScan.ru_maxrss - before.ru_maxrss)
+        let baselineRSSIncrease = max(0, afterBaseline.ru_maxrss - before.ru_maxrss)
+        let completeRSSIncrease = max(0, after.ru_maxrss - before.ru_maxrss)
         let seconds = Double(scanElapsed.seconds) + Double(scanElapsed.attoseconds) / 1e18
         print("Selected-root metadata inventory (no file contents): \(snapshot?.entries.count ?? 0) unique paths")
-        print("Scan and sort: \(String(format: "%.3f", seconds)) s · process CPU including encode: \(String(format: "%.3f", userCPU + systemCPU)) s")
-        print("Encoded baseline: \(encoded?.count ?? 0) bytes · high-water RSS increase: \(String(format: "%.1f", Double(peakRSSIncrease) / 1_048_576)) MiB (process-level)")
+        let persistenceSeconds = Double(persistenceElapsed.seconds)
+            + Double(persistenceElapsed.attoseconds) / 1e18
+        print("Scan and sort: \(String(format: "%.3f", seconds)) s · baseline plus exact comparison: \(String(format: "%.3f", persistenceSeconds)) s · process CPU: \(String(format: "%.3f", userCPU + systemCPU)) s")
+        print("Persisted baseline: \(storedBytes) bytes · paths changed on identical recheck: \(nextReport?.changedPathCount ?? -1)")
+        print("High-water RSS increase: scan \(String(format: "%.1f", Double(scanRSSIncrease) / 1_048_576)) MiB · after baseline \(String(format: "%.1f", Double(baselineRSSIncrease) / 1_048_576)) MiB · after comparison \(String(format: "%.1f", Double(completeRSSIncrease) / 1_048_576)) MiB (process-level)")
+        print("First report established baseline: \(firstReport?.hasBaseline == false)")
         print("Inventory: \(snapshot?.complete == true ? "complete" : "incomplete") · aggregate: \(folder.complete ? "complete" : "partial") · symlinks excluded: \(folder.excludedSymlinkCount)")
     }
 
@@ -3258,6 +3281,33 @@ private struct DiskerCoreChecks {
             let afterClear = try FileInventoryStore.loadReports(at: storeURL)
             try expect(afterClear.isEmpty,
                        "Disker history reset should remove only its own separate file inventory store")
+
+            let cappedURL = temporaryRoot.appendingPathComponent("local/Disker/capped-inventory.plist")
+            let olderEntries = (0..<125).map { index in
+                FileInventoryEntry(relativePath: String(format: "file-%03d", index), logicalBytes: 1, allocatedBytes: 1)
+            }
+            let cappedBaseline = FileInventorySnapshot(
+                rootPath: root.path + "/capped", volumeDeviceID: 11,
+                observedAt: Date(timeIntervalSince1970: 1_000), entries: olderEntries,
+                complete: true, excludedSymlinkCount: 0
+            )
+            _ = try FileInventoryStore.record(cappedBaseline, at: cappedURL)
+            let cappedCurrent = FileInventorySnapshot(
+                rootPath: cappedBaseline.rootPath, volumeDeviceID: 11,
+                observedAt: Date(timeIntervalSince1970: 2_000),
+                entries: olderEntries.map {
+                    FileInventoryEntry(relativePath: $0.relativePath, logicalBytes: 2, allocatedBytes: 2)
+                },
+                complete: true, excludedSymlinkCount: 0
+            )
+            let cappedReport = try FileInventoryStore.record(cappedCurrent, at: cappedURL)
+            try expect(cappedReport?.changedPathCount == 125
+                       && cappedReport?.changes.count == 100
+                       && cappedReport?.omittedChangeCount == 25
+                       && cappedReport?.netAllocatedDelta == 125,
+                       "a bounded top-100 changed-path list must preserve exact changed counts and net totals")
+            try expect(cappedReport?.changes.map(\.relativePath) == olderEntries.prefix(100).map(\.relativePath),
+                       "equal-growth paths should retain deterministic UTF-8 ordering in the capped report")
         }
     }
 
@@ -4842,6 +4892,44 @@ private struct DiskerCoreChecks {
             try expect(rootReplaced, "fixture should replace the selected root during its scan")
             try expect(!folder.complete && folder.changedDuringScanCount > 0,
                        "a selected directory replaced during enumeration must not look like a complete snapshot")
+        }
+    }
+
+    private static func testSelectedRootSymlinkReplacementWithholdsInventory() throws {
+        try withTemporaryDirectory { temporaryRoot in
+            let selectedRoot = temporaryRoot.appendingPathComponent("selected-root", isDirectory: true)
+            let movedRoot = temporaryRoot.appendingPathComponent("moved-root", isDirectory: true)
+            try FileManager.default.createDirectory(at: selectedRoot, withIntermediateDirectories: false)
+            for index in 0..<256 {
+                try Data([UInt8(index % 255)]).write(
+                    to: selectedRoot.appendingPathComponent(String(format: "file-%03d.bin", index))
+                )
+            }
+            var rootReplaced = false
+            let result = FolderScanner.scanWithFileInventories(roots: [selectedRoot], progress: { _ in
+                guard !rootReplaced else { return }
+                rootReplaced = true
+                do {
+                    try FileManager.default.moveItem(at: selectedRoot, to: movedRoot)
+                    try FileManager.default.createSymbolicLink(at: selectedRoot, withDestinationURL: movedRoot)
+                } catch {
+                    rootReplaced = false
+                }
+            })
+            guard let folder = result.observation.folders.first,
+                  let inventory = result.fileInventories.first else {
+                throw CheckFailure.assertion("replaced selected root should produce both folder and inventory observations")
+            }
+            try expect(rootReplaced, "the selected directory fixture should be replaced by a symlink during enumeration")
+            try expect(!folder.complete && folder.excludedSymlinkCount > 0,
+                       "a selected root replaced by a symlink must be partial and report the excluded link")
+            try expect(!inventory.complete && inventory.entries.isEmpty,
+                       "a selected root replaced by a symlink must not produce a complete file inventory")
+            let storeURL = temporaryRoot.appendingPathComponent("local/Disker/file-inventory.plist")
+            let report = try FileInventoryStore.record(inventory, at: storeURL)
+            let storedReports = try FileInventoryStore.loadReports(at: storeURL)
+            try expect(report == nil && storedReports.isEmpty,
+                       "the store must reject the incomplete root inventory without creating a baseline")
         }
     }
 

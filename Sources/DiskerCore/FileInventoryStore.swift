@@ -77,52 +77,100 @@ public enum FileInventoryStore {
             )
         }
 
-        let priorByPath = Dictionary(uniqueKeysWithValues: previous.entries.map { ($0.relativePath, $0) })
-        let currentByPath = Dictionary(uniqueKeysWithValues: current.entries.map { ($0.relativePath, $0) })
         var changes: [FileInventoryChange] = []
+        var changedPathCount = 0
         var logicalDelta: Int64 = 0
         var allocatedDelta: Int64 = 0
         var logicalOverflow = false
         var allocatedOverflow = false
-
-        for entry in current.entries {
-            let prior = priorByPath[entry.relativePath]
-            let logicalChange = difference(entry.logicalBytes, prior?.logicalBytes ?? 0)
-            let allocatedChange = difference(entry.allocatedBytes, prior?.allocatedBytes ?? 0)
-            guard prior == nil || logicalChange != 0 || allocatedChange != 0 else { continue }
-            let kind: FileInventoryChange.Kind = prior == nil ? .added : .resized
-            changes.append(FileInventoryChange(
-                relativePath: entry.relativePath, kind: kind,
-                logicalDelta: logicalChange, allocatedDelta: allocatedChange,
-                logicalBytes: entry.logicalBytes, allocatedBytes: entry.allocatedBytes
-            ))
-            add(logicalChange, to: &logicalDelta, overflowed: &logicalOverflow)
-            add(allocatedChange, to: &allocatedDelta, overflowed: &allocatedOverflow)
-        }
-        for entry in previous.entries where currentByPath[entry.relativePath] == nil {
-            changes.append(FileInventoryChange(
-                relativePath: entry.relativePath, kind: .noLongerPresent,
-                logicalDelta: -entry.logicalBytes, allocatedDelta: -entry.allocatedBytes,
-                logicalBytes: 0, allocatedBytes: 0
-            ))
-            add(-entry.logicalBytes, to: &logicalDelta, overflowed: &logicalOverflow)
-            add(-entry.allocatedBytes, to: &allocatedDelta, overflowed: &allocatedOverflow)
-        }
-
-        let ordered = changes.sorted {
-            let left = max($0.allocatedDelta, 0)
-            let right = max($1.allocatedDelta, 0)
+        func precedes(_ lhs: FileInventoryChange, _ rhs: FileInventoryChange) -> Bool {
+            let left = max(lhs.allocatedDelta, 0)
+            let right = max(rhs.allocatedDelta, 0)
             if left != right { return left > right }
-            if $0.logicalDelta != $1.logicalDelta { return $0.logicalDelta > $1.logicalDelta }
-            return $0.relativePath.utf8.lexicographicallyPrecedes($1.relativePath.utf8)
+            if lhs.logicalDelta != rhs.logicalDelta { return lhs.logicalDelta > rhs.logicalDelta }
+            return lhs.relativePath.utf8.lexicographicallyPrecedes(rhs.relativePath.utf8)
         }
+        func retain(_ change: FileInventoryChange) {
+            changedPathCount += 1
+            add(change.logicalDelta, to: &logicalDelta, overflowed: &logicalOverflow)
+            add(change.allocatedDelta, to: &allocatedDelta, overflowed: &allocatedOverflow)
+            var low = 0
+            var high = changes.count
+            while low < high {
+                let middle = (low + high) / 2
+                if precedes(changes[middle], change) { low = middle + 1 }
+                else { high = middle }
+            }
+            if low < maximumChangesInReport || changes.count < maximumChangesInReport {
+                changes.insert(change, at: low)
+                if changes.count > maximumChangesInReport { changes.removeLast() }
+            }
+        }
+
+        // Both manifests are stored in UTF-8 path order, so a merge walk finds
+        // every difference without two additional 300k-entry dictionaries.
+        var currentIndex = 0
+        var previousIndex = 0
+        while currentIndex < current.entries.count || previousIndex < previous.entries.count {
+            if currentIndex >= current.entries.count {
+                let old = previous.entries[previousIndex]
+                retain(FileInventoryChange(
+                    relativePath: old.relativePath, kind: .noLongerPresent,
+                    logicalDelta: -old.logicalBytes, allocatedDelta: -old.allocatedBytes,
+                    logicalBytes: 0, allocatedBytes: 0
+                ))
+                previousIndex += 1
+                continue
+            }
+            if previousIndex >= previous.entries.count {
+                let new = current.entries[currentIndex]
+                retain(FileInventoryChange(
+                    relativePath: new.relativePath, kind: .added,
+                    logicalDelta: new.logicalBytes, allocatedDelta: new.allocatedBytes,
+                    logicalBytes: new.logicalBytes, allocatedBytes: new.allocatedBytes
+                ))
+                currentIndex += 1
+                continue
+            }
+
+            let new = current.entries[currentIndex]
+            let old = previous.entries[previousIndex]
+            if new.relativePath.utf8.lexicographicallyPrecedes(old.relativePath.utf8) {
+                retain(FileInventoryChange(
+                    relativePath: new.relativePath, kind: .added,
+                    logicalDelta: new.logicalBytes, allocatedDelta: new.allocatedBytes,
+                    logicalBytes: new.logicalBytes, allocatedBytes: new.allocatedBytes
+                ))
+                currentIndex += 1
+            } else if old.relativePath.utf8.lexicographicallyPrecedes(new.relativePath.utf8) {
+                retain(FileInventoryChange(
+                    relativePath: old.relativePath, kind: .noLongerPresent,
+                    logicalDelta: -old.logicalBytes, allocatedDelta: -old.allocatedBytes,
+                    logicalBytes: 0, allocatedBytes: 0
+                ))
+                previousIndex += 1
+            } else {
+                let logicalChange = difference(new.logicalBytes, old.logicalBytes)
+                let allocatedChange = difference(new.allocatedBytes, old.allocatedBytes)
+                if logicalChange != 0 || allocatedChange != 0 {
+                    retain(FileInventoryChange(
+                        relativePath: new.relativePath, kind: .resized,
+                        logicalDelta: logicalChange, allocatedDelta: allocatedChange,
+                        logicalBytes: new.logicalBytes, allocatedBytes: new.allocatedBytes
+                    ))
+                }
+                currentIndex += 1
+                previousIndex += 1
+            }
+        }
+
         return FileInventoryChangeSet(
             rootPath: current.rootPath, folderObservationID: current.folderObservationID,
             previousObservedAt: previous.observedAt,
             observedAt: current.observedAt, volumeDeviceID: current.volumeDeviceID,
-            changes: Array(ordered.prefix(maximumChangesInReport)),
-            changedPathCount: ordered.count,
-            omittedChangeCount: max(0, ordered.count - maximumChangesInReport),
+            changes: changes,
+            changedPathCount: changedPathCount,
+            omittedChangeCount: max(0, changedPathCount - maximumChangesInReport),
             netLogicalDelta: logicalOverflow ? nil : logicalDelta,
             netAllocatedDelta: allocatedOverflow ? nil : allocatedDelta,
             symlinkExcludedCount: current.excludedSymlinkCount, hasBaseline: true

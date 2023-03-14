@@ -227,6 +227,7 @@ public enum FolderScanner {
             var fileCountForProgress = 0
             var visitedEntryCountForProgress = 0
             var scanComplete = true
+            var inventoryRootStable = true
             var accountingOverflow = false
             let selectedFileMetadata = rootType == UInt32(S_IFREG)
                 ? ScannedFileMetadata(name: root.lastPathComponent, metadata: rootMetadata)
@@ -660,27 +661,32 @@ public enum FolderScanner {
                     close(finalRootFD)
                     if !sameIdentity(rootMetadata, finalRootMetadata) {
                         scanComplete = false
+                        inventoryRootStable = false
                         var rootMetrics = metrics["", default: DirectoryMetrics()]
                         rootMetrics.changedDuringScanCount += 1
                         metrics[""] = rootMetrics
                     }
                 case .metadata:
                     scanComplete = false
+                    inventoryRootStable = false
                     var rootMetrics = metrics["", default: DirectoryMetrics()]
                     rootMetrics.changedDuringScanCount += 1
                     metrics[""] = rootMetrics
                 case .symbolicLink:
                     scanComplete = false
+                    inventoryRootStable = false
                     excludedSymlinkCount += 1
                     retainExcludedSymlinkPath(".", in: &excludedSymlinkPaths)
                     addCoverageEvent("", symlink: true, to: &metrics)
                 case .changed:
                     scanComplete = false
+                    inventoryRootStable = false
                     var rootMetrics = metrics["", default: DirectoryMetrics()]
                     rootMetrics.changedDuringScanCount += 1
                     metrics[""] = rootMetrics
                 case .unavailable:
                     scanComplete = false
+                    inventoryRootStable = false
                     inaccessibleCount += 1
                     var rootMetrics = metrics["", default: DirectoryMetrics()]
                     rootMetrics.incompleteCount += 1
@@ -731,15 +737,17 @@ public enum FolderScanner {
                 let inventoryComplete = !inventoryTruncated && !cancelled && !accountingOverflow
                     && inaccessibleCount == 0 && excludedSpecialFileCount == 0
                     && excludedVolumeBoundaryCount == 0
+                    && inventoryRootStable
                     && rootMetrics.changedDuringScanCount == 0
+                if inventoryComplete {
+                    inventoryEntries.sort { utf8LessThan($0.relativePath, $1.relativePath) }
+                }
                 fileInventories.append(FileInventorySnapshot(
                     rootPath: root.path,
                     folderObservationID: folderResult.id,
                     volumeDeviceID: rootVolumeDeviceID,
                     observedAt: folderResult.finishedAt,
-                    entries: inventoryComplete
-                        ? inventoryEntries.sorted { utf8LessThan($0.relativePath, $1.relativePath) }
-                        : [],
+                    entries: inventoryComplete ? inventoryEntries : [],
                     complete: inventoryComplete,
                     excludedSymlinkCount: excludedSymlinkCount
                 ))
