@@ -68,6 +68,7 @@ final class DashboardModel {
     var pausedMonitoringReasons: [String: String] = [:]
     var storageMonitoringInterval: TimeInterval = StorageMonitoringPolicy.defaultInterval
     var storageMonitoringLastAttempt: [String: Date] = [:]
+    var storageEventWatcherErrors: [String: String] = [:]
     var ownFootprint: ScanObservation?
     var ownFootprintPaths: [String] = []
     var isMeasuringOwnFootprint = false
@@ -82,13 +83,18 @@ final class DashboardModel {
     var countedFileObjects = 0
     private var scanTask: Task<DetailedScanObservation, Never>?
     private var fileInventoryTask: Task<[FileInventoryChangeSet], Error>?
-    enum ScanOrigin { case manual, scheduled }
+    enum ScanOrigin { case manual, scheduled, eventTriggered }
     private var scanOrigin: ScanOrigin?
     private var scanRootPaths = Set<String>()
     var scheduledScanPath: String?
+    var eventTriggeredScanPath: String?
     private var storageMonitoringEnabledAtByPath: [String: Date] = [:]
     private var storageMonitoringCooldownByPath: [String: Date] = [:]
     private var storageMonitoringTask: Task<Void, Never>?
+    private var storageEventScanTask: Task<Void, Never>?
+    private var storageEventWatchers: [String: SelectedRootEventWatcher] = [:]
+    private var pendingStorageEventPaths = Set<String>()
+    private var lastStorageEventScanAt: [String: Date] = [:]
     private var historyGeneration = HistoryGeneration()
     private var ownFootprintTask: Task<ScanObservation, Never>?
     private var ownFootprintRequestID: UUID?
@@ -529,6 +535,7 @@ final class DashboardModel {
         } else {
             scheduledScanPath = nil
         }
+        eventTriggeredScanPath = origin == .eventTriggered ? scanRootPaths.first : nil
         let generation = historyGeneration.token()
         currentPath = ""
         countedFileObjects = 0
@@ -617,6 +624,22 @@ final class DashboardModel {
                         storageMonitoringCooldownByPath[path] = .now
                     }
                 }
+            } else if completedOrigin == .eventTriggered, let path = completedRootPaths.first {
+                if !monitoredScopePaths.contains(path) {
+                    storageMonitoringCooldownByPath.removeValue(forKey: path)
+                    storageMonitoringLastAttempt.removeValue(forKey: path)
+                } else if observation.cancelled && isAppActive {
+                    pauseStorageMonitoring(path, reason: "Event-triggered scan cancelled. Resume monitoring when ready.")
+                } else if let folder = observation.folders.first(where: {
+                    URL(fileURLWithPath: $0.path).standardizedFileURL.path == path
+                }), StorageMonitoringPolicy.shouldPauseAfterScheduledScan(folder) {
+                    pauseStorageMonitoring(
+                        path,
+                        reason: "No files could be measured. Check this folder's access, then resume monitoring."
+                    )
+                } else {
+                    storageMonitoringCooldownByPath[path] = .now
+                }
             }
             isScanning = false
             currentPath = ""
@@ -625,7 +648,12 @@ final class DashboardModel {
             scanOrigin = nil
             scanRootPaths = []
             scheduledScanPath = nil
+            eventTriggeredScanPath = nil
             if historyGeneration.accepts(generation) { refreshCapacity() }
+            if completedOrigin == .eventTriggered,
+               let nextPath = pendingStorageEventPaths.sorted().first {
+                noteStorageChangeEvent(for: nextPath)
+            }
         }
     }
 
@@ -643,13 +671,18 @@ final class DashboardModel {
             pausedMonitoringReasons.removeValue(forKey: normalizedPath)
             storageMonitoringEnabledAtByPath[normalizedPath] = .now
             storageMonitoringCooldownByPath[normalizedPath] = .now
+            startStorageEventWatchers()
             startStorageMonitoringScheduler()
+            if isAppActive && !isScanning && !isMeasuringOwnFootprint && !isVerifyingDuplicates {
+                rescanRememberedFolder(normalizedPath, origin: .manual)
+            }
         } else {
             monitoredScopePaths.remove(normalizedPath)
             pausedMonitoringReasons.removeValue(forKey: normalizedPath)
             storageMonitoringEnabledAtByPath.removeValue(forKey: normalizedPath)
             storageMonitoringCooldownByPath.removeValue(forKey: normalizedPath)
-            if scheduledScanPath == normalizedPath { cancelScan() }
+            stopStorageEventWatcher(for: normalizedPath)
+            if scheduledScanPath == normalizedPath || eventTriggeredScanPath == normalizedPath { cancelScan() }
             if monitoredScopePaths.isEmpty { stopStorageMonitoringScheduler() }
         }
     }
@@ -660,7 +693,11 @@ final class DashboardModel {
         monitoredScopePaths.insert(path)
         storageMonitoringEnabledAtByPath[path] = .now
         storageMonitoringCooldownByPath[path] = .now
+        startStorageEventWatchers()
         startStorageMonitoringScheduler()
+        if isAppActive && !isScanning && !isMeasuringOwnFootprint && !isVerifyingDuplicates {
+            rescanRememberedFolder(path, origin: .manual)
+        }
     }
 
     func setStorageMonitoringInterval(_ interval: TimeInterval) {
@@ -700,6 +737,18 @@ final class DashboardModel {
         storageMonitoringTask = nil
     }
 
+    func stopStorageEventWatchers() {
+        storageEventScanTask?.cancel()
+        storageEventScanTask = nil
+        pendingStorageEventPaths.removeAll()
+        for watcher in storageEventWatchers.values { watcher.stop() }
+        storageEventWatchers.removeAll()
+        if let eventTriggeredScanPath {
+            storageMonitoringCooldownByPath[eventTriggeredScanPath] = .now
+            cancelScan()
+        }
+    }
+
     func setStorageMonitoringAppActive(_ active: Bool) {
         let wasActive = isAppActive
         isAppActive = active
@@ -709,13 +758,91 @@ final class DashboardModel {
                     storageMonitoringCooldownByPath[path] = .now
                 }
             }
+            startStorageEventWatchers()
             startStorageMonitoringScheduler()
         } else {
             stopStorageMonitoringScheduler()
-            if let path = scheduledScanPath {
+            stopStorageEventWatchers()
+            if let path = scheduledScanPath ?? eventTriggeredScanPath {
                 cancelScan()
                 storageMonitoringCooldownByPath[path] = .now
             }
+        }
+    }
+
+    private func startStorageEventWatchers() {
+        guard isAppActive else { return }
+        let eligible = monitoredScopePaths.subtracting(pausedMonitoringReasons.keys)
+        for path in Array(storageEventWatchers.keys) where !eligible.contains(path) {
+            stopStorageEventWatcher(for: path)
+        }
+        for path in eligible where storageEventWatchers[path] == nil {
+            guard let bookmark = rememberedScopes.first(where: { $0.path == path }) else {
+                storageEventWatcherErrors[path] = "Saved access is missing; periodic scans remain available."
+                continue
+            }
+            do {
+                let url = try SelectedScopeBookmarkStore.resolve(bookmark)
+                let isSandboxed = try SelectedScopeBookmarkStore.requiresSecurityScopedAccess()
+                let accessGranted = url.startAccessingSecurityScopedResource()
+                guard !isSandboxed || accessGranted else {
+                    throw SelectedScopeBookmarkError.bookmarkUnavailable(
+                        "macOS did not grant folder access for event monitoring. Periodic scans remain available."
+                    )
+                }
+                let watcher = try SelectedRootEventWatcher(
+                    rootURL: url, ownsSecurityScope: accessGranted
+                ) { [weak self] in
+                    Task { @MainActor in self?.noteStorageChangeEvent(for: path) }
+                }
+                storageEventWatchers[path] = watcher
+                storageEventWatcherErrors.removeValue(forKey: path)
+            } catch {
+                storageEventWatcherErrors[path] = "Event monitoring unavailable; periodic scans remain available. \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func stopStorageEventWatcher(for path: String) {
+        storageEventWatchers.removeValue(forKey: path)?.stop()
+        storageEventWatcherErrors.removeValue(forKey: path)
+        pendingStorageEventPaths.remove(path)
+        lastStorageEventScanAt.removeValue(forKey: path)
+    }
+
+    private func noteStorageChangeEvent(for path: String) {
+        guard isAppActive, monitoredScopePaths.contains(path), pausedMonitoringReasons[path] == nil else { return }
+        pendingStorageEventPaths.insert(path)
+        storageEventScanTask?.cancel()
+        storageEventScanTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 3_000_000_000)
+            } catch { return }
+            guard let self else { return }
+            while !Task.isCancelled, self.isAppActive, !self.pendingStorageEventPaths.isEmpty {
+                if !self.isScanning && !self.isMeasuringOwnFootprint && !self.isVerifyingDuplicates {
+                    let now = Date.now
+                    if let path = self.pendingStorageEventPaths
+                        .intersection(self.monitoredScopePaths)
+                        .subtracting(self.pausedMonitoringReasons.keys)
+                        .sorted()
+                        .first(where: { candidate in
+                            guard let lastScan = self.lastStorageEventScanAt[candidate] else { return true }
+                            return now.timeIntervalSince(lastScan) >= 60
+                        }) {
+                        self.pendingStorageEventPaths.remove(path)
+                        self.lastStorageEventScanAt[path] = now
+                        self.storageMonitoringCooldownByPath[path] = now
+                        self.storageMonitoringLastAttempt[path] = now
+                        self.storageEventScanTask = nil
+                        self.rescanRememberedFolder(path, origin: .eventTriggered)
+                        return
+                    }
+                }
+                do { try await Task.sleep(nanoseconds: 1_000_000_000) }
+                catch { return }
+            }
+            self.storageEventScanTask = nil
         }
     }
 
@@ -747,7 +874,8 @@ final class DashboardModel {
     private func pauseStorageMonitoring(_ path: String, reason: String) {
         monitoredScopePaths.insert(path)
         pausedMonitoringReasons[path] = reason
-        if scheduledScanPath == path { cancelScan() }
+        stopStorageEventWatcher(for: path)
+        if scheduledScanPath == path || eventTriggeredScanPath == path { cancelScan() }
         if !monitoredScopePaths.contains(where: { pausedMonitoringReasons[$0] == nil }) {
             stopStorageMonitoringScheduler()
         }
@@ -759,7 +887,8 @@ final class DashboardModel {
         storageMonitoringEnabledAtByPath.removeValue(forKey: path)
         storageMonitoringCooldownByPath.removeValue(forKey: path)
         storageMonitoringLastAttempt.removeValue(forKey: path)
-        if scheduledScanPath == path { cancelScan() }
+        stopStorageEventWatcher(for: path)
+        if scheduledScanPath == path || eventTriggeredScanPath == path { cancelScan() }
         if monitoredScopePaths.isEmpty { stopStorageMonitoringScheduler() }
     }
 
@@ -859,8 +988,10 @@ final class DashboardModel {
         storageMonitoringEnabledAtByPath = [:]
         storageMonitoringCooldownByPath = [:]
         storageMonitoringLastAttempt = [:]
+        lastStorageEventScanAt = [:]
         scheduledScanPath = nil
         stopStorageMonitoringScheduler()
+        stopStorageEventWatchers()
         applicationBundlePathStatuses = [:]
         checkingApplicationBundlePaths = []
         applicationBundlePathCheckIDs = [:]
@@ -1026,6 +1157,7 @@ struct DashboardView: View {
         }
         .onDisappear {
             model.stopStorageMonitoringScheduler()
+            model.stopStorageEventWatchers()
         }
         .onChange(of: isAutomaticRAMSamplingEnabled) { _, enabled in
             if enabled && scenePhase == .active {
@@ -2016,7 +2148,7 @@ struct DashboardView: View {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(alignment: .top) {
-                            Text("Saved locations are scanned only on request or with per-path opt-in. Monitoring reads metadata only while Disker is active and resets off when Disker quits or relaunches; an in-flight scheduled scan may be cancelled when the app becomes inactive.")
+                            Text("Turning monitoring on records a fresh baseline immediately. For each opted-in saved folder, macOS events request debounced metadata-only scans (at most once a minute), with periodic scans for persistent changes. Events can be missed or coalesced; files created and removed between scans cannot be reconstructed. Monitoring stays within selected paths while Disker is active and resets off when Disker quits or relaunches.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -2060,10 +2192,24 @@ struct DashboardView: View {
                                                     .font(.caption2)
                                             }
                                         } else if model.monitoredScopePaths.contains(scope.path) {
+                                            if let watcherError = model.storageEventWatcherErrors[scope.path] {
+                                                Text(watcherError)
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.orange)
+                                            } else {
+                                                Text("Filesystem events are prompting full scans; periodic reconciliation remains enabled.")
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.secondary)
+                                            }
                                             if model.isScanning && model.scheduledScanPath == scope.path {
                                                 Text("Scheduled metadata scan in progress")
                                                     .font(.caption2)
                                                     .foregroundStyle(.secondary)
+                                            }
+                                            if model.isScanning && model.eventTriggeredScanPath == scope.path {
+                                                Text("Change detected · checking selected folder")
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.orange)
                                             }
                                             if let attemptedAt = model.storageMonitoringLastAttempt[scope.path] {
                                                 Text("Last attempt \(attemptedAt.formatted(date: .abbreviated, time: .shortened))")

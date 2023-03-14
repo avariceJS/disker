@@ -205,6 +205,10 @@ public enum SelectedScopeBookmarkStore {
         creationOptions(isSandboxed: try isCurrentProcessSandboxed())
     }
 
+    public static func requiresSecurityScopedAccess() throws -> Bool {
+        try isCurrentProcessSandboxed()
+    }
+
     static func resolutionOptionsForCurrentProcess() throws -> URL.BookmarkResolutionOptions {
         resolutionOptions(isSandboxed: try isCurrentProcessSandboxed())
     }
