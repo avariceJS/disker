@@ -1439,6 +1439,9 @@ struct DashboardView: View {
                                 }
                                 .font(.caption2)
                                 .accessibilityElement(children: .combine)
+                                if folder.excludedSymlinkCount > 0 {
+                                    excludedSymlinkSection(for: folder)
+                                }
                             }
                             Text("These are partial current-size estimates, not new bytes. Disker cannot reconstruct a before-scan it did not record; a complete baseline and later scan are needed to show future growth.")
                                 .font(.caption2)
