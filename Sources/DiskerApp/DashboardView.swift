@@ -3580,9 +3580,16 @@ struct DashboardView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 if folder.excludedSymlinkPaths.isEmpty {
-                    Text("A symlink was rejected in the selected root path before scanning began.")
-                        .font(.caption.monospaced())
+                    Text("This saved scan records \(folder.excludedSymlinkCount) excluded links but did not retain their names. Rescan the selected folder to record exact paths; Disker will not follow them.")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Rescan to record link names…") {
+                        model.chooseFolders(
+                            startingAt: URL(fileURLWithPath: folder.path).deletingLastPathComponent()
+                        )
+                    }
+                    .buttonStyle(.link)
                 } else {
                     ForEach(folder.excludedSymlinkPaths, id: \.self) { relativePath in
                         HStack(spacing: 8) {
