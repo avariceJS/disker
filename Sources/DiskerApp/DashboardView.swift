@@ -1287,10 +1287,14 @@ struct DashboardView: View {
                     if !latest.folders.contains(where: {
                         model.fileInventoryReports[$0.path]?.folderObservationID == $0.id
                     }) {
-                        Text("The latest folder scans do not have a complete file-level baseline. Scan a selected folder to record one; a later complete scan will show the changed paths. Earlier growth cannot be reconstructed.")
+                        Text("The latest folder scans do not have a complete file-level baseline. In Folders, save a location and enable monitoring to record a fresh baseline; later complete scans can show exact changed paths while Disker is active. Earlier growth cannot be reconstructed.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                        Button("Set up selected-folder monitoring") {
+                            selectedSection = "Folders"
+                        }
+                        .buttonStyle(.link)
                     } else {
                         ForEach(latest.folders) { folder in
                             if let report = model.fileInventoryReports[folder.path],
