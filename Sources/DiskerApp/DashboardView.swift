@@ -3592,6 +3592,13 @@ struct DashboardView: View {
                                 .truncationMode(.middle)
                             Spacer(minLength: 4)
                             if relativePath != "." {
+                                Button("Choose target to measure…") {
+                                    let link = URL(fileURLWithPath: folder.path)
+                                        .appendingPathComponent(relativePath)
+                                    model.chooseFolders(startingAt: link.deletingLastPathComponent())
+                                }
+                                .buttonStyle(.link)
+                                .help("Select a target folder explicitly; Disker will not follow this link")
                                 Button {
                                     let link = URL(fileURLWithPath: folder.path)
                                         .appendingPathComponent(relativePath)
