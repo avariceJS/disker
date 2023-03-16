@@ -1304,7 +1304,7 @@ struct DashboardView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     if latest.folders.contains(where: { folder in
                         guard let report = model.fileInventoryReports[folder.path] else { return true }
-                        return report.folderObservationID != folder.id || !report.hasBaseline
+                        return report.folderObservationID != folder.id
                     }) {
                         Button("Choose folders and record a baseline") { model.chooseFolders() }
                             .buttonStyle(.link)
