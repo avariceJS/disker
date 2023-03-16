@@ -1222,8 +1222,8 @@ struct DashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 header("Storage overview", subtitle: "A measured view of your Mac's storage, with clear limits.")
-                capacityCard
                 fileChangeOverviewCard
+                capacityCard
                 if model.latestScan == nil && !model.isScanning {
                     emptyHistoryCard
                 } else {
