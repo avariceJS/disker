@@ -1284,63 +1284,22 @@ struct DashboardView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Label("Changes inside selected folders", systemImage: "doc.badge.arrow.up")
                         .font(.headline)
-                    if !latest.folders.contains(where: {
-                        model.fileInventoryReports[$0.path]?.folderObservationID == $0.id
+                    ForEach(latest.folders) { folder in
+                        fileInventoryOverviewRow(folder, latest: latest)
+                    }
+                    Text("Disker compares regular files only inside the exact selected folders. It cannot name changes elsewhere on the Mac, reconstruct earlier growth, or catch files created and removed between scans. Overlapping roots are not additive; allocated bytes are estimates, not reclaimable space.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if latest.folders.contains(where: { folder in
+                        guard let report = model.fileInventoryReports[folder.path] else { return true }
+                        return report.folderObservationID != folder.id || !report.hasBaseline
                     }) {
-                        Text("The latest folder scans do not have a complete file-level baseline. In Folders, save a location and enable monitoring to record a fresh baseline; later complete scans can show exact changed paths while Disker is active. Earlier growth cannot be reconstructed.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Button("Set up selected-folder monitoring") {
-                            selectedSection = "Folders"
-                        }
-                        .buttonStyle(.link)
+                        Button("Choose folders and record a baseline") { model.chooseFolders() }
+                            .buttonStyle(.link)
+                            .disabled(model.isScanning)
                     } else {
-                        ForEach(latest.folders) { folder in
-                            if let report = model.fileInventoryReports[folder.path],
-                               report.folderObservationID == folder.id {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(folder.displayName)
-                                    .font(.subheadline.weight(.semibold))
-                                if !report.hasBaseline {
-                                    Text("Baseline recorded at \(report.observedAt.formatted(date: .abbreviated, time: .shortened)); the next complete scan can show file-level changes.")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                } else {
-                                    Text("Net allocated estimate \(report.netAllocatedDelta.map(formattedDelta) ?? "unknown") since \(report.previousObservedAt?.formatted(date: .abbreviated, time: .shortened) ?? "unknown time") · \(report.changedPathCount) changed paths")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    let positiveChanges = report.changes.filter { $0.allocatedDelta > 0 }.prefix(3)
-                                    ForEach(Array(positiveChanges)) { change in
-                                        HStack(spacing: 8) {
-                                            Text(change.relativePath.isEmpty ? folder.displayName : change.relativePath)
-                                                .lineLimit(1)
-                                                .truncationMode(.middle)
-                                            Spacer(minLength: 4)
-                                            Text("+\(format(change.allocatedDelta)) allocated estimate")
-                                                .monospacedDigit()
-                                        }
-                                        .font(.caption2)
-                                    }
-                                    if report.changedPathCount == 0 {
-                                        Text("No file-path or size changes measured.")
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    if report.omittedChangeCount > 0 {
-                                        Text("\(report.omittedChangeCount) additional paths are included in the net total; open Folders for the bounded details.")
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                            }
-                            }
-                        }
-                        Text("Each line compares one exact selected root. Overlapping selected roots are not additive. Changes show differences between scans, not cause or reclaimable space.")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Button("Open Folders for file details") { selectedSection = "Folders" }
+                        Button("Open Folders for file details and monitoring") { selectedSection = "Folders" }
                             .buttonStyle(.link)
                     }
                 }
@@ -1350,6 +1309,73 @@ struct DashboardView: View {
                 .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.orange.opacity(0.12)))
             }
         }
+    }
+
+    @ViewBuilder
+    private func fileInventoryOverviewRow(_ folder: FolderObservation, latest: ScanObservation) -> some View {
+        if let report = model.fileInventoryReports[folder.path], report.folderObservationID == folder.id {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(folder.displayName)
+                    .font(.subheadline.weight(.semibold))
+                if !report.hasBaseline {
+                    Text("Baseline recorded at \(report.observedAt.formatted(date: .abbreviated, time: .shortened)); the next complete scan can show file-level changes.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(fileInventorySummary(report))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ForEach(Array(report.changes.filter { $0.allocatedDelta > 0 }.prefix(3))) { change in
+                        fileInventoryGrowthRow(change, folderName: folder.displayName)
+                    }
+                    if report.changedPathCount == 0 {
+                        Text("No file-path or size changes measured.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    if report.omittedChangeCount > 0 {
+                        Text("\(report.omittedChangeCount) additional paths are included in the net totals; open Folders for the bounded details.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(folder.displayName)
+                    .font(.subheadline.weight(.semibold))
+                Group {
+                    if !folder.complete || latest.cancelled {
+                        if model.fileInventoryReports[folder.path] != nil {
+                            Text("\(fileInventoryIncompleteness(for: folder)) No file-level comparison was produced for this scan; the prior report remains stored but is not current.")
+                        } else {
+                            Text("\(fileInventoryIncompleteness(for: folder)) No complete file-level baseline is stored for this folder. A later complete scan must establish one; earlier growth cannot be reconstructed.")
+                        }
+                    } else if model.fileInventoryReports[folder.path] != nil {
+                        Text("This scan did not produce a comparable full inventory. The prior complete report remains stored; a later complete scan can resume path-level comparisons.")
+                    } else {
+                        Text("No complete file-level baseline exists for this selected folder. Record a baseline now to show exact path changes after a later complete scan; earlier growth cannot be reconstructed.")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func fileInventoryGrowthRow(_ change: FileInventoryChange, folderName: String) -> some View {
+        let path = change.relativePath.isEmpty ? folderName : change.relativePath
+        let amount = "+\(format(change.allocatedDelta)) allocated estimate"
+        return HStack(spacing: 8) {
+            Text(path)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 4)
+            Text(amount)
+                .monospacedDigit()
+        }
+        .font(.caption2)
     }
 
     private func partialFolderCoverageReason(_ folder: FolderObservation) -> String {
@@ -3877,6 +3903,14 @@ struct DashboardView: View {
         if folder.byteAccountingOverflowed { return "Filesystem size accounting exceeded the supported integer range." }
         if folder.fileCount > 500_000 { return "This folder contains more than the 500,000-path inventory limit." }
         return "A complete regular-file inventory was not recorded for this scan."
+    }
+
+    private func fileInventorySummary(_ report: FileInventoryChangeSet) -> String {
+        let previousTime = report.previousObservedAt?.formatted(date: .abbreviated, time: .shortened) ?? "unknown time"
+        let growth = report.grossAllocatedGrowth.map { format($0) } ?? "unknown"
+        let reduction = report.grossAllocatedReduction.map { format($0) } ?? "unknown"
+        let net = report.netAllocatedDelta.map(formattedDelta) ?? "unknown"
+        return "Since \(previousTime): added or enlarged paths ~\(growth) allocated estimate · reduced paths ~\(reduction) · net \(net) · \(report.changedPathCount) changed paths"
     }
 
     private func newlyObservedLargeFileSection(

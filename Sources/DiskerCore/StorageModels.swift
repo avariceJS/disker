@@ -547,12 +547,20 @@ public struct FileInventoryChangeSet: Codable, Equatable, Sendable {
     public let omittedChangeCount: Int
     public let netLogicalDelta: Int64?
     public let netAllocatedDelta: Int64?
+    /// Sum of positive allocated-byte deltas across added or enlarged paths.
+    /// Nil for legacy reports that predate this aggregate or on overflow.
+    public let grossAllocatedGrowth: Int64?
+    /// Sum of the magnitudes of negative allocated-byte deltas across reduced
+    /// or no-longer-present paths. Nil for legacy reports or on overflow.
+    public let grossAllocatedReduction: Int64?
     public let symlinkExcludedCount: Int
     public let hasBaseline: Bool
 
     public init(rootPath: String, folderObservationID: UUID = UUID(), previousObservedAt: Date?, observedAt: Date, volumeDeviceID: UInt64?,
                 changes: [FileInventoryChange], changedPathCount: Int, omittedChangeCount: Int,
-                netLogicalDelta: Int64?, netAllocatedDelta: Int64?, symlinkExcludedCount: Int,
+                netLogicalDelta: Int64?, netAllocatedDelta: Int64?,
+                grossAllocatedGrowth: Int64? = nil, grossAllocatedReduction: Int64? = nil,
+                symlinkExcludedCount: Int,
                 hasBaseline: Bool) {
         self.rootPath = rootPath
         self.folderObservationID = folderObservationID
@@ -564,6 +572,8 @@ public struct FileInventoryChangeSet: Codable, Equatable, Sendable {
         self.omittedChangeCount = omittedChangeCount
         self.netLogicalDelta = netLogicalDelta
         self.netAllocatedDelta = netAllocatedDelta
+        self.grossAllocatedGrowth = grossAllocatedGrowth
+        self.grossAllocatedReduction = grossAllocatedReduction
         self.symlinkExcludedCount = symlinkExcludedCount
         self.hasBaseline = hasBaseline
     }

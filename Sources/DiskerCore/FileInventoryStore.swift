@@ -73,6 +73,7 @@ public enum FileInventoryStore {
                 observedAt: current.observedAt, volumeDeviceID: current.volumeDeviceID,
                 changes: [], changedPathCount: 0, omittedChangeCount: 0,
                 netLogicalDelta: nil, netAllocatedDelta: nil,
+                grossAllocatedGrowth: nil, grossAllocatedReduction: nil,
                 symlinkExcludedCount: current.excludedSymlinkCount, hasBaseline: false
             )
         }
@@ -81,8 +82,12 @@ public enum FileInventoryStore {
         var changedPathCount = 0
         var logicalDelta: Int64 = 0
         var allocatedDelta: Int64 = 0
+        var grossAllocatedGrowth: Int64 = 0
+        var grossAllocatedReduction: Int64 = 0
         var logicalOverflow = false
         var allocatedOverflow = false
+        var grossGrowthOverflow = false
+        var grossReductionOverflow = false
         func precedes(_ lhs: FileInventoryChange, _ rhs: FileInventoryChange) -> Bool {
             let left = max(lhs.allocatedDelta, 0)
             let right = max(rhs.allocatedDelta, 0)
@@ -94,6 +99,15 @@ public enum FileInventoryStore {
             changedPathCount += 1
             add(change.logicalDelta, to: &logicalDelta, overflowed: &logicalOverflow)
             add(change.allocatedDelta, to: &allocatedDelta, overflowed: &allocatedOverflow)
+            if change.allocatedDelta > 0 {
+                add(change.allocatedDelta, to: &grossAllocatedGrowth, overflowed: &grossGrowthOverflow)
+            } else if change.allocatedDelta < 0 {
+                if change.allocatedDelta == Int64.min {
+                    grossReductionOverflow = true
+                } else {
+                    add(-change.allocatedDelta, to: &grossAllocatedReduction, overflowed: &grossReductionOverflow)
+                }
+            }
             var low = 0
             var high = changes.count
             while low < high {
@@ -173,6 +187,8 @@ public enum FileInventoryStore {
             omittedChangeCount: max(0, changedPathCount - maximumChangesInReport),
             netLogicalDelta: logicalOverflow ? nil : logicalDelta,
             netAllocatedDelta: allocatedOverflow ? nil : allocatedDelta,
+            grossAllocatedGrowth: grossGrowthOverflow ? nil : grossAllocatedGrowth,
+            grossAllocatedReduction: grossReductionOverflow ? nil : grossAllocatedReduction,
             symlinkExcludedCount: current.excludedSymlinkCount, hasBaseline: true
         )
     }

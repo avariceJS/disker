@@ -3266,6 +3266,40 @@ private struct DiskerCoreChecks {
             try expect(changes?.netAllocatedDelta != nil,
                        "allocated-byte estimate change should be computed separately from logical-size change")
 
+            let aggregateURL = temporaryRoot.appendingPathComponent("local/Disker/growth-aggregates.plist")
+            let aggregateRoot = root.path + "/aggregate"
+            let aggregateTime = Date(timeIntervalSince1970: 42_000)
+            let aggregateBaseline = FileInventorySnapshot(
+                rootPath: aggregateRoot, volumeDeviceID: 7, observedAt: aggregateTime,
+                entries: [
+                    FileInventoryEntry(relativePath: "kept.bin", logicalBytes: 100, allocatedBytes: 600),
+                    FileInventoryEntry(relativePath: "removed.bin", logicalBytes: 500, allocatedBytes: 500)
+                ], complete: true, excludedSymlinkCount: 0
+            )
+            let aggregateCurrent = FileInventorySnapshot(
+                rootPath: aggregateRoot, volumeDeviceID: 7, observedAt: aggregateTime.addingTimeInterval(60),
+                entries: [
+                    FileInventoryEntry(relativePath: "added.bin", logicalBytes: 700, allocatedBytes: 700),
+                    FileInventoryEntry(relativePath: "kept.bin", logicalBytes: 100, allocatedBytes: 800)
+                ], complete: true, excludedSymlinkCount: 0
+            )
+            _ = try FileInventoryStore.record(aggregateBaseline, at: aggregateURL)
+            let aggregateReport = try FileInventoryStore.record(aggregateCurrent, at: aggregateURL)
+            try expect(aggregateReport?.grossAllocatedGrowth == 900
+                       && aggregateReport?.grossAllocatedReduction == 500
+                       && aggregateReport?.netAllocatedDelta == 400,
+                       "the report must preserve gross growth and reductions even when they partly offset in the net allocated estimate")
+            guard let aggregateReport else {
+                throw CheckFailure.assertion("the comparable inventory should produce an aggregate report")
+            }
+            var legacyReportObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(aggregateReport)) as? [String: Any]
+            legacyReportObject?.removeValue(forKey: "grossAllocatedGrowth")
+            legacyReportObject?.removeValue(forKey: "grossAllocatedReduction")
+            let legacyReportData = try JSONSerialization.data(withJSONObject: legacyReportObject ?? [:])
+            let decodedLegacyReport = try JSONDecoder().decode(FileInventoryChangeSet.self, from: legacyReportData)
+            try expect(decodedLegacyReport.grossAllocatedGrowth == nil && decodedLegacyReport.grossAllocatedReduction == nil,
+                       "older file-change reports without gross aggregates must remain readable and leave those totals unknown")
+
             let incomplete = FileInventorySnapshot(
                 rootPath: next.rootPath, volumeDeviceID: next.volumeDeviceID,
                 observedAt: next.observedAt.addingTimeInterval(10), entries: [],
