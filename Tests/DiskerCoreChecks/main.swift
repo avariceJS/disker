@@ -1666,7 +1666,7 @@ private struct DiskerCoreChecks {
         let base = StorageMonitoringPolicy.Input(
             enabled: true,
             enabledAt: start,
-            appIsActive: true,
+            monitoringSessionOpen: true,
             savedRootIdentifiers: roots,
             selectedRootIdentifiers: roots
         )
@@ -1697,7 +1697,7 @@ private struct DiskerCoreChecks {
                    && !StorageMonitoringPolicy.shouldPauseAfterScheduledScan(emptyCompleteRoot),
                    "roots with measured data or a complete empty observation should remain monitorable")
         let defaults = StorageMonitoringPolicy.evaluate(
-            StorageMonitoringPolicy.Input(enabled: true, interval: 1, enabledAt: start, appIsActive: true,
+            StorageMonitoringPolicy.Input(enabled: true, interval: 1, enabledAt: start, monitoringSessionOpen: true,
                                           savedRootIdentifiers: roots, selectedRootIdentifiers: roots),
             at: start.addingTimeInterval(299)
         )
@@ -1708,7 +1708,7 @@ private struct DiskerCoreChecks {
                    "the first due root should be selected in stable lexical order")
 
         let rootStarted = StorageMonitoringPolicy.Input(
-            enabled: true, interval: 300, enabledAt: start, appIsActive: true,
+            enabled: true, interval: 300, enabledAt: start, monitoringSessionOpen: true,
             savedRootIdentifiers: roots, selectedRootIdentifiers: roots,
             scheduledScanRootIdentifiers: ["/saved/alpha"],
             lastScheduledStartByRoot: ["/saved/alpha": start.addingTimeInterval(300)]
@@ -1718,7 +1718,7 @@ private struct DiskerCoreChecks {
                    "a scheduled scan must not overlap another scheduled root")
         let oneDuePerEvaluation = StorageMonitoringPolicy.evaluate(
             StorageMonitoringPolicy.Input(
-                enabled: true, interval: 300, enabledAt: start, appIsActive: true,
+                enabled: true, interval: 300, enabledAt: start, monitoringSessionOpen: true,
                 savedRootIdentifiers: roots, selectedRootIdentifiers: roots,
                 lastScheduledStartByRoot: ["/saved/alpha": start.addingTimeInterval(600)]
             ),
@@ -1729,7 +1729,7 @@ private struct DiskerCoreChecks {
 
         let rollback = StorageMonitoringPolicy.evaluate(
             StorageMonitoringPolicy.Input(
-                enabled: true, interval: 300, enabledAt: start, appIsActive: true,
+                enabled: true, interval: 300, enabledAt: start, monitoringSessionOpen: true,
                 savedRootIdentifiers: roots, selectedRootIdentifiers: roots,
                 lastScheduledStartByRoot: ["/saved/alpha": start.addingTimeInterval(600)]
             ),
@@ -1739,7 +1739,7 @@ private struct DiskerCoreChecks {
                    "a wall-clock rollback must not make a previously scanned root due again")
         let afterRollback = StorageMonitoringPolicy.evaluate(
             StorageMonitoringPolicy.Input(
-                enabled: true, interval: 300, enabledAt: start, appIsActive: true,
+                enabled: true, interval: 300, enabledAt: start, monitoringSessionOpen: true,
                 savedRootIdentifiers: roots, selectedRootIdentifiers: ["/saved/alpha"],
                 lastScheduledStartByRoot: ["/saved/alpha": start.addingTimeInterval(600)]
             ),
@@ -1752,16 +1752,25 @@ private struct DiskerCoreChecks {
             StorageMonitoringPolicy.Input(scheduledScanRootIdentifiers: ["/saved/alpha"]), at: start
         )
         let inactive = StorageMonitoringPolicy.evaluate(
-            StorageMonitoringPolicy.Input(enabled: true, appIsActive: false,
+            StorageMonitoringPolicy.Input(enabled: true, monitoringSessionOpen: false,
                                           scheduledScanRootIdentifiers: ["/saved/alpha"]), at: start
         )
         try expect(disabled.cancelScheduledRootIdentifiers == ["/saved/alpha"]
                    && inactive.cancelScheduledRootIdentifiers == ["/saved/alpha"],
-                   "disabling monitoring or app inactivity should cancel scheduled scans")
+                   "disabling monitoring or closing its window should cancel scheduled scans")
+        let backgroundAppButOpenWindow = StorageMonitoringPolicy.evaluate(
+            StorageMonitoringPolicy.Input(
+                enabled: true, interval: 300, enabledAt: start, monitoringSessionOpen: true,
+                savedRootIdentifiers: ["/saved/alpha"], selectedRootIdentifiers: ["/saved/alpha"]
+            ),
+            at: start.addingTimeInterval(900)
+        )
+        try expect(backgroundAppButOpenWindow.nextScheduledRootIdentifier == "/saved/alpha",
+                   "selected-folder monitoring should remain eligible when another app is foregrounded but Disker stays open")
 
         let excluded = StorageMonitoringPolicy.evaluate(
             StorageMonitoringPolicy.Input(
-                enabled: true, enabledAt: start, appIsActive: true,
+                enabled: true, enabledAt: start, monitoringSessionOpen: true,
                 savedRootIdentifiers: roots.subtracting(["/saved/alpha"]),
                 selectedRootIdentifiers: roots,
                 pausedRootIdentifiers: ["/saved/beta"],
@@ -1776,7 +1785,7 @@ private struct DiskerCoreChecks {
 
         let manualTakeover = StorageMonitoringPolicy.evaluate(
             StorageMonitoringPolicy.Input(
-                enabled: true, enabledAt: start, appIsActive: true,
+                enabled: true, enabledAt: start, monitoringSessionOpen: true,
                 savedRootIdentifiers: roots, selectedRootIdentifiers: roots,
                 manualScanRootIdentifiers: ["/saved/alpha"],
                 scheduledScanRootIdentifiers: ["/saved/alpha"]
@@ -1787,7 +1796,7 @@ private struct DiskerCoreChecks {
                    && manualTakeover.nextScheduledRootIdentifier == nil,
                    "manual scanning should supersede its scheduled scan and block scheduling while busy")
         let globalBusy = StorageMonitoringPolicy.evaluate(
-            StorageMonitoringPolicy.Input(enabled: true, enabledAt: start, appIsActive: true,
+            StorageMonitoringPolicy.Input(enabled: true, enabledAt: start, monitoringSessionOpen: true,
                                           globalScanInProgress: true,
                                           savedRootIdentifiers: roots, selectedRootIdentifiers: roots),
             at: start.addingTimeInterval(900)
@@ -1796,7 +1805,7 @@ private struct DiskerCoreChecks {
                    "scheduled monitoring must wait for any unrelated global scan to finish")
         let malformedCadence = StorageMonitoringPolicy.evaluate(
             StorageMonitoringPolicy.Input(enabled: true, interval: .infinity, enabledAt: start,
-                                          appIsActive: true, savedRootIdentifiers: roots,
+                                          monitoringSessionOpen: true, savedRootIdentifiers: roots,
                                           selectedRootIdentifiers: roots),
             at: start.addingTimeInterval(900)
         )
@@ -1815,7 +1824,7 @@ private struct DiskerCoreChecks {
         let firstDue = enabledAt.addingTimeInterval(interval)
         let firstDecision = StorageMonitoringPolicy.evaluate(
             StorageMonitoringPolicy.Input(
-                enabled: true, interval: interval, enabledAt: enabledAt, appIsActive: true,
+                enabled: true, interval: interval, enabledAt: enabledAt, monitoringSessionOpen: true,
                 savedRootIdentifiers: [root], selectedRootIdentifiers: [root]
             ),
             at: firstDue.addingTimeInterval(-1)
@@ -1824,7 +1833,7 @@ private struct DiskerCoreChecks {
                    "an opted-in root must not be scanned before its full five-minute interval")
         let dueDecision = StorageMonitoringPolicy.evaluate(
             StorageMonitoringPolicy.Input(
-                enabled: true, interval: interval, enabledAt: enabledAt, appIsActive: true,
+                enabled: true, interval: interval, enabledAt: enabledAt, monitoringSessionOpen: true,
                 savedRootIdentifiers: [root], selectedRootIdentifiers: [root]
             ),
             at: firstDue
@@ -1836,7 +1845,7 @@ private struct DiskerCoreChecks {
         let secondDue = firstScanFinished.addingTimeInterval(interval)
         let secondDecisionBeforeDue = StorageMonitoringPolicy.evaluate(
             StorageMonitoringPolicy.Input(
-                enabled: true, interval: interval, enabledAt: enabledAt, appIsActive: true,
+                enabled: true, interval: interval, enabledAt: enabledAt, monitoringSessionOpen: true,
                 savedRootIdentifiers: [root], selectedRootIdentifiers: [root],
                 lastScheduledStartByRoot: [root: firstScanFinished]
             ),
@@ -1846,7 +1855,7 @@ private struct DiskerCoreChecks {
                    "the next scheduled scan must wait a full interval after the prior scan finishes")
         let secondDueDecision = StorageMonitoringPolicy.evaluate(
             StorageMonitoringPolicy.Input(
-                enabled: true, interval: interval, enabledAt: enabledAt, appIsActive: true,
+                enabled: true, interval: interval, enabledAt: enabledAt, monitoringSessionOpen: true,
                 savedRootIdentifiers: [root], selectedRootIdentifiers: [root],
                 lastScheduledStartByRoot: [root: firstScanFinished]
             ),
@@ -1883,7 +1892,7 @@ private struct DiskerCoreChecks {
 
         let inactiveDecision = StorageMonitoringPolicy.evaluate(
             StorageMonitoringPolicy.Input(
-                enabled: true, interval: interval, enabledAt: enabledAt, appIsActive: false,
+                enabled: true, interval: interval, enabledAt: enabledAt, monitoringSessionOpen: false,
                 savedRootIdentifiers: [root], selectedRootIdentifiers: [root],
                 scheduledScanRootIdentifiers: [root]
             ),

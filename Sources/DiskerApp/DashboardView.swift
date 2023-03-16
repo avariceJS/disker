@@ -55,6 +55,7 @@ final class DashboardModel {
     var isScanning = false
     var isSamplingRAM = false
     var isAppActive = false
+    var storageMonitoringSessionOpen = false
     var duplicateResult: DuplicateVerificationResult?
     var isVerifyingDuplicates = false
     var duplicateProgressPhase: DuplicateVerificationPhase = .readingMetadata
@@ -611,7 +612,7 @@ final class DashboardModel {
                 if !monitoredScopePaths.contains(completedScheduledPath) {
                     storageMonitoringCooldownByPath.removeValue(forKey: completedScheduledPath)
                     storageMonitoringLastAttempt.removeValue(forKey: completedScheduledPath)
-                } else if observation.cancelled && isAppActive {
+                } else if observation.cancelled && isAppActive && storageMonitoringSessionOpen {
                     pauseStorageMonitoring(completedScheduledPath, reason: "Scheduled scan cancelled. Resume monitoring when ready.")
                 } else if let folder = observation.folders.first(where: {
                     URL(fileURLWithPath: $0.path).standardizedFileURL.path == completedScheduledPath
@@ -635,7 +636,7 @@ final class DashboardModel {
                 if !monitoredScopePaths.contains(path) {
                     storageMonitoringCooldownByPath.removeValue(forKey: path)
                     storageMonitoringLastAttempt.removeValue(forKey: path)
-                } else if observation.cancelled && isAppActive {
+                } else if observation.cancelled && isAppActive && storageMonitoringSessionOpen {
                     pauseStorageMonitoring(path, reason: "Event-triggered scan cancelled. Resume monitoring when ready.")
                 } else if let folder = observation.folders.first(where: {
                     URL(fileURLWithPath: $0.path).standardizedFileURL.path == path
@@ -721,7 +722,7 @@ final class DashboardModel {
 
     func startStorageMonitoringScheduler() {
         guard monitoredScopePaths.contains(where: { pausedMonitoringReasons[$0] == nil }),
-              isAppActive, storageMonitoringTask == nil else { return }
+              storageMonitoringSessionOpen, storageMonitoringTask == nil else { return }
         storageMonitoringTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
@@ -753,20 +754,21 @@ final class DashboardModel {
     }
 
     func setStorageMonitoringAppActive(_ active: Bool) {
-        let wasActive = isAppActive
         isAppActive = active
-        if active {
-            if !wasActive {
-                for path in monitoredScopePaths where pausedMonitoringReasons[path] == nil {
-                    storageMonitoringCooldownByPath[path] = .now
-                }
+    }
+
+    func setStorageMonitoringSessionOpen(_ open: Bool) {
+        storageMonitoringSessionOpen = open
+        if open {
+            for path in monitoredScopePaths where pausedMonitoringReasons[path] == nil {
+                storageMonitoringCooldownByPath[path] = .now
             }
             startStorageEventWatchers()
             startStorageMonitoringScheduler()
         } else {
             stopStorageMonitoringScheduler()
             stopStorageEventWatchers()
-            if let path = scheduledScanPath ?? eventTriggeredScanPath {
+            if let path = scheduledScanPath {
                 cancelScan()
                 storageMonitoringCooldownByPath[path] = .now
             }
@@ -774,7 +776,7 @@ final class DashboardModel {
     }
 
     private func startStorageEventWatchers() {
-        guard isAppActive else { return }
+        guard storageMonitoringSessionOpen else { return }
         let eligible = monitoredScopePaths.subtracting(pausedMonitoringReasons.keys)
         for path in Array(storageEventWatchers.keys) where !eligible.contains(path) {
             stopStorageEventWatcher(for: path)
@@ -814,7 +816,7 @@ final class DashboardModel {
     }
 
     private func requestMonitoringBaseline(for path: String) {
-        guard isAppActive else { return }
+        guard storageMonitoringSessionOpen else { return }
         if isScanning || isMeasuringOwnFootprint || isVerifyingDuplicates {
             noteStorageChangeEvent(for: path)
         } else {
@@ -823,7 +825,7 @@ final class DashboardModel {
     }
 
     private func noteStorageChangeEvent(for path: String) {
-        guard isAppActive, monitoredScopePaths.contains(path), pausedMonitoringReasons[path] == nil else { return }
+        guard storageMonitoringSessionOpen, monitoredScopePaths.contains(path), pausedMonitoringReasons[path] == nil else { return }
         pendingStorageEventPaths.insert(path)
         storageEventScanTask?.cancel()
         storageEventScanTask = Task { [weak self] in
@@ -831,7 +833,7 @@ final class DashboardModel {
                 try await Task.sleep(nanoseconds: 3_000_000_000)
             } catch { return }
             guard let self else { return }
-            while !Task.isCancelled, self.isAppActive, !self.pendingStorageEventPaths.isEmpty {
+            while !Task.isCancelled, self.storageMonitoringSessionOpen, !self.pendingStorageEventPaths.isEmpty {
                 if !self.isScanning && !self.isMeasuringOwnFootprint && !self.isVerifyingDuplicates {
                     let now = Date.now
                     if let path = self.pendingStorageEventPaths
@@ -864,7 +866,7 @@ final class DashboardModel {
                 enabled: !monitoredScopePaths.isEmpty,
                 interval: storageMonitoringInterval,
                 enabledAt: monitoredScopePaths.compactMap { storageMonitoringEnabledAtByPath[$0] }.min() ?? .distantFuture,
-                appIsActive: isAppActive,
+                monitoringSessionOpen: storageMonitoringSessionOpen,
                 globalScanInProgress: isScanning || isMeasuringOwnFootprint || isVerifyingDuplicates,
                 savedRootIdentifiers: Set(rememberedScopes.map(\.path)),
                 selectedRootIdentifiers: monitoredScopePaths,
@@ -996,6 +998,7 @@ final class DashboardModel {
     func clearHistory() {
         historyGeneration.advance()
         monitoredScopePaths = []
+        storageMonitoringSessionOpen = false
         pausedMonitoringReasons = [:]
         storageMonitoringEnabledAtByPath = [:]
         storageMonitoringCooldownByPath = [:]
@@ -1156,6 +1159,7 @@ struct DashboardView: View {
         }
         .onAppear {
             model.setStorageMonitoringAppActive(scenePhase == .active)
+            model.setStorageMonitoringSessionOpen(true)
             model.startStorageMonitoringScheduler()
             model.refreshCapacity()
             model.updateMemoryPressureMonitoring(
@@ -1169,8 +1173,7 @@ struct DashboardView: View {
             )
         }
         .onDisappear {
-            model.stopStorageMonitoringScheduler()
-            model.stopStorageEventWatchers()
+            model.setStorageMonitoringSessionOpen(false)
         }
         .onChange(of: isAutomaticRAMSamplingEnabled) { _, enabled in
             if enabled && scenePhase == .active {
@@ -2194,7 +2197,7 @@ struct DashboardView: View {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(alignment: .top) {
-                            Text("Turning monitoring on requests a fresh baseline scan. For each opted-in saved folder, macOS events request debounced metadata-only scans (at most once a minute), with periodic scans for persistent changes. Events can be missed or coalesced; files created and removed between scans cannot be reconstructed. Monitoring stays within selected paths while Disker is active and resets off when Disker quits or relaunches.")
+                            Text("Turning monitoring on requests a fresh baseline scan. For each opted-in saved folder, macOS events request debounced metadata-only scans (at most once a minute), with periodic metadata scans scheduled for reconciliation. Monitoring continues while this window remains open, even when you switch to another app. Closing the window or quitting stops it; opt-in selections reset off on relaunch. macOS sleep may defer scans; events can be missed or coalesced, and files created and removed between scans cannot be reconstructed. No background helper or unselected path is monitored.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -2223,7 +2226,7 @@ struct DashboardView: View {
                                             .foregroundStyle(.secondary)
                                             .lineLimit(1)
                                             .truncationMode(.middle)
-                                        Toggle("Monitor while Disker is active", isOn: Binding(
+                                        Toggle("Monitor while this window is open", isOn: Binding(
                                             get: { model.monitoredScopePaths.contains(scope.path) },
                                             set: { model.toggleStorageMonitoring(scope.path, enabled: $0) }
                                         ))
@@ -2243,7 +2246,7 @@ struct DashboardView: View {
                                                     .font(.caption2)
                                                     .foregroundStyle(.orange)
                                             } else {
-                                                Text("Filesystem events are prompting full scans; periodic reconciliation remains enabled.")
+                                                Text("Selected-root events prompt metadata scans; periodic reconciliation runs while this window stays open.")
                                                     .font(.caption2)
                                                     .foregroundStyle(.secondary)
                                             }
@@ -2419,7 +2422,7 @@ struct DashboardView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Label("Folder-size scans read metadata only. Explicit app signature checks read signed executable and resource contents locally; duplicate verification reads selected candidates after confirmation. Nothing is uploaded.", systemImage: "hand.raised")
                         Label("For a selected app bundle, Disker reads its declared bundle ID and embedded App Groups claim, then reads signed executable and resource contents to check local signature integrity. It does not verify notarization or publisher trust, current use, or exclusive ownership; App Group data is shared.", systemImage: "app.badge.checkmark")
-                        Label("Scan locations are chosen by you. Disker does not change their contents; optional monitoring scans selected paths only while the app is active.", systemImage: "folder.badge.plus")
+                        Label("Scan locations are chosen by you. Disker does not change their contents; optional monitoring scans selected paths while its window remains open, even when you switch to another app.", systemImage: "folder.badge.plus")
                         Label("Disker does not offer cleanup or deletion of user files.", systemImage: "lock.shield")
                         Label("History stays in this Mac's Application Support folder.", systemImage: "internaldrive")
                     }

@@ -18,7 +18,9 @@ public enum StorageMonitoringPolicy {
         /// Timestamp at which this opt-in monitoring session was enabled.
         /// A root without prior scheduled history waits one full interval from it.
         public var enabledAt: Date
-        public var appIsActive: Bool
+        /// True while the user-selected Disker monitoring window remains open.
+        /// Storage monitoring does not depend on which app currently has focus.
+        public var monitoringSessionOpen: Bool
         public var globalScanInProgress: Bool
         public var savedRootIdentifiers: Set<String>
         public var selectedRootIdentifiers: Set<String>
@@ -33,7 +35,7 @@ public enum StorageMonitoringPolicy {
             enabled: Bool = false,
             interval: TimeInterval = StorageMonitoringPolicy.defaultInterval,
             enabledAt: Date = .distantFuture,
-            appIsActive: Bool = false,
+            monitoringSessionOpen: Bool = false,
             globalScanInProgress: Bool = false,
             savedRootIdentifiers: Set<String> = [],
             selectedRootIdentifiers: Set<String> = [],
@@ -46,7 +48,7 @@ public enum StorageMonitoringPolicy {
             self.enabled = enabled
             self.interval = interval
             self.enabledAt = enabledAt
-            self.appIsActive = appIsActive
+            self.monitoringSessionOpen = monitoringSessionOpen
             self.globalScanInProgress = globalScanInProgress
             self.savedRootIdentifiers = savedRootIdentifiers
             self.selectedRootIdentifiers = selectedRootIdentifiers
@@ -71,7 +73,7 @@ public enum StorageMonitoringPolicy {
     public static func evaluate(_ input: Input, at now: Date) -> Decision {
         let interval = max(minimumInterval, input.interval.isFinite ? input.interval : defaultInterval)
         let eligible: Set<String>
-        if input.enabled && input.appIsActive {
+        if input.enabled && input.monitoringSessionOpen {
             eligible = input.selectedRootIdentifiers
                 .intersection(input.savedRootIdentifiers)
                 .subtracting(input.pausedRootIdentifiers)
@@ -84,7 +86,7 @@ public enum StorageMonitoringPolicy {
         // A user-started scan takes precedence over a scheduled scan of that same root.
         cancel.formUnion(input.scheduledScanRootIdentifiers.intersection(input.manualScanRootIdentifiers))
 
-        guard input.enabled, input.appIsActive,
+        guard input.enabled, input.monitoringSessionOpen,
               !input.globalScanInProgress,
               input.manualScanRootIdentifiers.isEmpty,
               input.scheduledScanRootIdentifiers.subtracting(cancel).isEmpty else {
