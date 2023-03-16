@@ -18,6 +18,7 @@ public enum FileInventoryStore {
     private struct State: Codable {
         var snapshots: [String: FileInventorySnapshot] = [:]
         var reports: [String: FileInventoryChangeSet] = [:]
+        var trendPoints: [String: [FileInventoryTrendPoint]]?
     }
 
     private static let fileName = "file-inventory.plist"
@@ -25,12 +26,20 @@ public enum FileInventoryStore {
     private static let maximumRootCount = 50
     private static let maximumTotalEntryCount = 750_000
     private static let maximumChangesInReport = 100
+    private static let maximumTrendPointsPerRoot = 120
+    private static let maximumTotalTrendPointCount = 2_400
     private static let lock = NSRecursiveLock()
 
     public static func loadReports(at fileURL: URL? = nil) throws -> [String: FileInventoryChangeSet] {
         lock.lock()
         defer { lock.unlock() }
         return try load(at: fileURL).reports
+    }
+
+    public static func loadTrends(at fileURL: URL? = nil) throws -> [String: [FileInventoryTrendPoint]] {
+        lock.lock()
+        defer { lock.unlock() }
+        return try load(at: fileURL).trendPoints ?? [:]
     }
 
     public static func clear(at fileURL: URL? = nil) throws {
@@ -55,6 +64,19 @@ public enum FileInventoryStore {
             value.complete && value.volumeDeviceID == snapshot.volumeDeviceID ? value : nil
         }
         let report = compare(snapshot, with: comparablePrevious)
+        var trendPoints = state.trendPoints ?? [:]
+        if let previous, previous.volumeDeviceID != snapshot.volumeDeviceID {
+            trendPoints[snapshot.rootPath] = []
+        }
+        if let point = FileInventoryTrendPoint(report: report) {
+            var rootPoints = trendPoints[snapshot.rootPath] ?? []
+            rootPoints.append(point)
+            if rootPoints.count > maximumTrendPointsPerRoot {
+                rootPoints.removeFirst(rootPoints.count - maximumTrendPointsPerRoot)
+            }
+            trendPoints[snapshot.rootPath] = rootPoints
+        }
+        state.trendPoints = trendPoints
         state.snapshots[snapshot.rootPath] = snapshot
         state.reports[snapshot.rootPath] = report
         trim(&state, preserving: snapshot.rootPath)
@@ -212,6 +234,14 @@ public enum FileInventoryStore {
                 .min(by: { $0.observedAt < $1.observedAt }) else { break }
             state.snapshots.removeValue(forKey: oldest.rootPath)
             state.reports.removeValue(forKey: oldest.rootPath)
+            state.trendPoints?.removeValue(forKey: oldest.rootPath)
+        }
+        while (state.trendPoints?.values.reduce(0, { $0 + $1.count }) ?? 0) > maximumTotalTrendPointCount {
+            guard let oldestRoot = state.trendPoints?.compactMap({ rootPath, points in
+                points.first.map { (rootPath, $0.observedAt) }
+            }).min(by: { $0.1 < $1.1 })?.0,
+            state.trendPoints?[oldestRoot]?.isEmpty == false else { break }
+            state.trendPoints?[oldestRoot]?.removeFirst()
         }
     }
 

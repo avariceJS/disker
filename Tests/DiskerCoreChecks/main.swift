@@ -3211,6 +3211,20 @@ private struct DiskerCoreChecks {
 
     private static func testFileInventoryHistory() throws {
         try withTemporaryDirectory { temporaryRoot in
+            let legacyStoreURL = temporaryRoot.appendingPathComponent("legacy/Disker/file-inventory.plist")
+            try FileManager.default.createDirectory(
+                at: legacyStoreURL.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
+            let legacyState = try PropertyListSerialization.data(
+                fromPropertyList: ["snapshots": [String: FileInventorySnapshot](),
+                                  "reports": [String: FileInventoryChangeSet]()],
+                format: .binary, options: 0
+            )
+            try legacyState.write(to: legacyStoreURL)
+            let legacyTrends = try FileInventoryStore.loadTrends(at: legacyStoreURL)
+            try expect(legacyTrends.isEmpty,
+                       "a pre-trend file inventory store must decode with an empty aggregate history")
+
             let root = temporaryRoot.appendingPathComponent("project", isDirectory: true)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
             let resize = root.appendingPathComponent("resize.bin")
@@ -3289,6 +3303,22 @@ private struct DiskerCoreChecks {
                        && aggregateReport?.grossAllocatedReduction == 500
                        && aggregateReport?.netAllocatedDelta == 400,
                        "the report must preserve gross growth and reductions even when they partly offset in the net allocated estimate")
+            let aggregateTrends = try FileInventoryStore.loadTrends(at: aggregateURL)[aggregateRoot] ?? []
+            try expect(aggregateTrends.count == 1
+                       && aggregateTrends[0].grossAllocatedGrowth == 900
+                       && aggregateTrends[0].grossAllocatedReduction == 500,
+                       "a complete comparison should retain a bounded aggregate trend point independently of detailed file paths")
+            for index in 1...125 {
+                let repeated = FileInventorySnapshot(
+                    rootPath: aggregateRoot, volumeDeviceID: 7,
+                    observedAt: aggregateTime.addingTimeInterval(60 + Double(index)),
+                    entries: aggregateCurrent.entries, complete: true, excludedSymlinkCount: 0
+                )
+                _ = try FileInventoryStore.record(repeated, at: aggregateURL)
+            }
+            let boundedAggregateTrends = try FileInventoryStore.loadTrends(at: aggregateURL)[aggregateRoot] ?? []
+            try expect(boundedAggregateTrends.count == 120,
+                       "aggregate file-change history should retain at most 120 intervals per selected root")
             guard let aggregateReport else {
                 throw CheckFailure.assertion("the comparable inventory should produce an aggregate report")
             }
@@ -3311,10 +3341,16 @@ private struct DiskerCoreChecks {
             let retainedReport = try FileInventoryStore.loadReports(at: storeURL)[root.path]
             try expect(retainedReport?.observedAt == next.observedAt,
                        "an incomplete scan must leave the previous complete comparison visible only as stale history")
+            let retainedTrends = try FileInventoryStore.loadTrends(at: storeURL)[root.path] ?? []
+            try expect(retainedTrends.count == 1 && retainedTrends[0].observedAt == next.observedAt,
+                       "an incomplete scan must not add a false point to complete-inventory trend history")
             try FileInventoryStore.clear(at: storeURL)
             let afterClear = try FileInventoryStore.loadReports(at: storeURL)
             try expect(afterClear.isEmpty,
                        "Disker history reset should remove only its own separate file inventory store")
+            let clearedTrends = try FileInventoryStore.loadTrends(at: storeURL)
+            try expect(clearedTrends.isEmpty,
+                       "clearing Disker history should remove its private file-inventory trend history")
 
             let cappedURL = temporaryRoot.appendingPathComponent("local/Disker/capped-inventory.plist")
             let olderEntries = (0..<125).map { index in

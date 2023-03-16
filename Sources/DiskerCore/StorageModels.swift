@@ -579,6 +579,47 @@ public struct FileInventoryChangeSet: Codable, Equatable, Sendable {
     }
 }
 
+/// Bounded aggregate history for one comparable interval of a selected root.
+/// Detailed changed paths remain only in the latest change set.
+public struct FileInventoryTrendPoint: Codable, Equatable, Identifiable, Sendable {
+    public var id: String { "\(rootPath)|\(observedAt.timeIntervalSince1970)" }
+    public let rootPath: String
+    public let previousObservedAt: Date
+    public let observedAt: Date
+    public let volumeDeviceID: UInt64?
+    public let grossAllocatedGrowth: Int64?
+    public let grossAllocatedReduction: Int64?
+    public let netLogicalDelta: Int64?
+    public let netAllocatedDelta: Int64?
+    public let changedPathCount: Int
+
+    public init(rootPath: String, previousObservedAt: Date, observedAt: Date, volumeDeviceID: UInt64?,
+                grossAllocatedGrowth: Int64?, grossAllocatedReduction: Int64?, netLogicalDelta: Int64?,
+                netAllocatedDelta: Int64?, changedPathCount: Int) {
+        self.rootPath = rootPath
+        self.previousObservedAt = previousObservedAt
+        self.observedAt = observedAt
+        self.volumeDeviceID = volumeDeviceID
+        self.grossAllocatedGrowth = grossAllocatedGrowth
+        self.grossAllocatedReduction = grossAllocatedReduction
+        self.netLogicalDelta = netLogicalDelta
+        self.netAllocatedDelta = netAllocatedDelta
+        self.changedPathCount = changedPathCount
+    }
+
+    public init?(report: FileInventoryChangeSet) {
+        guard report.hasBaseline, let previousObservedAt = report.previousObservedAt else { return nil }
+        self.init(
+            rootPath: report.rootPath, previousObservedAt: previousObservedAt,
+            observedAt: report.observedAt, volumeDeviceID: report.volumeDeviceID,
+            grossAllocatedGrowth: report.grossAllocatedGrowth,
+            grossAllocatedReduction: report.grossAllocatedReduction,
+            netLogicalDelta: report.netLogicalDelta, netAllocatedDelta: report.netAllocatedDelta,
+            changedPathCount: report.changedPathCount
+        )
+    }
+}
+
 public struct DetailedScanObservation: Sendable {
     public let observation: ScanObservation
     public let fileInventories: [FileInventorySnapshot]

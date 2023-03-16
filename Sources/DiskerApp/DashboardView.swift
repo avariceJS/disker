@@ -51,6 +51,7 @@ final class DashboardModel {
     var ram: RAMObservation?
     var history = LocalHistory()
     var fileInventoryReports: [String: FileInventoryChangeSet] = [:]
+    var fileInventoryTrends: [String: [FileInventoryTrendPoint]] = [:]
     var isScanning = false
     var isSamplingRAM = false
     var isAppActive = false
@@ -111,6 +112,7 @@ final class DashboardModel {
         }
         do {
             fileInventoryReports = try FileInventoryStore.loadReports()
+            fileInventoryTrends = try FileInventoryStore.loadTrends()
         } catch {
             errorMessage = "File change history could not be loaded: \(error.localizedDescription)"
         }
@@ -588,6 +590,11 @@ final class DashboardModel {
                         let reports = try await inventoryTask.value
                         if historyGeneration.accepts(generation) {
                             for report in reports { fileInventoryReports[report.rootPath] = report }
+                            do {
+                                fileInventoryTrends = try FileInventoryStore.loadTrends()
+                            } catch {
+                                errorMessage = "File-change totals were saved, but their bounded history could not be loaded: \(error.localizedDescription)"
+                            }
                         }
                     } catch {
                         if historyGeneration.accepts(generation) {
@@ -1020,6 +1027,7 @@ final class DashboardModel {
             try SelectedScopeBookmarkStore.clear()
             history = LocalHistory()
             fileInventoryReports = [:]
+            fileInventoryTrends = [:]
             rememberedScopes = []
             ram = nil
             errorMessage = nil
@@ -3828,6 +3836,7 @@ struct DashboardView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                fileInventoryTrendSection(for: folder)
             } else if let report {
                 if !report.hasBaseline {
                     Text("Baseline recorded at \(report.observedAt.formatted(date: .abbreviated, time: .shortened)). File-level changes appear after the next comparable full scan. Earlier growth cannot be reconstructed from current sizes. File names and size metadata stay on this Mac; contents are never read.")
@@ -3888,10 +3897,35 @@ struct DashboardView: View {
                         }
                     }
                 }
+                if report.hasBaseline {
+                    fileInventoryTrendSection(for: folder)
+                }
             }
         }
         .padding(10)
         .background(.orange.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private func fileInventoryTrendSection(for folder: FolderObservation) -> some View {
+        let points = Array((model.fileInventoryTrends[folder.path] ?? []).suffix(8).reversed())
+        if !points.isEmpty {
+            DisclosureGroup("Recent complete scan intervals (\(points.count))") {
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(points) { point in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(point.previousObservedAt.formatted(date: .abbreviated, time: .shortened)) → \(point.observedAt.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption2.weight(.medium))
+                            Text("Gross growth ~\(point.grossAllocatedGrowth.map { format($0) } ?? "unknown") · reduced ~\(point.grossAllocatedReduction.map { format($0) } ?? "unknown") · net \(point.netAllocatedDelta.map(formattedDelta) ?? "unknown") · \(point.changedPathCount) paths")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .padding(.top, 4)
+            }
+            .font(.caption2)
+        }
     }
 
     private func fileInventoryIncompleteness(for folder: FolderObservation) -> String {
