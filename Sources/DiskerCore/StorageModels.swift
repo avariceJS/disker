@@ -591,11 +591,13 @@ public struct FileInventoryTrendPoint: Codable, Equatable, Identifiable, Sendabl
     public let grossAllocatedReduction: Int64?
     public let netLogicalDelta: Int64?
     public let netAllocatedDelta: Int64?
+    /// Nil in older trend points saved before coverage disclosure was added.
+    public let excludedSymlinkCount: Int?
     public let changedPathCount: Int
 
     public init(rootPath: String, previousObservedAt: Date, observedAt: Date, volumeDeviceID: UInt64?,
                 grossAllocatedGrowth: Int64?, grossAllocatedReduction: Int64?, netLogicalDelta: Int64?,
-                netAllocatedDelta: Int64?, changedPathCount: Int) {
+                netAllocatedDelta: Int64?, excludedSymlinkCount: Int? = nil, changedPathCount: Int) {
         self.rootPath = rootPath
         self.previousObservedAt = previousObservedAt
         self.observedAt = observedAt
@@ -604,6 +606,7 @@ public struct FileInventoryTrendPoint: Codable, Equatable, Identifiable, Sendabl
         self.grossAllocatedReduction = grossAllocatedReduction
         self.netLogicalDelta = netLogicalDelta
         self.netAllocatedDelta = netAllocatedDelta
+        self.excludedSymlinkCount = excludedSymlinkCount
         self.changedPathCount = changedPathCount
     }
 
@@ -615,6 +618,7 @@ public struct FileInventoryTrendPoint: Codable, Equatable, Identifiable, Sendabl
             grossAllocatedGrowth: report.grossAllocatedGrowth,
             grossAllocatedReduction: report.grossAllocatedReduction,
             netLogicalDelta: report.netLogicalDelta, netAllocatedDelta: report.netAllocatedDelta,
+            excludedSymlinkCount: report.symlinkExcludedCount,
             changedPathCount: report.changedPathCount
         )
     }

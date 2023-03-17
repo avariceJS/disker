@@ -3317,6 +3317,12 @@ private struct DiskerCoreChecks {
                        && aggregateTrends[0].grossAllocatedGrowth == 900
                        && aggregateTrends[0].grossAllocatedReduction == 500,
                        "a complete comparison should retain a bounded aggregate trend point independently of detailed file paths")
+            var legacyTrendObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(aggregateTrends[0])) as? [String: Any]
+            legacyTrendObject?.removeValue(forKey: "excludedSymlinkCount")
+            let legacyTrendData = try JSONSerialization.data(withJSONObject: legacyTrendObject ?? [:])
+            let decodedLegacyTrend = try JSONDecoder().decode(FileInventoryTrendPoint.self, from: legacyTrendData)
+            try expect(decodedLegacyTrend.excludedSymlinkCount == nil,
+                       "older trend points must decode without inventing symlink coverage details")
             for index in 1...125 {
                 let repeated = FileInventorySnapshot(
                     rootPath: aggregateRoot, volumeDeviceID: 7,
@@ -4141,6 +4147,47 @@ private struct DiskerCoreChecks {
             $0.folder.path == outsideAfter.path || $0.folder.path == partialLatest.path
                 || $0.folder.path == lateAfter.path
         }) == false, "out-of-window comparisons and paths with a newer partial scan must remain unknown")
+        guard let interval else {
+            throw CheckFailure.assertion("the synthetic capacity loss should yield an interval for inventory alignment")
+        }
+        let inventoryGrowth = ObservationComparison.fileInventoryGrowthAligned(
+            with: interval,
+            points: [
+                FileInventoryTrendPoint(
+                    rootPath: "/selected/inventory-large",
+                    previousObservedAt: start.addingTimeInterval(-50), observedAt: end.addingTimeInterval(20),
+                    volumeDeviceID: 1, grossAllocatedGrowth: 500, grossAllocatedReduction: 200,
+                    netLogicalDelta: 300, netAllocatedDelta: 300, excludedSymlinkCount: 2,
+                    changedPathCount: 3
+                ),
+                FileInventoryTrendPoint(
+                    rootPath: "/selected/inventory-small",
+                    previousObservedAt: start.addingTimeInterval(30), observedAt: end.addingTimeInterval(-20),
+                    volumeDeviceID: 2, grossAllocatedGrowth: 300, grossAllocatedReduction: 0,
+                    netLogicalDelta: 300, netAllocatedDelta: 300, excludedSymlinkCount: 0,
+                    changedPathCount: 1
+                ),
+                FileInventoryTrendPoint(
+                    rootPath: "/selected/outside-inventory-window",
+                    previousObservedAt: start.addingTimeInterval(-61), observedAt: end,
+                    volumeDeviceID: 1, grossAllocatedGrowth: 9_000, grossAllocatedReduction: 0,
+                    netLogicalDelta: 9_000, netAllocatedDelta: 9_000, excludedSymlinkCount: 0,
+                    changedPathCount: 1
+                ),
+                FileInventoryTrendPoint(
+                    rootPath: "/selected/no-inventory-growth",
+                    previousObservedAt: start, observedAt: end,
+                    volumeDeviceID: 1, grossAllocatedGrowth: 0, grossAllocatedReduction: 500,
+                    netLogicalDelta: -500, netAllocatedDelta: -500, excludedSymlinkCount: 0,
+                    changedPathCount: 1
+                )
+            ]
+        )
+        try expect(inventoryGrowth.map(\.rootPath) == [
+            "/selected/inventory-large", "/selected/inventory-small",
+        ], "gross selected-file growth should be ranked only when its complete inventory interval overlaps the capacity-loss window")
+        try expect(inventoryGrowth.first?.excludedSymlinkCount == 2,
+                   "the selected-file capacity context should preserve excluded-symlink coverage for disclosure")
 
         let noLoss = LocalHistory(
             observations: history.observations,

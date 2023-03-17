@@ -1608,8 +1608,13 @@ struct DashboardView: View {
     private func capacityIntervalGrowthCard(
         _ interval: ObservationComparison.CapacityIntervalFolderGrowth
     ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Selected-folder changes during this interval", systemImage: "clock.arrow.circlepath")
+        let fileInventoryGrowth = ObservationComparison.fileInventoryGrowthAligned(
+            with: interval,
+            points: model.fileInventoryTrends.values.flatMap { $0 },
+            limit: 3
+        )
+        return VStack(alignment: .leading, spacing: 10) {
+            Label("Selected-folder changes near this capacity interval", systemImage: "clock.arrow.circlepath")
                 .font(.subheadline.weight(.semibold))
             Text("Capacity decreased by \(format(interval.availableBytesLost)) from \(interval.previousCapacity.observedAt.formatted(date: .abbreviated, time: .shortened)) to \(interval.currentCapacity.observedAt.formatted(date: .abbreviated, time: .shortened)).")
                 .font(.caption)
@@ -1617,9 +1622,9 @@ struct DashboardView: View {
             Text("This is the largest drop of at least \(format(ObservationComparison.minimumReportedCapacityLossBytes)) in retained history that later readings have not fully recovered.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-            if interval.folderGrowth.isEmpty {
+            if interval.folderGrowth.isEmpty && fileInventoryGrowth.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("No selected folder has complete before-and-after scans aligned with this capacity drop. The graph alone cannot identify which files changed or how large they were.")
+                    Text("No selected folder has complete before-and-after measurements aligned with this capacity drop. The graph alone cannot identify which files changed or how large they were.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1636,31 +1641,70 @@ struct DashboardView: View {
                     .disabled(model.isScanning)
                 }
             } else {
-                ForEach(interval.folderGrowth.prefix(3)) { signal in
-                    HStack(alignment: .top, spacing: 10) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(signal.folder.path)
-                                .font(.caption)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .textSelection(.enabled)
-                            Text("Complete scans: \(signal.previous.finishedAt.formatted(date: .abbreviated, time: .shortened)) → \(signal.folder.finishedAt.formatted(date: .abbreviated, time: .shortened))")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                if interval.folderGrowth.isEmpty {
+                    Text("Folder-size totals were incomplete for this interval, but complete no-follow file inventories recorded these selected-root changes:")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    ForEach(interval.folderGrowth.prefix(3)) { signal in
+                        HStack(alignment: .top, spacing: 10) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(signal.folder.path)
+                                    .font(.caption)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .textSelection(.enabled)
+                                Text("Complete scans: \(signal.previous.finishedAt.formatted(date: .abbreviated, time: .shortened)) → \(signal.folder.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 6)
+                            Text("+\(format(signal.growthBytes)) allocated")
+                                .font(.caption.weight(.medium).monospacedDigit())
+                                .foregroundStyle(.orange)
                         }
-                        Spacer(minLength: 6)
-                        Text("+\(format(signal.growthBytes)) allocated")
-                            .font(.caption.weight(.medium).monospacedDigit())
-                            .foregroundStyle(.orange)
+                    }
+                    if interval.folderGrowth.count > 3 {
+                        Text("Showing 3 of \(interval.folderGrowth.count) aligned selected paths. Open Folders to review others.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
                 }
-                if interval.folderGrowth.count > 3 {
-                    Text("Showing 3 of \(interval.folderGrowth.count) aligned selected paths. Open Folders to review others.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                if !fileInventoryGrowth.isEmpty {
+                    Label("Regular-file changes observed in the overlapping period", systemImage: "doc.badge.arrow.up")
+                        .font(.caption.weight(.semibold))
+                    ForEach(fileInventoryGrowth) { point in
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(URL(fileURLWithPath: point.rootPath).lastPathComponent)
+                                    .font(.caption.weight(.medium))
+                                Spacer(minLength: 4)
+                                Text("Gross growth ~\(point.grossAllocatedGrowth.map { format($0) } ?? "unknown")")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.orange)
+                            }
+                            Text("\(point.rootPath) · reduced ~\(point.grossAllocatedReduction.map { format($0) } ?? "unknown") · net \(point.netAllocatedDelta.map(formattedDelta) ?? "unknown") · \(point.changedPathCount) paths")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                            Text("Scans: \(point.previousObservedAt.formatted(date: .abbreviated, time: .shortened)) → \(point.observedAt.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            if let excludedSymlinkCount = point.excludedSymlinkCount, excludedSymlinkCount > 0 {
+                                Text("\(excludedSymlinkCount) symlink entries and their targets were excluded.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+                            } else if point.excludedSymlinkCount == nil {
+                                Text("Symlink exclusion details are unavailable for this older interval.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                 }
             }
-            Text("These folder comparison spans overlap or closely border the capacity interval; the full growth may have happened at another time. This does not prove what caused the capacity movement. Overlapping selected paths may include the same files, so do not add their values. Unselected and system-managed storage remains unassigned.")
+            Text("These observations are selected-scope time correlations, not proof that the paths caused this capacity change or reside on the same physical volume. They may include overlapping paths, so do not add the values. Unselected, inaccessible, symlink-target, and system-managed storage remains unassigned.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

@@ -351,6 +351,38 @@ public enum ObservationComparison {
         return largestUnrecoveredLoss
     }
 
+    /// Selected-root file-inventory growth whose complete comparison interval
+    /// overlaps a reported capacity-loss interval. This is temporal context,
+    /// not proof that a root resides on that volume or caused the capacity loss.
+    public static func fileInventoryGrowthAligned(
+        with interval: CapacityIntervalFolderGrowth,
+        points: [FileInventoryTrendPoint],
+        limit: Int = 3
+    ) -> [FileInventoryTrendPoint] {
+        guard limit > 0 else { return [] }
+        let start = interval.previousCapacity.observedAt
+        let end = interval.currentCapacity.observedAt
+        let earliestBaseline = start.addingTimeInterval(-capacityScanBoundaryTolerance)
+        let latestResult = end.addingTimeInterval(capacityScanBoundaryTolerance)
+        return points.filter { point in
+            guard let growth = point.grossAllocatedGrowth, growth > 0 else { return false }
+            return point.previousObservedAt >= earliestBaseline
+                && point.previousObservedAt <= end
+                && point.observedAt >= start
+                && point.observedAt <= latestResult
+                && point.previousObservedAt <= point.observedAt
+        }
+        .sorted {
+            if $0.grossAllocatedGrowth != $1.grossAllocatedGrowth {
+                return ($0.grossAllocatedGrowth ?? 0) > ($1.grossAllocatedGrowth ?? 0)
+            }
+            if $0.observedAt != $1.observedAt { return $0.observedAt > $1.observedAt }
+            return $0.rootPath < $1.rootPath
+        }
+        .prefix(limit)
+        .map { $0 }
+    }
+
     /// Positive allocated-byte changes for filename categories across the
     /// latest complete observations of one exact selected path. Returns nil
     /// when either observation is partial, legacy data lacks summaries, or a
