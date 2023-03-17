@@ -1420,7 +1420,7 @@ struct DashboardView: View {
         let paused = model.pausedMonitoringReasons[path] != nil
         return Label(
             paused ? "Monitoring paused · review access"
-                : enabled ? "Monitoring on · resumes next launch"
+                : enabled ? "Monitoring on · only while window open"
                 : "Monitoring off · changes appear after a scan",
             systemImage: paused ? "pause.circle" : enabled ? "dot.radiowaves.left.and.right" : "pause.circle"
         )
