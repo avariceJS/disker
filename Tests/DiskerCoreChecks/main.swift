@@ -144,11 +144,13 @@ private struct DiskerCoreChecks {
     private static func benchmarkSelectedRootInventory(at root: URL) throws {
         var before = rusage()
         _ = getrusage(RUSAGE_SELF, &before)
+        let residentBefore = currentResidentBytes()
         let start = ContinuousClock.now
         let result = FolderScanner.scanWithFileInventories(roots: [root])
         let scanElapsed = start.duration(to: .now).components
         var afterScan = rusage()
         _ = getrusage(RUSAGE_SELF, &afterScan)
+        let residentAfterScan = currentResidentBytes()
         let snapshot = result.fileInventories.first
         let persistenceStart = ContinuousClock.now
         let storeURL = FileManager.default.temporaryDirectory
@@ -158,6 +160,7 @@ private struct DiskerCoreChecks {
         let firstReport = try snapshot.flatMap { try FileInventoryStore.record($0, at: storeURL) }
         var afterBaseline = rusage()
         _ = getrusage(RUSAGE_SELF, &afterBaseline)
+        let residentAfterBaseline = currentResidentBytes()
         let nextReport = try snapshot.flatMap { value in
             try FileInventoryStore.record(FileInventorySnapshot(
                 rootPath: value.rootPath, folderObservationID: UUID(),
@@ -171,6 +174,7 @@ private struct DiskerCoreChecks {
         let storedBytes = (try? FileManager.default.attributesOfItem(atPath: storeURL.path)[.size] as? NSNumber)?.intValue ?? 0
         var after = rusage()
         _ = getrusage(RUSAGE_SELF, &after)
+        let residentAfterComparison = currentResidentBytes()
         guard let folder = result.observation.folders.first else {
             throw CheckFailure.assertion("inventory benchmark produced no selected-root observation")
         }
@@ -186,12 +190,32 @@ private struct DiskerCoreChecks {
         print("Scan and sort: \(String(format: "%.3f", seconds)) s · baseline plus exact comparison: \(String(format: "%.3f", persistenceSeconds)) s · process CPU: \(String(format: "%.3f", userCPU + systemCPU)) s")
         print("Persisted baseline: \(storedBytes) bytes · paths changed on identical recheck: \(nextReport?.changedPathCount ?? -1)")
         print("High-water RSS increase: scan \(String(format: "%.1f", Double(scanRSSIncrease) / 1_048_576)) MiB · after baseline \(String(format: "%.1f", Double(baselineRSSIncrease) / 1_048_576)) MiB · after comparison \(String(format: "%.1f", Double(completeRSSIncrease) / 1_048_576)) MiB (process-level)")
+        print("Current RSS: before \(residentMebibytes(residentBefore)) MiB · after scan \(residentMebibytes(residentAfterScan)) MiB · after baseline \(residentMebibytes(residentAfterBaseline)) MiB · after comparison \(residentMebibytes(residentAfterComparison)) MiB")
         print("First report established baseline: \(firstReport?.hasBaseline == false)")
         print("Inventory: \(snapshot?.complete == true ? "complete" : "incomplete") · aggregate: \(folder.complete ? "complete" : "partial") · symlinks excluded: \(folder.excludedSymlinkCount)")
     }
 
     private static func timevalSeconds(_ value: timeval) -> Double {
         Double(value.tv_sec) + Double(value.tv_usec) / 1_000_000
+    }
+
+    private static func currentResidentBytes() -> Int64? {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size
+        )
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { rebound in
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), rebound, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        return Int64(info.resident_size)
+    }
+
+    private static func residentMebibytes(_ bytes: Int64?) -> String {
+        guard let bytes else { return "unavailable" }
+        return String(format: "%.1f", Double(bytes) / 1_048_576)
     }
 
     private static func testCapacityMath() throws {
