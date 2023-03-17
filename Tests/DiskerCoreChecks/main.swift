@@ -42,6 +42,7 @@ private struct DiskerCoreChecks {
             ("read-only application-removal review planner", testApplicationRemovalReviewPlanner),
             ("explicit app-folder associations", testApplicationFolderAssociations),
             ("bounded read-only selected-scope bookmarks", testSelectedScopeBookmarks),
+            ("bounded persisted selected-root monitoring choices", testStorageMonitoringPreferences),
             ("typed no-follow selected-scope path probe", testSelectedScopePathProbeStatuses),
             ("local stores reject symlinks", testLocalStoresRejectSymlinks),
             ("zero important-usage fallback", testImportantUsageFallback),
@@ -1811,6 +1812,34 @@ private struct DiskerCoreChecks {
         )
         try expect(malformedCadence.effectiveInterval == StorageMonitoringPolicy.defaultInterval,
                    "non-finite interval settings should fall back to the safe default")
+    }
+
+    private static func testStorageMonitoringPreferences() throws {
+        try withTemporaryDirectory { root in
+            let storeURL = root.appendingPathComponent("storage-monitoring.json")
+            let initiallySaved = try StorageMonitoringPreferences.load(from: storeURL)
+            try expect(initiallySaved.isEmpty,
+                       "a new monitoring preference store should have no roots opted in")
+            try StorageMonitoringPreferences.save(["/saved/zeta", "/saved/alpha"], at: storeURL)
+            let loadedConsent = try StorageMonitoringPreferences.load(from: storeURL)
+            try expect(loadedConsent == ["/saved/alpha", "/saved/zeta"],
+                       "explicit monitoring choices should persist as a normalized bounded root set")
+
+            var invalidPathRejected = false
+            do {
+                try StorageMonitoringPreferences.save(["/saved/../outside"], at: storeURL)
+            } catch {
+                invalidPathRejected = true
+            }
+            let consentAfterInvalidUpdate = try StorageMonitoringPreferences.load(from: storeURL)
+            try expect(invalidPathRejected && consentAfterInvalidUpdate == ["/saved/alpha", "/saved/zeta"],
+                       "invalid monitoring paths should not overwrite the prior valid consent set")
+
+            try StorageMonitoringPreferences.clear(at: storeURL)
+            let clearedConsent = try StorageMonitoringPreferences.load(from: storeURL)
+            try expect(clearedConsent.isEmpty,
+                       "clearing Disker history should be able to remove persisted monitoring consent")
+        }
     }
 
     private static func testScheduledStorageGrowthSequence() throws {

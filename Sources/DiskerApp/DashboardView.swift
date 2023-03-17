@@ -122,6 +122,22 @@ final class DashboardModel {
         } catch {
             errorMessage = "Saved scan locations could not be loaded: \(error.localizedDescription)"
         }
+        do {
+            let savedMonitoringPaths = try StorageMonitoringPreferences.load()
+            monitoredScopePaths = savedMonitoringPaths.intersection(Set(rememberedScopes.map(\.path)))
+            if monitoredScopePaths != savedMonitoringPaths {
+                try StorageMonitoringPreferences.save(monitoredScopePaths)
+            }
+            for path in monitoredScopePaths {
+                let lastCompleteScan = fileInventoryTrends[path]?.last?.observedAt
+                    ?? fileInventoryReports[path]?.observedAt
+                    ?? .distantPast
+                storageMonitoringEnabledAtByPath[path] = lastCompleteScan
+                storageMonitoringCooldownByPath[path] = lastCompleteScan
+            }
+        } catch {
+            errorMessage = "Saved monitoring choices could not be loaded: \(error.localizedDescription)"
+        }
     }
 
     var latestScan: ScanObservation? { history.observations.last }
@@ -674,6 +690,15 @@ final class DashboardModel {
     func toggleStorageMonitoring(_ path: String, enabled: Bool) {
         let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
         guard rememberedScopes.contains(where: { $0.path == normalizedPath }) else { return }
+        var updatedPaths = monitoredScopePaths
+        if enabled { updatedPaths.insert(normalizedPath) }
+        else { updatedPaths.remove(normalizedPath) }
+        do {
+            try StorageMonitoringPreferences.save(updatedPaths)
+        } catch {
+            errorMessage = "The monitoring choice could not be saved: \(error.localizedDescription)"
+            return
+        }
         if enabled {
             monitoredScopePaths.insert(normalizedPath)
             pausedMonitoringReasons.removeValue(forKey: normalizedPath)
@@ -761,7 +786,14 @@ final class DashboardModel {
         storageMonitoringSessionOpen = open
         if open {
             for path in monitoredScopePaths where pausedMonitoringReasons[path] == nil {
-                storageMonitoringCooldownByPath[path] = .now
+                let lastCompleteScan = fileInventoryTrends[path]?.last?.observedAt
+                    ?? fileInventoryReports[path]?.observedAt
+                if storageMonitoringCooldownByPath[path] == nil {
+                    storageMonitoringCooldownByPath[path] = lastCompleteScan ?? .distantPast
+                }
+                if storageMonitoringEnabledAtByPath[path] == nil {
+                    storageMonitoringEnabledAtByPath[path] = storageMonitoringCooldownByPath[path]
+                }
             }
             startStorageEventWatchers()
             startStorageMonitoringScheduler()
@@ -897,6 +929,11 @@ final class DashboardModel {
 
     private func removeStorageMonitoringState(for path: String) {
         monitoredScopePaths.remove(path)
+        do {
+            try StorageMonitoringPreferences.save(monitoredScopePaths)
+        } catch {
+            errorMessage = "The forgotten folder's monitoring choice could not be removed: \(error.localizedDescription)"
+        }
         pausedMonitoringReasons.removeValue(forKey: path)
         storageMonitoringEnabledAtByPath.removeValue(forKey: path)
         storageMonitoringCooldownByPath.removeValue(forKey: path)
@@ -1028,6 +1065,7 @@ final class DashboardModel {
             try ObservationStore.clear()
             try FileInventoryStore.clear()
             try SelectedScopeBookmarkStore.clear()
+            try StorageMonitoringPreferences.clear()
             history = LocalHistory()
             fileInventoryReports = [:]
             fileInventoryTrends = [:]
@@ -1328,6 +1366,7 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(folder.displayName)
                     .font(.subheadline.weight(.semibold))
+                monitoringStatusLabel(for: folder.path)
                 if !report.hasBaseline {
                     Text("Baseline recorded at \(report.observedAt.formatted(date: .abbreviated, time: .shortened)); the next complete scan can show file-level changes.")
                         .font(.caption)
@@ -1355,6 +1394,7 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(folder.displayName)
                     .font(.subheadline.weight(.semibold))
+                monitoringStatusLabel(for: folder.path)
                 Group {
                     if !folder.complete || latest.cancelled {
                         if model.fileInventoryReports[folder.path] != nil {
@@ -1373,6 +1413,19 @@ struct DashboardView: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private func monitoringStatusLabel(for path: String) -> some View {
+        let enabled = model.monitoredScopePaths.contains(path)
+        let paused = model.pausedMonitoringReasons[path] != nil
+        return Label(
+            paused ? "Monitoring paused · review access"
+                : enabled ? "Monitoring on · resumes next launch"
+                : "Monitoring off · changes appear after a scan",
+            systemImage: paused ? "pause.circle" : enabled ? "dot.radiowaves.left.and.right" : "pause.circle"
+        )
+        .font(.caption2)
+        .foregroundStyle(paused ? Color.orange : enabled ? Color.accentColor : Color.secondary)
     }
 
     private func fileInventoryGrowthRow(_ change: FileInventoryChange, folderName: String) -> some View {
@@ -2241,7 +2294,7 @@ struct DashboardView: View {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(alignment: .top) {
-                            Text("Turning monitoring on requests a fresh baseline scan. For each opted-in saved folder, macOS events request debounced metadata-only scans (at most once a minute), with periodic metadata scans scheduled for reconciliation. Monitoring continues while this window remains open, even when you switch to another app. Closing the window or quitting stops it; opt-in selections reset off on relaunch. macOS sleep may defer scans; events can be missed or coalesced, and files created and removed between scans cannot be reconstructed. No background helper or unselected path is monitored.")
+                            Text("Turning monitoring on remembers this choice and requests a fresh baseline scan. For each opted-in saved folder, macOS events request debounced metadata-only scans (at most once a minute), with periodic metadata scans for reconciliation. Monitoring resumes when Disker opens and continues only while this window remains open, even when you switch to another app. Closing the window or quitting stops scans until the next launch. macOS sleep may defer scans; events can be missed or coalesced, and files created and removed between scans cannot be reconstructed. No background helper or unselected path is monitored.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -2270,7 +2323,7 @@ struct DashboardView: View {
                                             .foregroundStyle(.secondary)
                                             .lineLimit(1)
                                             .truncationMode(.middle)
-                                        Toggle("Monitor while this window is open", isOn: Binding(
+                                        Toggle("Remember monitoring for this folder", isOn: Binding(
                                             get: { model.monitoredScopePaths.contains(scope.path) },
                                             set: { model.toggleStorageMonitoring(scope.path, enabled: $0) }
                                         ))
@@ -2290,7 +2343,7 @@ struct DashboardView: View {
                                                     .font(.caption2)
                                                     .foregroundStyle(.orange)
                                             } else {
-                                                Text("Selected-root events prompt metadata scans; periodic reconciliation runs while this window stays open.")
+                                                Text("Selected-root events prompt metadata scans; periodic reconciliation runs while this window stays open. This choice resumes next time Disker opens.")
                                                     .font(.caption2)
                                                     .foregroundStyle(.secondary)
                                             }
