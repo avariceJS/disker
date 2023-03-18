@@ -1271,11 +1271,12 @@ struct DashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 header("Storage overview", subtitle: "A measured view of your Mac's storage, with clear limits.")
-                fileChangeOverviewCard
-                capacityCard
                 if model.latestScan == nil && !model.isScanning {
                     firstRunOverviewCard
-                } else {
+                }
+                fileChangeOverviewCard
+                capacityCard
+                if model.latestScan != nil || model.isScanning {
                     scanCard
                     selectedRootOverlapNotice
                     folderGrowthCard
@@ -2051,14 +2052,16 @@ struct DashboardView: View {
     }
 
     private var methodologyNote: some View {
-        Label {
+        DisclosureGroup {
             Text("The capacity figure comes from macOS. Folder totals are a separate file-tree estimate: snapshots, clones and system-managed storage can make them differ. Unmeasured items are reported as incomplete, never as zero.")
-        } icon: {
-            Image(systemName: "info.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } label: {
+            Label("About these measurements", systemImage: "info.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var applicationsPage: some View {
