@@ -59,13 +59,17 @@ public enum FileInventoryStore {
         guard snapshot.complete else { return nil }
         let url = try resolvedURL(fileURL)
         var state = try load(at: url)
-        let previous = state.snapshots[snapshot.rootPath]
-        let comparablePrevious = previous.flatMap { value in
-            value.complete && value.volumeDeviceID == snapshot.volumeDeviceID ? value : nil
-        }
-        let report = compare(snapshot, with: comparablePrevious)
+        // Release the prior manifest before encoding its replacement into the store.
+        let (report, volumeChanged) = {
+            let previous = state.snapshots[snapshot.rootPath]
+            let comparablePrevious = previous.flatMap { value in
+                value.complete && value.volumeDeviceID == snapshot.volumeDeviceID ? value : nil
+            }
+            let report = compare(snapshot, with: comparablePrevious)
+            return (report, previous.map { $0.volumeDeviceID != snapshot.volumeDeviceID } ?? false)
+        }()
         var trendPoints = state.trendPoints ?? [:]
-        if let previous, previous.volumeDeviceID != snapshot.volumeDeviceID {
+        if volumeChanged {
             trendPoints[snapshot.rootPath] = []
         }
         if let point = FileInventoryTrendPoint(report: report) {
