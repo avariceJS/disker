@@ -1274,7 +1274,7 @@ struct DashboardView: View {
                 fileChangeOverviewCard
                 capacityCard
                 if model.latestScan == nil && !model.isScanning {
-                    emptyHistoryCard
+                    firstRunOverviewCard
                 } else {
                     scanCard
                     selectedRootOverlapNotice
@@ -1824,6 +1824,27 @@ struct DashboardView: View {
         }
         .frame(maxWidth: .infinity, minHeight: 190)
         .background(.background, in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var firstRunOverviewCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Start with one folder", systemImage: "folder.badge.plus")
+                .font(.headline)
+            Text("Disker can report your drive's available space, but it does not yet know how that space is distributed across folders. Unselected and system-managed storage remains unknown.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Choose a project, Downloads, or Documents. A complete scan records a baseline; a later complete scan can show changes from that point forward. Earlier growth cannot be reconstructed.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Choose folders to measure…") { model.chooseFolders() }
+                .disabled(model.isScanning)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.accentColor.opacity(0.045), in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.accentColor.opacity(0.12)))
     }
 
     private var selectedRootOverlapNotice: some View {
