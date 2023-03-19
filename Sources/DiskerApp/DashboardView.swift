@@ -1273,11 +1273,12 @@ struct DashboardView: View {
                 header("Storage overview", subtitle: "A measured view of your Mac's storage, with clear limits.")
                 if model.latestScan == nil && !model.isScanning {
                     firstRunOverviewCard
+                } else {
+                    scanCard
                 }
                 fileChangeOverviewCard
                 capacityCard
                 if model.latestScan != nil || model.isScanning {
-                    scanCard
                     selectedRootOverlapNotice
                     folderGrowthCard
                     directoryGrowthCard
