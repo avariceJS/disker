@@ -1771,18 +1771,51 @@ struct DashboardView: View {
     }
 
     private var scanCard: some View {
-        HStack(spacing: 16) {
-            Image(systemName: "folder.badge.questionmark")
+        let latest = model.latestScan
+        let completeRootCount = latest?.folders.filter(\.complete).count ?? 0
+        let selectedRootCount = latest?.folders.count ?? 0
+        return HStack(spacing: 16) {
+            Image(systemName: model.isScanning ? "folder.badge.questionmark" : "checkmark.circle.fill")
                 .font(.title2)
-                .foregroundStyle(.blue)
+                .foregroundStyle(model.isScanning ? Color.blue : Color.accentColor)
                 .frame(width: 44, height: 44)
                 .background(.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
             VStack(alignment: .leading, spacing: 4) {
-                Text("See what's taking space")
+                Text(model.isScanning ? "Scanning selected folders" : "Selected-folder coverage")
                     .font(.headline)
-                Text("Choose folders to measure their files. Access is limited to the locations you select.")
+                if model.isScanning {
+                    Text("Access is limited to the locations you select.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else if let latest, !latest.folders.isEmpty {
+                    HStack(spacing: 5) {
+                        Text("Complete selected roots")
+                        Text("\(completeRootCount) / \(selectedRootCount)")
+                            .monospacedDigit()
+                    }
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    HStack(spacing: 5) {
+                        Text("Last scan")
+                        Text(latest.finishedAt.formatted(date: .abbreviated, time: .shortened))
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    if completeRootCount < selectedRootCount {
+                        Text("Some selected roots are incomplete; their totals remain unknown.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if latest.cancelled {
+                        Text("The latest scan was cancelled.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                } else {
+                    Text("No folder results were recorded.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer(minLength: 8)
             Button(model.isScanning ? "Cancel Scan" : "Choose Folders…") {

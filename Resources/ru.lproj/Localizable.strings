@@ -7,6 +7,15 @@
 "Choose folders to measure…" = "Выбрать папки для измерения…";
 "Scan Folders" = "Сканировать папки";
 "Cancel Scan" = "Отменить сканирование";
+"Selected-folder coverage" = "Охват выбранных папок";
+"Scanning selected folders" = "Сканирование выбранных папок";
+"Complete selected roots" = "Полностью измерено папок";
+"Last scan" = "Последнее сканирование";
+"Some selected roots are incomplete; their totals remain unknown." = "Некоторые выбранные папки измерены не полностью; их общий размер неизвестен.";
+"The latest scan was cancelled." = "Последнее сканирование отменено.";
+"No folder results were recorded." = "Результаты измерения папок не сохранены.";
+"Choose Folders…" = "Выбрать папки…";
+"Access is limited to the locations you select." = "Disker получает доступ только к выбранным вами папкам.";
 "System-reported volume capacity" = "Ёмкость тома по данным macOS";
 "available" = "доступно";
 "Refresh" = "Обновить";
