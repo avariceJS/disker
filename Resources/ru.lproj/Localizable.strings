@@ -1,0 +1,16 @@
+/* Russian translation for the Overview and first-run measurement guidance. */
+"Storage overview" = "Обзор хранилища";
+"A measured view of your Mac's storage, with clear limits." = "Измерения хранилища Mac с ясными ограничениями.";
+"Start with one folder" = "Начните с одной папки";
+"Disker can report your drive's available space, but it does not yet know how that space is distributed across folders. Unselected and system-managed storage remains unknown." = "Disker показывает свободное место на диске, но пока не знает, как оно распределено по папкам. Данные в невыбранных папках и хранилище, управляемом macOS, остаются неизвестными.";
+"Choose a project, Downloads, or Documents. A complete scan records a baseline; a later complete scan can show changes from that point forward. Earlier growth cannot be reconstructed." = "Выберите проект, папку «Загрузки» или «Документы». Полное сканирование сохранит исходный снимок, а следующее полное сканирование покажет изменения с этого момента. Восстановить более ранний рост нельзя.";
+"Choose folders to measure…" = "Выбрать папки для измерения…";
+"Scan Folders" = "Сканировать папки";
+"Cancel Scan" = "Отменить сканирование";
+"System-reported volume capacity" = "Ёмкость тома по данным macOS";
+"available" = "доступно";
+"Refresh" = "Обновить";
+"Record a new system-reported capacity observation" = "Сохранить новое значение ёмкости, полученное от macOS";
+"Available capacity" = "Доступное место";
+"About these measurements" = "Об этих измерениях";
+"The capacity figure comes from macOS. Folder totals are a separate file-tree estimate: snapshots, clones and system-managed storage can make them differ. Unmeasured items are reported as incomplete, never as zero." = "Ёмкость сообщает macOS. Размер папок — отдельная оценка по дереву файлов; снимки, клоны и системные данные могут объяснять расхождение. Неизмеренные элементы отмечаются как неизвестные, а не как нулевые.";

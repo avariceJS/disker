@@ -34,6 +34,9 @@ ICONSET="$PROJECT_ROOT/.build/Disker.iconset"
 swift "$PROJECT_ROOT/scripts/create-app-icon.swift" "$ICONSET"
 mkdir -p "$CONTENTS/Resources"
 /usr/bin/iconutil -c icns "$ICONSET" -o "$CONTENTS/Resources/AppIcon.icns"
+mkdir -p "$CONTENTS/Resources/ru.lproj"
+cp "$PROJECT_ROOT/Resources/ru.lproj/Localizable.strings" \
+    "$CONTENTS/Resources/ru.lproj/Localizable.strings"
 cat > "$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
