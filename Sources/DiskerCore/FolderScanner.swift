@@ -354,7 +354,6 @@ public enum FolderScanner {
                         let relativePath = directory.relativePath.isEmpty
                             ? name
                             : directory.relativePath + "/" + name
-                        let fullPath = (directory.path as NSString).appendingPathComponent(name)
                         visitedEntryCountForProgress += 1
                         var metadata = stat()
                         let statResult = name.withCString {
@@ -366,14 +365,20 @@ public enum FolderScanner {
                             addCoverageEvent(directory.relativePath, symlink: false, to: &metrics)
                             if visitedEntryCountForProgress.isMultiple(of: 256) {
                                 progress(ScanProgress(
-                                    currentPath: fullPath,
+                                    currentPath: (directory.path as NSString).appendingPathComponent(name),
                                     countedFileObjects: fileCountForProgress
                                 ))
                             }
                             continue
                         }
                         let type = metadata.st_mode & S_IFMT
-                        let entryDeviceID = simulatedDeviceIDsByPath[fullPath]
+                        // Absolute child paths are only needed for injected device IDs,
+                        // directory traversal, and occasional progress updates. Avoid
+                        // allocating one for every regular file in ordinary scans.
+                        let simulatedLookupPath = simulatedDeviceIDsByPath.isEmpty
+                            ? nil
+                            : (directory.path as NSString).appendingPathComponent(name)
+                        let entryDeviceID = simulatedLookupPath.flatMap { simulatedDeviceIDsByPath[$0] }
                             ?? UInt64(truncatingIfNeeded: metadata.st_dev)
                         var reachedFileProgressInterval = false
                         if name == ".git", type == S_IFDIR || type == S_IFREG {
@@ -395,7 +400,8 @@ public enum FolderScanner {
                                 discoveredDirectories.append(PendingDirectory(
                                     components: directory.components + [name],
                                     relativePath: relativePath,
-                                    path: fullPath,
+                                    path: simulatedLookupPath
+                                        ?? (directory.path as NSString).appendingPathComponent(name),
                                     expectedIdentity: identity(of: metadata)
                                 ))
                             }
@@ -472,7 +478,7 @@ public enum FolderScanner {
                         }
                         if reachedFileProgressInterval || visitedEntryCountForProgress.isMultiple(of: 256) {
                             progress(ScanProgress(
-                                currentPath: fullPath,
+                                currentPath: (directory.path as NSString).appendingPathComponent(name),
                                 countedFileObjects: fileCountForProgress
                             ))
                         }
