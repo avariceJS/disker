@@ -172,13 +172,15 @@ private struct DiskerCoreChecks {
         _ = getrusage(RUSAGE_SELF, &afterBaseline)
         let residentAfterBaseline = currentResidentBytes()
         let allocatorAfterBaseline = allocatorStatistics()
-        let nextReport = try FileInventoryStore.record(FileInventorySnapshot(
+        let nextReport = try FileInventoryStore.recordWithDiagnostics(FileInventorySnapshot(
             rootPath: inventoryRootPath, folderObservationID: UUID(),
             volumeDeviceID: inventoryVolumeDeviceID,
             observedAt: inventoryObservedAt.addingTimeInterval(60),
             entries: snapshot!.entries, complete: inventoryIsComplete,
             excludedSymlinkCount: inventoryExcludedSymlinkCount
-        ), at: storeURL)
+        ), at: storeURL) { stage in
+            printInventoryStoreStage(stage)
+        }?.report
         let persistenceElapsed = persistenceStart.duration(to: .now).components
         let storedBytes = (try? FileManager.default.attributesOfItem(atPath: storeURL.path)[.size] as? NSNumber)?.intValue ?? 0
         var after = rusage()
@@ -217,6 +219,15 @@ private struct DiskerCoreChecks {
 
     private static func timevalSeconds(_ value: timeval) -> Double {
         Double(value.tv_sec) + Double(value.tv_usec) / 1_000_000
+    }
+
+    private static func printInventoryStoreStage(_ stage: FileInventoryStoreStage) {
+        let rss = currentResidentBytes().map { String(format: "%.1f", Double($0) / 1_048_576) } ?? "unavailable"
+        let allocator = allocatorStatistics()
+        var usage = rusage()
+        _ = getrusage(RUSAGE_SELF, &usage)
+        let highWater = String(format: "%.1f", Double(usage.ru_maxrss) / 1_048_576)
+        print("Store stage \(stage.rawValue): RSS \(rss) MiB · process high-water \(highWater) MiB · allocator \(allocator.inUse) MiB in use / \(allocator.allocated) MiB reserved")
     }
 
     private static func currentResidentBytes() -> Int64? {

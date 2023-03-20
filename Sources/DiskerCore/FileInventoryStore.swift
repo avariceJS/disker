@@ -22,6 +22,15 @@ public struct FileInventoryRecordResult: Sendable {
     public let trendPoints: [String: [FileInventoryTrendPoint]]
 }
 
+@_spi(DiskerTesting)
+public enum FileInventoryStoreStage: String, Sendable {
+    case afterStoreDecode
+    case afterComparison
+    case beforeEncoding
+    case afterEncoding
+    case afterStoreWrite
+}
+
 /// A private, bounded store for one full metadata inventory per selected root
 /// and the latest net file-level change report for that root.
 public enum FileInventoryStore {
@@ -88,12 +97,30 @@ public enum FileInventoryStore {
     public static func recordWithTrendPoints(
         _ snapshot: FileInventorySnapshot, at fileURL: URL? = nil
     ) throws -> FileInventoryRecordResult? {
+        try recordWithTrendPoints(snapshot, at: fileURL, stageObserver: nil)
+    }
+
+    @_spi(DiskerTesting)
+    public static func recordWithDiagnostics(
+        _ snapshot: FileInventorySnapshot,
+        at fileURL: URL? = nil,
+        observeStage: @escaping @Sendable (FileInventoryStoreStage) -> Void
+    ) throws -> FileInventoryRecordResult? {
+        try recordWithTrendPoints(snapshot, at: fileURL, stageObserver: observeStage)
+    }
+
+    private static func recordWithTrendPoints(
+        _ snapshot: FileInventorySnapshot,
+        at fileURL: URL?,
+        stageObserver: (@Sendable (FileInventoryStoreStage) -> Void)?
+    ) throws -> FileInventoryRecordResult? {
         lock.lock()
         defer { lock.unlock() }
         guard !Task.isCancelled else { return nil }
         guard snapshot.complete else { return nil }
         let url = try resolvedURL(fileURL)
         var state = try load(at: url)
+        stageObserver?(.afterStoreDecode)
         // Release the prior manifest before encoding its replacement into the store.
         let (report, volumeChanged) = {
             let previous = state.snapshots[snapshot.rootPath]
@@ -103,6 +130,7 @@ public enum FileInventoryStore {
             let report = compare(snapshot, with: comparablePrevious)
             return (report, previous.map { $0.volumeDeviceID != snapshot.volumeDeviceID } ?? false)
         }()
+        stageObserver?(.afterComparison)
         var trendPoints = state.trendPoints ?? [:]
         if volumeChanged {
             trendPoints[snapshot.rootPath] = []
@@ -120,7 +148,8 @@ public enum FileInventoryStore {
         state.reports[snapshot.rootPath] = report
         trim(&state, preserving: snapshot.rootPath)
         guard !Task.isCancelled else { return nil }
-        try save(state, at: url)
+        stageObserver?(.beforeEncoding)
+        try save(state, at: url) { stage in stageObserver?(stage) }
         return FileInventoryRecordResult(report: report, trendPoints: trendPoints)
     }
 
@@ -293,15 +322,21 @@ public enum FileInventoryStore {
         catch { throw HistoryDecodeError.invalidHistory(error.localizedDescription) }
     }
 
-    private static func save(_ state: State, at url: URL) throws {
+    private static func save(
+        _ state: State,
+        at url: URL,
+        stageObserver: (@Sendable (FileInventoryStoreStage) -> Void)? = nil
+    ) throws {
         let directory = url.deletingLastPathComponent()
         try LocalStoreFile.ensurePrivateDirectory(at: directory)
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .binary
         let data = try encoder.encode(state)
+        stageObserver?(.afterEncoding)
         guard data.count <= maximumFileSize else { throw FileInventoryStoreError.tooLarge }
         try data.write(to: url, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        stageObserver?(.afterStoreWrite)
     }
 
     private static func resolvedURL(_ fileURL: URL?) throws -> URL {
