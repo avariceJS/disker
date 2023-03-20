@@ -3316,6 +3316,17 @@ private struct DiskerCoreChecks {
             try expect(legacyTrends.isEmpty,
                        "a pre-trend file inventory store must decode with an empty aggregate history")
 
+            let lazyDashboardURL = temporaryRoot.appendingPathComponent("lazy-dashboard.plist")
+            let lazyDashboardState = try PropertyListSerialization.data(
+                fromPropertyList: ["snapshots": ["large-root": "snapshot payload is not decoded"],
+                                  "reports": [String: FileInventoryChangeSet]()],
+                format: .binary, options: 0
+            )
+            try lazyDashboardState.write(to: lazyDashboardURL)
+            let lazyDashboard = try FileInventoryStore.loadDashboardHistory(at: lazyDashboardURL)
+            try expect(lazyDashboard.reports.isEmpty && lazyDashboard.trendPoints.isEmpty,
+                       "dashboard history must decode reports and optional trends without decoding stored snapshots")
+
             let root = temporaryRoot.appendingPathComponent("project", isDirectory: true)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
             let resize = root.appendingPathComponent("resize.bin")

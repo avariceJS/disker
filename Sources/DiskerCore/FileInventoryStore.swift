@@ -31,6 +31,11 @@ public enum FileInventoryStore {
         var trendPoints: [String: [FileInventoryTrendPoint]]?
     }
 
+    private struct DashboardState: Decodable {
+        let reports: [String: FileInventoryChangeSet]
+        let trendPoints: [String: [FileInventoryTrendPoint]]?
+    }
+
     private static let fileName = "file-inventory.plist"
     private static let maximumFileSize = 128 * 1_048_576
     private static let maximumRootCount = 50
@@ -43,7 +48,13 @@ public enum FileInventoryStore {
     public static func loadDashboardHistory(at fileURL: URL? = nil) throws -> FileInventoryDashboardHistory {
         lock.lock()
         defer { lock.unlock() }
-        let state = try load(at: fileURL)
+        let url = try resolvedURL(fileURL)
+        guard let data = try LocalStoreFile.read(at: url, maximumBytes: maximumFileSize) else {
+            return FileInventoryDashboardHistory(reports: [:], trendPoints: [:])
+        }
+        let state: DashboardState
+        do { state = try PropertyListDecoder().decode(DashboardState.self, from: data) }
+        catch { throw HistoryDecodeError.invalidHistory(error.localizedDescription) }
         return FileInventoryDashboardHistory(
             reports: state.reports,
             trendPoints: state.trendPoints ?? [:]
@@ -51,15 +62,11 @@ public enum FileInventoryStore {
     }
 
     public static func loadReports(at fileURL: URL? = nil) throws -> [String: FileInventoryChangeSet] {
-        lock.lock()
-        defer { lock.unlock() }
-        return try load(at: fileURL).reports
+        try loadDashboardHistory(at: fileURL).reports
     }
 
     public static func loadTrends(at fileURL: URL? = nil) throws -> [String: [FileInventoryTrendPoint]] {
-        lock.lock()
-        defer { lock.unlock() }
-        return try load(at: fileURL).trendPoints ?? [:]
+        try loadDashboardHistory(at: fileURL).trendPoints
     }
 
     public static func clear(at fileURL: URL? = nil) throws {
