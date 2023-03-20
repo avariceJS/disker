@@ -3359,9 +3359,17 @@ private struct DiskerCoreChecks {
             guard let next = second.fileInventories.first else {
                 throw CheckFailure.assertion("second file inventory should be returned")
             }
-            let changes = try FileInventoryStore.record(next, at: storeURL)
+            let update = try FileInventoryStore.recordWithTrendPoints(next, at: storeURL)
+            let changes = update?.report
             try expect(changes?.hasBaseline == true && changes?.changedPathCount == 3,
                        "a later inventory should detect every added, resized, and absent file path")
+            try expect(update?.trendPoints[root.path]?.count == 1
+                       && update?.trendPoints[root.path]?.last?.observedAt == next.observedAt,
+                       "a successful inventory write should return the trend points it committed")
+            let dashboardHistory = try FileInventoryStore.loadDashboardHistory(at: storeURL)
+            try expect(dashboardHistory.reports[root.path] == changes
+                       && dashboardHistory.trendPoints[root.path] == update?.trendPoints[root.path],
+                       "the dashboard should load reports and trends from one store read")
             try expect(changes?.netLogicalDelta == 5504,
                        "net logical change should reconcile additions, size increases, and paths no longer present")
             try expect(changes?.changes.contains(where: { $0.relativePath == "new.bin" && $0.kind == .added }) == true

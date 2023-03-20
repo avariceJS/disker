@@ -12,6 +12,16 @@ public enum FileInventoryStoreError: Error, LocalizedError {
     }
 }
 
+public struct FileInventoryDashboardHistory: Sendable {
+    public let reports: [String: FileInventoryChangeSet]
+    public let trendPoints: [String: [FileInventoryTrendPoint]]
+}
+
+public struct FileInventoryRecordResult: Sendable {
+    public let report: FileInventoryChangeSet
+    public let trendPoints: [String: [FileInventoryTrendPoint]]
+}
+
 /// A private, bounded store for one full metadata inventory per selected root
 /// and the latest net file-level change report for that root.
 public enum FileInventoryStore {
@@ -29,6 +39,16 @@ public enum FileInventoryStore {
     private static let maximumTrendPointsPerRoot = 120
     private static let maximumTotalTrendPointCount = 2_400
     private static let lock = NSRecursiveLock()
+
+    public static func loadDashboardHistory(at fileURL: URL? = nil) throws -> FileInventoryDashboardHistory {
+        lock.lock()
+        defer { lock.unlock() }
+        let state = try load(at: fileURL)
+        return FileInventoryDashboardHistory(
+            reports: state.reports,
+            trendPoints: state.trendPoints ?? [:]
+        )
+    }
 
     public static func loadReports(at fileURL: URL? = nil) throws -> [String: FileInventoryChangeSet] {
         lock.lock()
@@ -53,6 +73,14 @@ public enum FileInventoryStore {
     public static func record(
         _ snapshot: FileInventorySnapshot, at fileURL: URL? = nil
     ) throws -> FileInventoryChangeSet? {
+        guard let result = try recordWithTrendPoints(snapshot, at: fileURL) else { return nil }
+        return result.report
+    }
+
+    @discardableResult
+    public static func recordWithTrendPoints(
+        _ snapshot: FileInventorySnapshot, at fileURL: URL? = nil
+    ) throws -> FileInventoryRecordResult? {
         lock.lock()
         defer { lock.unlock() }
         guard !Task.isCancelled else { return nil }
@@ -86,7 +114,7 @@ public enum FileInventoryStore {
         trim(&state, preserving: snapshot.rootPath)
         guard !Task.isCancelled else { return nil }
         try save(state, at: url)
-        return report
+        return FileInventoryRecordResult(report: report, trendPoints: trendPoints)
     }
 
     private static func compare(

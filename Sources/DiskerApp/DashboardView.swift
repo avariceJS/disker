@@ -84,7 +84,7 @@ final class DashboardModel {
     var currentPath = ""
     var countedFileObjects = 0
     private var scanTask: Task<DetailedScanObservation, Never>?
-    private var fileInventoryTask: Task<[FileInventoryChangeSet], Error>?
+    private var fileInventoryTask: Task<[FileInventoryRecordResult], Error>?
     enum ScanOrigin { case manual, scheduled, eventTriggered }
     private var scanOrigin: ScanOrigin?
     private var scanRootPaths = Set<String>()
@@ -112,8 +112,9 @@ final class DashboardModel {
             errorMessage = error.localizedDescription
         }
         do {
-            fileInventoryReports = try FileInventoryStore.loadReports()
-            fileInventoryTrends = try FileInventoryStore.loadTrends()
+            let fileInventoryHistory = try FileInventoryStore.loadDashboardHistory()
+            fileInventoryReports = fileInventoryHistory.reports
+            fileInventoryTrends = fileInventoryHistory.trendPoints
         } catch {
             errorMessage = "File change history could not be loaded: \(error.localizedDescription)"
         }
@@ -600,17 +601,19 @@ final class DashboardModel {
                 }
                 if !result.fileInventories.isEmpty {
                     let inventoryTask = Task.detached(priority: .utility) {
-                        try result.fileInventories.compactMap { try FileInventoryStore.record($0) }
+                        try result.fileInventories.compactMap {
+                            try FileInventoryStore.recordWithTrendPoints($0)
+                        }
                     }
                     fileInventoryTask = inventoryTask
                     do {
-                        let reports = try await inventoryTask.value
+                        let inventoryUpdates = try await inventoryTask.value
                         if historyGeneration.accepts(generation) {
-                            for report in reports { fileInventoryReports[report.rootPath] = report }
-                            do {
-                                fileInventoryTrends = try FileInventoryStore.loadTrends()
-                            } catch {
-                                errorMessage = "File-change totals were saved, but their bounded history could not be loaded: \(error.localizedDescription)"
+                            for update in inventoryUpdates {
+                                fileInventoryReports[update.report.rootPath] = update.report
+                            }
+                            if let latest = inventoryUpdates.last {
+                                fileInventoryTrends = latest.trendPoints
                             }
                         }
                     } catch {
