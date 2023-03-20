@@ -5,6 +5,7 @@ enum LocalStoreFileError: Error, LocalizedError {
     case unsafeDirectory
     case notRegularFile
     case exceedsSizeLimit
+    case readFailed
     case removalFailed
 
     var errorDescription: String? {
@@ -15,6 +16,8 @@ enum LocalStoreFileError: Error, LocalizedError {
             return "Disker's local data file is not a regular file and was not read."
         case .exceedsSizeLimit:
             return "Disker's local data file exceeds the supported size limit and was not read."
+        case .readFailed:
+            return "Disker's local data file could not be mapped safely and was not read."
         case .removalFailed:
             return "Disker's local data file could not be removed."
         }
@@ -23,8 +26,6 @@ enum LocalStoreFileError: Error, LocalizedError {
 
 /// Reads only a bounded regular file and refuses to follow a final path symlink.
 enum LocalStoreFile {
-    private static let readChunkSize = 64 * 1024
-
     static func read(at url: URL, maximumBytes: Int) throws -> Data? {
         let directoryURL = url.deletingLastPathComponent()
         let directoryDescriptor = directoryURL.path.withCString {
@@ -59,23 +60,22 @@ enum LocalStoreFile {
         else {
             throw LocalStoreFileError.notRegularFile
         }
-        guard metadata.st_size <= maximumBytes else {
+        guard maximumBytes >= 0, metadata.st_size <= maximumBytes else {
             throw LocalStoreFileError.exceedsSizeLimit
         }
+        guard metadata.st_size > 0 else { return Data() }
 
-        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
-        var data = Data()
-        while true {
-            let bytesRemainingIncludingOverflowProbe = maximumBytes - data.count + 1
-            let chunkSize = min(readChunkSize, bytesRemainingIncludingOverflowProbe)
-            let chunk = try handle.read(upToCount: chunkSize) ?? Data()
-            guard !chunk.isEmpty else { break }
-            guard chunk.count <= maximumBytes - data.count else {
-                throw LocalStoreFileError.exceedsSizeLimit
-            }
-            data.append(chunk)
+        let fileSize = Int(metadata.st_size)
+        guard let address = mmap(nil, fileSize, PROT_READ, MAP_PRIVATE, descriptor, 0),
+              address != MAP_FAILED
+        else {
+            throw LocalStoreFileError.readFailed
         }
-        return data
+        return Data(
+            bytesNoCopy: address,
+            count: fileSize,
+            deallocator: .custom { address, length in _ = munmap(address, length) }
+        )
     }
 
     static func ensurePrivateDirectory(at url: URL) throws {

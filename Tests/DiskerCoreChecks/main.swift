@@ -146,36 +146,46 @@ private struct DiskerCoreChecks {
         _ = getrusage(RUSAGE_SELF, &before)
         let residentBefore = currentResidentBytes()
         let start = ContinuousClock.now
-        let result = FolderScanner.scanWithFileInventories(roots: [root])
+        var result: DetailedScanObservation? = FolderScanner.scanWithFileInventories(roots: [root])
         let scanElapsed = start.duration(to: .now).components
         var afterScan = rusage()
         _ = getrusage(RUSAGE_SELF, &afterScan)
         let residentAfterScan = currentResidentBytes()
-        let snapshot = result.fileInventories.first
+        let allocatorAfterScan = allocatorStatistics()
+        var snapshot = result?.fileInventories.first
+        guard snapshot != nil else {
+            throw CheckFailure.assertion("inventory benchmark produced no selected-root snapshot")
+        }
         let persistenceStart = ContinuousClock.now
         let storeURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("DiskerInventoryBenchmark-\(UUID().uuidString)", isDirectory: true)
             .appendingPathComponent("file-inventory.plist")
         defer { try? FileManager.default.removeItem(at: storeURL.deletingLastPathComponent()) }
-        let firstReport = try snapshot.flatMap { try FileInventoryStore.record($0, at: storeURL) }
+        let inventoryEntryCount = snapshot!.entries.count
+        let inventoryIsComplete = snapshot!.complete
+        let inventoryRootPath = snapshot!.rootPath
+        let inventoryVolumeDeviceID = snapshot!.volumeDeviceID
+        let inventoryObservedAt = snapshot!.observedAt
+        let inventoryExcludedSymlinkCount = snapshot!.excludedSymlinkCount
+        let firstReport = try FileInventoryStore.record(snapshot!, at: storeURL)
         var afterBaseline = rusage()
         _ = getrusage(RUSAGE_SELF, &afterBaseline)
         let residentAfterBaseline = currentResidentBytes()
-        let nextReport = try snapshot.flatMap { value in
-            try FileInventoryStore.record(FileInventorySnapshot(
-                rootPath: value.rootPath, folderObservationID: UUID(),
-                volumeDeviceID: value.volumeDeviceID,
-                observedAt: value.observedAt.addingTimeInterval(60),
-                entries: value.entries, complete: value.complete,
-                excludedSymlinkCount: value.excludedSymlinkCount
-            ), at: storeURL)
-        }
+        let allocatorAfterBaseline = allocatorStatistics()
+        let nextReport = try FileInventoryStore.record(FileInventorySnapshot(
+            rootPath: inventoryRootPath, folderObservationID: UUID(),
+            volumeDeviceID: inventoryVolumeDeviceID,
+            observedAt: inventoryObservedAt.addingTimeInterval(60),
+            entries: snapshot!.entries, complete: inventoryIsComplete,
+            excludedSymlinkCount: inventoryExcludedSymlinkCount
+        ), at: storeURL)
         let persistenceElapsed = persistenceStart.duration(to: .now).components
         let storedBytes = (try? FileManager.default.attributesOfItem(atPath: storeURL.path)[.size] as? NSNumber)?.intValue ?? 0
         var after = rusage()
         _ = getrusage(RUSAGE_SELF, &after)
         let residentAfterComparison = currentResidentBytes()
-        guard let folder = result.observation.folders.first else {
+        let allocatorAfterComparison = allocatorStatistics()
+        guard let folder = result?.observation.folders.first else {
             throw CheckFailure.assertion("inventory benchmark produced no selected-root observation")
         }
         let userCPU = timevalSeconds(after.ru_utime) - timevalSeconds(before.ru_utime)
@@ -184,15 +194,25 @@ private struct DiskerCoreChecks {
         let baselineRSSIncrease = max(0, afterBaseline.ru_maxrss - before.ru_maxrss)
         let completeRSSIncrease = max(0, after.ru_maxrss - before.ru_maxrss)
         let seconds = Double(scanElapsed.seconds) + Double(scanElapsed.attoseconds) / 1e18
-        print("Selected-root metadata inventory (no file contents): \(snapshot?.entries.count ?? 0) unique paths")
+        print("Selected-root metadata inventory (no file contents): \(inventoryEntryCount) unique paths")
         let persistenceSeconds = Double(persistenceElapsed.seconds)
             + Double(persistenceElapsed.attoseconds) / 1e18
         print("Scan and sort: \(String(format: "%.3f", seconds)) s · baseline plus exact comparison: \(String(format: "%.3f", persistenceSeconds)) s · process CPU: \(String(format: "%.3f", userCPU + systemCPU)) s")
         print("Persisted baseline: \(storedBytes) bytes · paths changed on identical recheck: \(nextReport?.changedPathCount ?? -1)")
         print("High-water RSS increase: scan \(String(format: "%.1f", Double(scanRSSIncrease) / 1_048_576)) MiB · after baseline \(String(format: "%.1f", Double(baselineRSSIncrease) / 1_048_576)) MiB · after comparison \(String(format: "%.1f", Double(completeRSSIncrease) / 1_048_576)) MiB (process-level)")
         print("Current RSS: before \(residentMebibytes(residentBefore)) MiB · after scan \(residentMebibytes(residentAfterScan)) MiB · after baseline \(residentMebibytes(residentAfterBaseline)) MiB · after comparison \(residentMebibytes(residentAfterComparison)) MiB")
+        print("Allocator in use / reserved: after scan \(allocatorAfterScan.inUse)/\(allocatorAfterScan.allocated) MiB · after baseline \(allocatorAfterBaseline.inUse)/\(allocatorAfterBaseline.allocated) MiB · after comparison \(allocatorAfterComparison.inUse)/\(allocatorAfterComparison.allocated) MiB")
         print("First report established baseline: \(firstReport?.hasBaseline == false)")
-        print("Inventory: \(snapshot?.complete == true ? "complete" : "incomplete") · aggregate: \(folder.complete ? "complete" : "partial") · symlinks excluded: \(folder.excludedSymlinkCount)")
+        print("Inventory: \(inventoryIsComplete ? "complete" : "incomplete") · aggregate: \(folder.complete ? "complete" : "partial") · symlinks excluded: \(folder.excludedSymlinkCount)")
+        snapshot = nil
+        result = nil
+        let residentAfterRelease = currentResidentBytes()
+        let allocatorAfterRelease = allocatorStatistics()
+        let relievedBytes = malloc_zone_pressure_relief(nil, 0)
+        let residentAfterPressureRelief = currentResidentBytes()
+        let allocatorAfterPressureRelief = allocatorStatistics()
+        print("Allocator after comparison: \(allocatorAfterComparison.inUse) MiB in use · \(allocatorAfterComparison.allocated) MiB reserved")
+        print("After releasing scan snapshot: RSS \(residentMebibytes(residentAfterRelease)) MiB · allocator \(allocatorAfterRelease.inUse) MiB in use / \(allocatorAfterRelease.allocated) MiB reserved · pressure relief returned \(relievedBytes) bytes · RSS after relief \(residentMebibytes(residentAfterPressureRelief)) MiB · allocator \(allocatorAfterPressureRelief.inUse) MiB in use / \(allocatorAfterPressureRelief.allocated) MiB reserved")
     }
 
     private static func timevalSeconds(_ value: timeval) -> Double {
@@ -216,6 +236,15 @@ private struct DiskerCoreChecks {
     private static func residentMebibytes(_ bytes: Int64?) -> String {
         guard let bytes else { return "unavailable" }
         return String(format: "%.1f", Double(bytes) / 1_048_576)
+    }
+
+    private static func allocatorStatistics() -> (inUse: Int, allocated: Int) {
+        var statistics = malloc_statistics_t()
+        malloc_zone_statistics(nil, &statistics)
+        return (
+            Int(statistics.size_in_use / 1_048_576),
+            Int(statistics.size_allocated / 1_048_576)
+        )
     }
 
     private static func testCapacityMath() throws {
