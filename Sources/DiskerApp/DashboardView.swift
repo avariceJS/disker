@@ -6,6 +6,68 @@ import Observation
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// ShipSwift's KPI-card pattern, adapted to native macOS control colors and
+/// Disker's calm, system-first visual language.
+private struct SWKPICard<Trailing: View>: View {
+    let title: LocalizedStringKey
+    let value: String
+    let icon: String
+    let tint: Color
+    @ViewBuilder let trailing: () -> Trailing
+
+    init(
+        title: LocalizedStringKey,
+        value: String,
+        icon: String,
+        tint: Color,
+        @ViewBuilder trailing: @escaping () -> Trailing
+    ) {
+        self.title = title
+        self.value = value
+        self.icon = icon
+        self.tint = tint
+        self.trailing = trailing
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(title, systemImage: icon)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .labelStyle(.titleAndIcon)
+
+            Text(value)
+                .font(.system(.title2, design: .rounded, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(tint)
+                .contentTransition(.numericText())
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+
+            trailing()
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, minHeight: 28, alignment: .topLeading)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(tint.opacity(0.16), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.035), radius: 8, x: 0, y: 3)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private extension SWKPICard where Trailing == EmptyView {
+    init(title: LocalizedStringKey, value: String, icon: String, tint: Color) {
+        self.init(title: title, value: value, icon: icon, tint: tint) { EmptyView() }
+    }
+}
+
 private func folderMeasurementSummary(_ observation: FolderObservation) -> String {
     let logical = ByteCountFormatter.string(fromByteCount: observation.logicalBytes, countStyle: .file)
     let allocated = ByteCountFormatter.string(fromByteCount: observation.allocatedBytes, countStyle: .file)
@@ -1135,6 +1197,8 @@ struct DashboardView: View {
     @State private var applicationDiscovery = ApplicationDiscoveryModel()
     @State private var selectedSection: String? = "Overview"
     @State private var historyChartRange: ObservationTimeRange = .week
+    @State private var selectedCapacityDate: Date?
+    @State private var selectedRAMDate: Date?
     @State private var isConfirmingHistoryClear = false
     @State private var isAutomaticRAMSamplingEnabled = false
     @State private var applicationReviewBundle: FolderObservation?
@@ -1216,6 +1280,10 @@ struct DashboardView: View {
             if section == "Applications" { applicationDiscovery.start() }
             else { applicationDiscovery.stop() }
         }
+        .onChange(of: historyChartRange) { _, _ in
+            selectedCapacityDate = nil
+            selectedRAMDate = nil
+        }
         .onChange(of: scenePhase) { _, phase in
             model.setStorageMonitoringAppActive(phase == .active)
             model.updateMemoryPressureMonitoring(
@@ -1285,13 +1353,14 @@ struct DashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 header("Storage overview", subtitle: "A measured view of your Mac's storage, with clear limits.")
+                capacitySummaryCards
+                capacityCard
                 if model.latestScan == nil && !model.isScanning {
                     firstRunOverviewCard
                 } else {
                     scanCard
                 }
                 fileChangeOverviewCard
-                capacityCard
                 if model.latestScan != nil || model.isScanning {
                     selectedRootOverlapNotice
                     folderGrowthCard
@@ -1323,6 +1392,41 @@ struct DashboardView: View {
                     else { model.chooseFolders() }
                 } label: {
                     Label(model.isScanning ? "Cancel Scan" : "Scan Folders", systemImage: model.isScanning ? "stop.circle" : "folder")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var capacitySummaryCards: some View {
+        if let capacity = model.capacity {
+            let roots = model.latestScan?.folders ?? []
+            let completeRoots = roots.filter(\.complete).count
+            let coverageTint: Color = roots.isEmpty ? .secondary : completeRoots == roots.count ? .green : .orange
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                SWKPICard(
+                    title: "Available now",
+                    value: format(capacity.availableBytes),
+                    icon: "internaldrive.fill",
+                    tint: .blue
+                ) {
+                    Text("\(capacity.volumeName ?? "System volume") · reported by macOS")
+                }
+                SWKPICard(
+                    title: "Volume capacity",
+                    value: format(capacity.totalBytes),
+                    icon: "externaldrive.fill",
+                    tint: .indigo
+                ) {
+                    Text(capacity.volumeIsLocal.map { $0 ? "Local volume" : "Network volume" } ?? "Volume location unknown")
+                }
+                SWKPICard(
+                    title: "Selected-folder coverage",
+                    value: roots.isEmpty ? "—" : "\(completeRoots) / \(roots.count)",
+                    icon: "folder.badge.gearshape",
+                    tint: coverageTint
+                ) {
+                    Text(roots.isEmpty ? "No folder scan recorded" : "Complete selected roots · latest scan")
                 }
             }
         }
@@ -1482,7 +1586,7 @@ struct DashboardView: View {
     private var capacityCard: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack {
-                Label("System-reported volume capacity", systemImage: "internaldrive")
+                Label("Available-space history", systemImage: "chart.xyaxis.line")
                     .font(.headline)
                 Spacer()
                 Text(model.capacity.map { $0.observedAt.formatted(date: .abbreviated, time: .shortened) } ?? "Unavailable")
@@ -1499,17 +1603,19 @@ struct DashboardView: View {
                 .accessibilityLabel("Refresh storage capacity")
             }
             if let capacity = model.capacity {
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text(ByteCountFormatter.string(fromByteCount: capacity.availableBytes, countStyle: .file))
-                        .font(.system(size: 42, weight: .semibold, design: .rounded))
-                    Text("available")
+                HStack(spacing: 10) {
+                    Image(systemName: "internaldrive.fill")
+                        .foregroundStyle(.blue)
+                    Text("\(capacity.volumeName ?? "System volume") · \(capacity.volumeIsLocal.map { $0 ? "local volume" : "network volume" } ?? "volume location unknown")")
+                        .font(.subheadline.weight(.medium))
+                    Spacer(minLength: 4)
+                    Text("\(Int((Double(capacity.availableBytes) / Double(max(1, capacity.totalBytes)) * 100).rounded()))% available")
+                        .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
-                Text("\(capacity.volumeName ?? "System volume") · \(capacity.volumeIsLocal.map { $0 ? "local volume" : "network volume" } ?? "volume location unknown")")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 ProgressView(value: Double(capacity.availableBytes), total: Double(max(1, capacity.totalBytes)))
                     .tint(.blue)
+                    .controlSize(.small)
                     .accessibilityLabel("Available capacity")
                     .accessibilityValue("\(format(capacity.availableBytes)) of \(format(capacity.totalBytes))")
                 if let interval = ObservationComparison.folderGrowthDuringLargestUnrecoveredCapacityLoss(in: model.history),
@@ -1593,25 +1699,78 @@ struct DashboardView: View {
                     let minimum = values.min() ?? 0
                     let maximum = values.max() ?? minimum
                     let padding = max((maximum - minimum) * 0.15, max(Double(capacity.totalBytes) / 1_073_741_824 * 0.005, 0.25))
+                    let selectedCapacitySample = selectedCapacityDate.flatMap { selectedDate in
+                        capacitySeries.min {
+                            abs($0.observedAt.timeIntervalSince(selectedDate))
+                                < abs($1.observedAt.timeIntervalSince(selectedDate))
+                        }
+                    }
                     VStack(alignment: .leading, spacing: 8) {
                         historyRangePicker
-                        Chart(capacitySeries, id: \.observedAt) { sample in
-                            LineMark(
-                                x: .value("Observed", sample.observedAt),
-                                y: .value("Available GiB", Double(sample.availableBytes) / 1_073_741_824)
-                            )
-                            .foregroundStyle(.blue)
-                            PointMark(
-                                x: .value("Observed", sample.observedAt),
-                                y: .value("Available GiB", Double(sample.availableBytes) / 1_073_741_824)
-                            )
-                            .foregroundStyle(.blue)
+                        if let selectedCapacitySample {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(format(selectedCapacitySample.availableBytes))
+                                    .font(.title3.weight(.semibold).monospacedDigit())
+                                    .foregroundStyle(.blue)
+                                Text(selectedCapacitySample.observedAt.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Button("Clear selection") { selectedCapacityDate = nil }
+                                    .buttonStyle(.link)
+                                    .font(.caption)
+                            }
+                            .accessibilityElement(children: .combine)
+                        }
+                        Chart {
+                            ForEach(capacitySeries, id: \.observedAt) { sample in
+                                LineMark(
+                                    x: .value("Observed", sample.observedAt),
+                                    y: .value("Available GiB", Double(sample.availableBytes) / 1_073_741_824)
+                                )
+                                .interpolationMethod(.linear)
+                                .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                                .foregroundStyle(Color.accentColor.gradient)
+
+                                if selectedCapacitySample?.observedAt == sample.observedAt {
+                                    PointMark(
+                                        x: .value("Observed", sample.observedAt),
+                                        y: .value("Available GiB", Double(sample.availableBytes) / 1_073_741_824)
+                                    )
+                                    .symbolSize(90)
+                                    .foregroundStyle(Color.accentColor)
+                                }
+                            }
+                            if let selectedCapacitySample {
+                                RuleMark(x: .value("Selected observation", selectedCapacitySample.observedAt))
+                                    .foregroundStyle(.secondary.opacity(0.55))
+                                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                            }
                         }
                         .chartYScale(domain: max(0, minimum - padding)...(maximum + padding))
                         .chartYAxisLabel("Available (GiB)")
-                        .frame(height: 120)
+                        .chartYAxis {
+                            AxisMarks(position: .leading, values: .automatic(desiredCount: 5)) { _ in
+                                AxisGridLine()
+                                AxisValueLabel()
+                            }
+                        }
+                        .chartXAxis {
+                            AxisMarks(values: .automatic(desiredCount: 6)) { _ in
+                                AxisGridLine()
+                                    .foregroundStyle(.quaternary)
+                                AxisValueLabel(format: .dateTime.month(.abbreviated).day().hour())
+                            }
+                        }
+                        .chartPlotStyle { plot in
+                            plot
+                                .background(Color.primary.opacity(0.018))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                        .chartXSelection(value: $selectedCapacityDate)
+                        .frame(height: 210)
                         .accessibilityLabel("Available-space history for \(historyChartRange.title), \(capacitySeries.count) comparable observations")
-                        Text("\(capacitySeries.count) comparable observations · \(historyRangeCaption(endingAt: latestCapacityDate)) · focused vertical scale · not attributed to folders")
+                        Text("\(capacitySeries.count) comparable observations · \(historyRangeCaption(endingAt: latestCapacityDate)) · drag across the chart to inspect a saved sample · focused vertical scale · not attributed to folders")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -2433,11 +2592,15 @@ struct DashboardView: View {
                 if hasSelectedFolderHistoryChart { historyRangePicker }
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        HStack(alignment: .top) {
-                            Text("Turning monitoring on remembers this choice and requests a fresh baseline scan. For each opted-in saved folder, macOS events request debounced metadata-only scans (at most once a minute), with periodic metadata scans for reconciliation. Monitoring resumes when Disker opens and continues only while this window remains open, even when you switch to another app. Closing the window or quitting stops scans until the next launch. macOS sleep may defer scans; events can be missed or coalesced, and files created and removed between scans cannot be reconstructed. No background helper or unselected path is monitored.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
+                        HStack(alignment: .center, spacing: 16) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Label("Opt-in monitoring", systemImage: "dot.radiowaves.left.and.right")
+                                    .font(.subheadline.weight(.semibold))
+                                Text("Off until enabled per folder. Scans selected locations only while this window is open.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                             Spacer(minLength: 8)
                             Menu("Every \(Int(model.storageMonitoringInterval / 60)) min") {
                                 ForEach([5, 15, 30, 60], id: \.self) { minutes in
@@ -2449,6 +2612,14 @@ struct DashboardView: View {
                             .disabled(model.monitoredScopePaths.isEmpty)
                             .help("Choose the interval for opted-in saved locations")
                         }
+                        DisclosureGroup("How monitoring works") {
+                            Text("Enabling monitoring remembers your choice and requests a fresh baseline scan. For each opted-in saved folder, macOS events request debounced metadata-only scans at most once a minute, with periodic scans for reconciliation. Monitoring resumes when Disker opens and continues only while this window remains open, even when you switch to another app. Closing the window or quitting stops scans until the next launch. macOS sleep may defer scans; events can be missed or coalesced, and files created and removed between scans cannot be reconstructed. No background helper or unselected path is monitored.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.top, 6)
+                        }
+                        .font(.caption.weight(.medium))
                         if model.rememberedScopes.isEmpty {
                             Label("No saved scan locations", systemImage: "folder.badge.questionmark")
                                 .foregroundStyle(.secondary)
@@ -3443,28 +3614,80 @@ struct DashboardView: View {
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if ramSamples.count > 1 {
-                            Chart(ramSamples, id: \.observedAt) { sample in
-                                PointMark(
-                                    x: .value("Sample time", sample.observedAt),
-                                    y: .value("MiB", Double(sample.freeBytes) / 1_048_576)
-                                )
-                                .foregroundStyle(by: .value("Metric", "Free pages"))
-                                PointMark(
-                                    x: .value("Sample time", sample.observedAt),
-                                    y: .value("MiB", Double(sample.compressedBytes) / 1_048_576)
-                                )
-                                .foregroundStyle(by: .value("Metric", "Compressed pages"))
-                                if let swap = sample.swapUsage {
-                                    PointMark(
-                                        x: .value("Sample time", sample.observedAt),
-                                        y: .value("MiB", Double(swap.usedBytes) / 1_048_576)
-                                    )
-                                    .foregroundStyle(by: .value("Metric", "Swap used"))
+                            let selectedRAMSample = selectedRAMDate.flatMap { selectedDate in
+                                ramSamples.min {
+                                    abs($0.observedAt.timeIntervalSince(selectedDate))
+                                        < abs($1.observedAt.timeIntervalSince(selectedDate))
                                 }
                             }
+                            if let selectedRAMSample {
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text(selectedRAMSample.observedAt.formatted(date: .abbreviated, time: .shortened))
+                                        .font(.caption.weight(.medium))
+                                    Spacer()
+                                    Text("Free \(format(selectedRAMSample.freeBytes))")
+                                    Text("Compressed \(format(selectedRAMSample.compressedBytes))")
+                                    if let swap = selectedRAMSample.swapUsage {
+                                        Text("Swap \(format(swap.usedBytes))")
+                                    } else {
+                                        Text("Swap unavailable")
+                                    }
+                                    Button("Clear") { selectedRAMDate = nil }
+                                        .buttonStyle(.link)
+                                }
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .accessibilityElement(children: .combine)
+                            }
+                            Chart {
+                                ForEach(ramSamples, id: \.observedAt) { sample in
+                                    PointMark(
+                                        x: .value("Sample time", sample.observedAt),
+                                        y: .value("MiB", Double(sample.freeBytes) / 1_048_576)
+                                    )
+                                    .foregroundStyle(by: .value("Metric", "Free pages"))
+                                    .symbolSize(selectedRAMSample?.observedAt == sample.observedAt ? 78 : 38)
+                                    PointMark(
+                                        x: .value("Sample time", sample.observedAt),
+                                        y: .value("MiB", Double(sample.compressedBytes) / 1_048_576)
+                                    )
+                                    .foregroundStyle(by: .value("Metric", "Compressed pages"))
+                                    .symbolSize(selectedRAMSample?.observedAt == sample.observedAt ? 78 : 38)
+                                    if let swap = sample.swapUsage {
+                                        PointMark(
+                                            x: .value("Sample time", sample.observedAt),
+                                            y: .value("MiB", Double(swap.usedBytes) / 1_048_576)
+                                        )
+                                        .foregroundStyle(by: .value("Metric", "Swap used"))
+                                        .symbolSize(selectedRAMSample?.observedAt == sample.observedAt ? 78 : 38)
+                                    }
+                                }
+                                if let selectedRAMSample {
+                                    RuleMark(x: .value("Selected sample", selectedRAMSample.observedAt))
+                                        .foregroundStyle(.secondary.opacity(0.55))
+                                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                                }
+                            }
+                            .chartForegroundStyleScale([
+                                "Free pages": Color.blue,
+                                "Compressed pages": Color.purple,
+                                "Swap used": Color.orange
+                            ])
                             .chartLegend(position: .bottom, alignment: .leading)
                             .chartYAxisLabel("MiB")
-                            .frame(height: 180)
+                            .chartYAxis {
+                                AxisMarks(position: .leading, values: .automatic(desiredCount: 5)) { _ in
+                                    AxisGridLine()
+                                    AxisValueLabel()
+                                }
+                            }
+                            .chartPlotStyle { plot in
+                                plot
+                                    .background(Color.primary.opacity(0.018))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                            }
+                            .chartXSelection(value: $selectedRAMDate)
+                            .frame(height: 210)
                             .accessibilityLabel("RAM snapshot points for \(historyChartRange.title), \(ramSamples.count) observations of free and compressed pages and reported swap use")
                         } else {
                             Text(ramSamples.isEmpty
