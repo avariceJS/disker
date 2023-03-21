@@ -3313,6 +3313,26 @@ private struct DiskerCoreChecks {
 
     private static func testFileInventoryHistory() throws {
         try withTemporaryDirectory { temporaryRoot in
+            let unsafeSnapshotStoreURL = temporaryRoot.appendingPathComponent("unsafe-snapshot.plist")
+            var rejectedUnsafeRelativePath = false
+            do {
+                _ = try FileInventoryStore.record(FileInventorySnapshot(
+                    rootPath: "/synthetic/unsafe-project",
+                    volumeDeviceID: 1,
+                    observedAt: Date(timeIntervalSince1970: 1),
+                    entries: [FileInventoryEntry(
+                        relativePath: "nested/../outside.bin", logicalBytes: 1, allocatedBytes: 1
+                    )],
+                    complete: true,
+                    excludedSymlinkCount: 0
+                ), at: unsafeSnapshotStoreURL)
+            } catch {
+                rejectedUnsafeRelativePath = true
+            }
+            try expect(rejectedUnsafeRelativePath
+                       && !FileManager.default.fileExists(atPath: unsafeSnapshotStoreURL.path),
+                       "inventory recording must reject traversal-like relative paths before writing a baseline")
+
             let legacyStoreURL = temporaryRoot.appendingPathComponent("legacy/Disker/file-inventory.plist")
             try FileManager.default.createDirectory(
                 at: legacyStoreURL.deletingLastPathComponent(), withIntermediateDirectories: true
@@ -3326,6 +3346,91 @@ private struct DiskerCoreChecks {
             let legacyTrends = try FileInventoryStore.loadTrends(at: legacyStoreURL)
             try expect(legacyTrends.isEmpty,
                        "a pre-trend file inventory store must decode with an empty aggregate history")
+
+            let legacyMigrationURL = temporaryRoot.appendingPathComponent("legacy-migration.plist")
+            let legacyRootPath = "/synthetic/legacy-project"
+            let legacySnapshot = FileInventorySnapshot(
+                rootPath: legacyRootPath,
+                volumeDeviceID: 7,
+                observedAt: Date(timeIntervalSince1970: 100),
+                entries: [
+                    FileInventoryEntry(relativePath: "a.bin", logicalBytes: 10, allocatedBytes: 16),
+                    FileInventoryEntry(relativePath: "nested/b.bin", logicalBytes: 20, allocatedBytes: 32),
+                ],
+                complete: true,
+                excludedSymlinkCount: 0
+            )
+            let encodedLegacySnapshot = try PropertyListEncoder().encode(legacySnapshot)
+            let legacySnapshotObject = try PropertyListSerialization.propertyList(
+                from: encodedLegacySnapshot, options: [], format: nil
+            )
+            let legacyMigrationState = try PropertyListSerialization.data(
+                fromPropertyList: [
+                    "snapshots": [legacyRootPath: legacySnapshotObject],
+                    "reports": [String: Any](),
+                ],
+                format: .binary,
+                options: 0
+            )
+            try legacyMigrationState.write(to: legacyMigrationURL)
+            let migratedReport = try FileInventoryStore.record(FileInventorySnapshot(
+                rootPath: legacyRootPath,
+                volumeDeviceID: 7,
+                observedAt: Date(timeIntervalSince1970: 160),
+                entries: [
+                    FileInventoryEntry(relativePath: "a.bin", logicalBytes: 18, allocatedBytes: 24),
+                    FileInventoryEntry(relativePath: "nested/b.bin", logicalBytes: 20, allocatedBytes: 32),
+                    FileInventoryEntry(relativePath: "z.bin", logicalBytes: 4, allocatedBytes: 8),
+                ],
+                complete: true,
+                excludedSymlinkCount: 0
+            ), at: legacyMigrationURL)
+            try expect(migratedReport?.hasBaseline == true
+                       && migratedReport?.changedPathCount == 2
+                       && migratedReport?.changes.contains(where: {
+                           $0.relativePath == "a.bin" && $0.kind == .resized
+                       }) == true
+                       && migratedReport?.changes.contains(where: {
+                           $0.relativePath == "z.bin" && $0.kind == .added
+                       }) == true,
+                       "a legacy plist snapshot should migrate to packed storage without changing exact-path comparisons")
+            let migratedPropertyList = try PropertyListSerialization.propertyList(
+                from: Data(contentsOf: legacyMigrationURL), options: [], format: nil
+            ) as? [String: Any]
+            try expect((migratedPropertyList?["snapshotFormatVersion"] as? NSNumber)?.intValue == 2,
+                       "the first successful write after legacy decoding should persist the packed snapshot format")
+            let validMigratedBytes = try Data(contentsOf: legacyMigrationURL)
+            var corruptPropertyList = try PropertyListSerialization.propertyList(
+                from: validMigratedBytes, options: .mutableContainersAndLeaves, format: nil
+            ) as? [String: Any]
+            var storedSnapshots = corruptPropertyList?["snapshots"] as? [String: [String: Any]]
+            var storedSnapshot = storedSnapshots?[legacyRootPath]
+            storedSnapshot?["entryPayload"] = Data([0x01, 0x02, 0x03])
+            storedSnapshots?[legacyRootPath] = storedSnapshot
+            corruptPropertyList?["snapshots"] = storedSnapshots
+            let corruptBytes = try PropertyListSerialization.data(
+                fromPropertyList: corruptPropertyList as Any,
+                format: .binary,
+                options: 0
+            )
+            try corruptBytes.write(to: legacyMigrationURL)
+            var rejectedCorruptPackedSnapshot = false
+            do {
+                _ = try FileInventoryStore.record(FileInventorySnapshot(
+                    rootPath: legacyRootPath,
+                    volumeDeviceID: 7,
+                    observedAt: Date(timeIntervalSince1970: 220),
+                    entries: [FileInventoryEntry(relativePath: "a.bin", logicalBytes: 19, allocatedBytes: 24)],
+                    complete: true,
+                    excludedSymlinkCount: 0
+                ), at: legacyMigrationURL)
+            } catch is HistoryDecodeError {
+                rejectedCorruptPackedSnapshot = true
+            }
+            let retainedCorruptBytes = try Data(contentsOf: legacyMigrationURL)
+            try expect(rejectedCorruptPackedSnapshot
+                       && retainedCorruptBytes == corruptBytes,
+                       "a corrupt packed snapshot must fail closed and remain untouched")
 
             let lazyDashboardURL = temporaryRoot.appendingPathComponent("lazy-dashboard.plist")
             let lazyDashboardState = try PropertyListSerialization.data(

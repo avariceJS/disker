@@ -25,7 +25,9 @@ public struct FileInventoryRecordResult: Sendable {
 @_spi(DiskerTesting)
 public enum FileInventoryStoreStage: String, Sendable {
     case afterStoreDecode
+    case afterBaselineDecode
     case afterComparison
+    case afterSnapshotEncoding
     case beforeEncoding
     case afterEncoding
     case afterStoreWrite
@@ -35,9 +37,173 @@ public enum FileInventoryStoreStage: String, Sendable {
 /// and the latest net file-level change report for that root.
 public enum FileInventoryStore {
     private struct State: Codable {
-        var snapshots: [String: FileInventorySnapshot] = [:]
+        var snapshots: [String: StoredSnapshot] = [:]
         var reports: [String: FileInventoryChangeSet] = [:]
         var trendPoints: [String: [FileInventoryTrendPoint]]?
+
+        private enum CodingKeys: String, CodingKey {
+            case snapshotFormatVersion
+            case snapshots
+            case reports
+            case trendPoints
+        }
+
+        private struct SnapshotKey: CodingKey, Hashable {
+            let stringValue: String
+            var intValue: Int? { nil }
+
+            init?(stringValue: String) { self.stringValue = stringValue }
+            init?(intValue: Int) { return nil }
+        }
+
+        init() {}
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let version = try container.decodeIfPresent(Int.self, forKey: .snapshotFormatVersion) ?? 1
+            guard version == 1 || version == 2 else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .snapshotFormatVersion, in: container,
+                    debugDescription: "Unsupported file-inventory snapshot format."
+                )
+            }
+            if version == 2 {
+                snapshots = try container.decodeIfPresent(
+                    [String: StoredSnapshot].self, forKey: .snapshots
+                ) ?? [:]
+                guard snapshots.count <= maximumRootCount,
+                      snapshots.allSatisfy({ $0.key == $0.value.rootPath }),
+                      snapshots.values.reduce(0, { $0 + $1.entryCount }) <= maximumTotalEntryCount else {
+                    throw DecodingError.dataCorruptedError(
+                        forKey: .snapshots, in: container,
+                        debugDescription: "The packed file-inventory store exceeds its retention bounds."
+                    )
+                }
+            } else if container.contains(.snapshots) {
+                let legacySnapshots = try container.nestedContainer(
+                    keyedBy: SnapshotKey.self, forKey: .snapshots
+                )
+                guard legacySnapshots.allKeys.count <= maximumRootCount else {
+                    throw DecodingError.dataCorruptedError(
+                        forKey: .snapshots, in: container,
+                        debugDescription: "The legacy file-inventory store exceeds its root limit."
+                    )
+                }
+                var migrated: [String: StoredSnapshot] = [:]
+                migrated.reserveCapacity(legacySnapshots.allKeys.count)
+                var totalEntries = 0
+                for key in legacySnapshots.allKeys {
+                    let snapshot = try legacySnapshots.decode(FileInventorySnapshot.self, forKey: key)
+                    guard snapshot.rootPath == key.stringValue else {
+                        throw DecodingError.dataCorruptedError(
+                            forKey: .snapshots, in: container,
+                            debugDescription: "A legacy snapshot key does not match its selected root."
+                        )
+                    }
+                    let (nextTotal, overflow) = totalEntries.addingReportingOverflow(snapshot.entries.count)
+                    guard !overflow, nextTotal <= maximumTotalEntryCount else {
+                        throw DecodingError.dataCorruptedError(
+                            forKey: .snapshots, in: container,
+                            debugDescription: "The legacy file-inventory store exceeds its entry limit."
+                        )
+                    }
+                    totalEntries = nextTotal
+                    migrated[key.stringValue] = try StoredSnapshot(snapshot)
+                }
+                snapshots = migrated
+            } else {
+                snapshots = [:]
+            }
+            reports = try container.decodeIfPresent(
+                [String: FileInventoryChangeSet].self, forKey: .reports
+            ) ?? [:]
+            trendPoints = try container.decodeIfPresent(
+                [String: [FileInventoryTrendPoint]].self, forKey: .trendPoints
+            )
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(2, forKey: .snapshotFormatVersion)
+            try container.encode(snapshots, forKey: .snapshots)
+            try container.encode(reports, forKey: .reports)
+            try container.encodeIfPresent(trendPoints, forKey: .trendPoints)
+        }
+    }
+
+    private struct StoredSnapshot: Codable {
+        let rootPath: String
+        let folderObservationID: UUID
+        let volumeDeviceID: UInt64?
+        let observedAt: Date
+        let complete: Bool
+        let excludedSymlinkCount: Int
+        let entryCount: Int
+        let entryPayload: Data
+
+        private enum CodingKeys: String, CodingKey {
+            case rootPath
+            case folderObservationID
+            case volumeDeviceID
+            case observedAt
+            case complete
+            case excludedSymlinkCount
+            case entryCount
+            case entryPayload
+        }
+
+        init(_ snapshot: FileInventorySnapshot) throws {
+            rootPath = snapshot.rootPath
+            folderObservationID = snapshot.folderObservationID
+            volumeDeviceID = snapshot.volumeDeviceID
+            observedAt = snapshot.observedAt
+            complete = snapshot.complete
+            excludedSymlinkCount = snapshot.excludedSymlinkCount
+            entryCount = snapshot.entries.count
+            entryPayload = try PackedInventoryEntries.encode(snapshot.entries)
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let decodedRootPath = try container.decode(String.self, forKey: .rootPath)
+            let decodedSymlinkCount = try container.decode(Int.self, forKey: .excludedSymlinkCount)
+            let decodedEntryCount = try container.decode(Int.self, forKey: .entryCount)
+            let decodedPayload = try container.decode(Data.self, forKey: .entryPayload)
+            guard decodedRootPath.hasPrefix("/"), !decodedRootPath.utf8.contains(0),
+                  decodedSymlinkCount >= 0,
+                  (0...PackedInventoryEntries.maximumEntryCount).contains(decodedEntryCount),
+                  !decodedPayload.isEmpty,
+                  decodedPayload.count <= PackedInventoryEntries.maximumPayloadByteCount else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .entryPayload, in: container,
+                    debugDescription: "The packed file-inventory snapshot is outside its bounds."
+                )
+            }
+            rootPath = decodedRootPath
+            folderObservationID = try container.decode(UUID.self, forKey: .folderObservationID)
+            volumeDeviceID = try container.decodeIfPresent(UInt64.self, forKey: .volumeDeviceID)
+            observedAt = try container.decode(Date.self, forKey: .observedAt)
+            complete = try container.decode(Bool.self, forKey: .complete)
+            excludedSymlinkCount = decodedSymlinkCount
+            entryCount = decodedEntryCount
+            entryPayload = decodedPayload
+        }
+
+        func materialize() throws -> FileInventorySnapshot {
+            guard (0...PackedInventoryEntries.maximumEntryCount).contains(entryCount),
+                  excludedSymlinkCount >= 0 else {
+                throw PackedInventoryEntriesError.invalidPayload
+            }
+            return FileInventorySnapshot(
+                rootPath: rootPath,
+                folderObservationID: folderObservationID,
+                volumeDeviceID: volumeDeviceID,
+                observedAt: observedAt,
+                entries: try PackedInventoryEntries.decode(entryPayload, entryCount: entryCount),
+                complete: complete,
+                excludedSymlinkCount: excludedSymlinkCount
+            )
+        }
     }
 
     private struct DashboardState: Decodable {
@@ -121,15 +287,23 @@ public enum FileInventoryStore {
         let url = try resolvedURL(fileURL)
         var state = try load(at: url)
         stageObserver?(.afterStoreDecode)
+        var previousStored = state.snapshots.removeValue(forKey: snapshot.rootPath)
         // Release the prior manifest before encoding its replacement into the store.
-        let (report, volumeChanged) = {
-            let previous = state.snapshots[snapshot.rootPath]
-            let comparablePrevious = previous.flatMap { value in
-                value.complete && value.volumeDeviceID == snapshot.volumeDeviceID ? value : nil
+        let (report, volumeChanged) = try {
+            () -> (FileInventoryChangeSet, Bool) in
+            let previous: FileInventorySnapshot?
+            if let value = previousStored,
+               value.complete, value.volumeDeviceID == snapshot.volumeDeviceID {
+                do { previous = try value.materialize() }
+                catch { throw HistoryDecodeError.invalidHistory(error.localizedDescription) }
+            } else {
+                previous = nil
             }
-            let report = compare(snapshot, with: comparablePrevious)
-            return (report, previous.map { $0.volumeDeviceID != snapshot.volumeDeviceID } ?? false)
+            stageObserver?(.afterBaselineDecode)
+            let report = compare(snapshot, with: previous)
+            return (report, previousStored.map { $0.volumeDeviceID != snapshot.volumeDeviceID } ?? false)
         }()
+        previousStored = nil
         stageObserver?(.afterComparison)
         var trendPoints = state.trendPoints ?? [:]
         if volumeChanged {
@@ -144,7 +318,9 @@ public enum FileInventoryStore {
             trendPoints[snapshot.rootPath] = rootPoints
         }
         state.trendPoints = trendPoints
-        state.snapshots[snapshot.rootPath] = snapshot
+        do { state.snapshots[snapshot.rootPath] = try StoredSnapshot(snapshot) }
+        catch PackedInventoryEntriesError.exceedsLimit { throw FileInventoryStoreError.tooLarge }
+        stageObserver?(.afterSnapshotEncoding)
         state.reports[snapshot.rootPath] = report
         trim(&state, preserving: snapshot.rootPath)
         guard !Task.isCancelled else { return nil }
@@ -296,7 +472,7 @@ public enum FileInventoryStore {
 
     private static func trim(_ state: inout State, preserving path: String) {
         while state.snapshots.count > maximumRootCount
-            || state.snapshots.values.reduce(0, { $0 + $1.entries.count }) > maximumTotalEntryCount {
+            || state.snapshots.values.reduce(0, { $0 + $1.entryCount }) > maximumTotalEntryCount {
             guard let oldest = state.snapshots.values
                 .filter({ $0.rootPath != path })
                 .min(by: { $0.observedAt < $1.observedAt }) else { break }
