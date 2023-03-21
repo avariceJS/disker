@@ -357,10 +357,10 @@ final class DashboardModel {
         scan(panel.urls)
     }
 
-    func chooseApplicationBundle(startingAt directory: URL? = nil) {
+    func chooseApplicationBundle(startingAt directory: URL? = nil, expectedPath: String? = nil) {
         guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
         let panel = NSOpenPanel()
-        panel.title = "Choose an application bundle to measure"
+        panel.title = expectedPath == nil ? "Choose an application bundle to measure" : "Confirm the discovered application to measure"
         panel.prompt = "Measure Bundle"
         panel.message = "Disker measures only the selected .app bundle. Signature validation reads its signed executable and resources locally, in addition to the declared bundle ID and App Groups claim. It does not verify notarization or current use; group data is shared. No file contents are uploaded."
         panel.directoryURL = directory
@@ -373,6 +373,10 @@ final class DashboardModel {
         panel.canCreateDirectories = false
         panel.allowedContentTypes = [.applicationBundle]
         guard panel.runModal() == .OK, let bundleURL = panel.urls.first else { return }
+        if let expectedPath, bundleURL.standardizedFileURL.path != URL(fileURLWithPath: expectedPath).standardizedFileURL.path {
+            errorMessage = "Choose the same application bundle that you selected for measurement."
+            return
+        }
         guard bundleURL.pathExtension.lowercased() == "app" else {
             errorMessage = "Choose an application bundle (.app). Ordinary folders are not measured as applications."
             return
@@ -1128,6 +1132,7 @@ private struct OverviewFileChangeRow: Identifiable {
 
 struct DashboardView: View {
     @State private var model = DashboardModel()
+    @State private var applicationDiscovery = ApplicationDiscoveryModel()
     @State private var selectedSection: String? = "Overview"
     @State private var historyChartRange: ObservationTimeRange = .week
     @State private var isConfirmingHistoryClear = false
@@ -1207,6 +1212,10 @@ struct DashboardView: View {
                 enabled: isAutomaticRAMSamplingEnabled, appIsActive: model.isAppActive
             )
         }
+        .onChange(of: selectedSection) { _, section in
+            if section == "Applications" { applicationDiscovery.start() }
+            else { applicationDiscovery.stop() }
+        }
         .onChange(of: scenePhase) { _, phase in
             model.setStorageMonitoringAppActive(phase == .active)
             model.updateMemoryPressureMonitoring(
@@ -1215,6 +1224,7 @@ struct DashboardView: View {
         }
         .onDisappear {
             model.setStorageMonitoringSessionOpen(false)
+            applicationDiscovery.stop()
         }
         .onChange(of: isAutomaticRAMSamplingEnabled) { _, enabled in
             if enabled && scenePhase == .active {
@@ -1263,10 +1273,11 @@ struct DashboardView: View {
             Button("Clear History", role: .destructive) {
                 isAutomaticRAMSamplingEnabled = false
                 model.clearHistory()
+                applicationDiscovery.resetHistory()
             }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("This removes saved capacity, folder, file-change, RAM and system-pressure history, app-folder associations, and remembered scan locations from this Mac. Active storage and RAM monitoring will stop. Your files and folders will not be changed.")
+            Text("This removes saved capacity, folder, file-change, RAM and system-pressure history, application discovery dates and app-folder associations, and remembered scan locations from this Mac. Active storage and RAM monitoring will stop. Your files and folders will not be changed.")
         }
     }
 
@@ -2119,6 +2130,7 @@ struct DashboardView: View {
                     if model.isScanning { model.cancelScan() }
                     else { model.chooseApplicationBundle() }
                 }
+                applicationDiscoverySection
                 if model.isScanning {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
@@ -2344,6 +2356,73 @@ struct DashboardView: View {
             .padding(30)
             .frame(maxWidth: 960, alignment: .leading)
         }
+    }
+
+    private var applicationDiscoverySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Discovered applications", systemImage: "sparkle.magnifyingglass")
+                    .font(.headline)
+                Spacer()
+                Button("Add Discovery Folder…") { applicationDiscovery.addUserSelectedScope() }
+                    .controlSize(.small)
+            }
+            Text("Spotlight searches only /Applications, /System/Applications, ~/Applications, and folders you add here. Discovery reads indexed metadata only; it does not measure bundles or their data. Press Measure and confirm the exact bundle in the picker before Disker scans it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let message = applicationDiscovery.statusMessage {
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            if applicationDiscovery.isGathering {
+                Label("Collecting indexed Spotlight results…", systemImage: "clock")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if applicationDiscovery.candidates.isEmpty {
+                Text(applicationDiscovery.isRunning ? "No matching bundles have been reported yet." : "Discovery is stopped while this page is closed.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(applicationDiscovery.candidates) { candidate in
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "app")
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(candidate.displayName)
+                                .font(.subheadline.weight(.medium))
+                            Text(candidate.path)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            if let record = applicationDiscovery.history.first(where: { $0.path == candidate.path }) {
+                                Text("First seen by Disker · \(record.firstSeenAt.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer(minLength: 8)
+                        Button("Measure…") {
+                            model.chooseApplicationBundle(
+                                startingAt: URL(fileURLWithPath: candidate.path).deletingLastPathComponent(),
+                                expectedPath: candidate.path
+                            )
+                        }
+                        .controlSize(.small)
+                        .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
+                    }
+                    .padding(.vertical, 5)
+                    if candidate.id != applicationDiscovery.candidates.last?.id { Divider() }
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.background, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
     }
 
     private var foldersPage: some View {

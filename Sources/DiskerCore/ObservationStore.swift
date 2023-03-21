@@ -6,23 +6,26 @@ public struct LocalHistory: Codable, Sendable {
     public var memoryPressureObservations: [MemoryPressureObservation]
     public var capacityObservations: [CapacityObservation]
     public var applicationAssociations: [ApplicationFolderAssociation]
+    public var discoveredApplications: [ApplicationDiscoveryRecord]
 
     public init(
         observations: [ScanObservation] = [], ramObservations: [RAMObservation] = [],
         memoryPressureObservations: [MemoryPressureObservation] = [],
         capacityObservations: [CapacityObservation] = [],
-        applicationAssociations: [ApplicationFolderAssociation] = []
+        applicationAssociations: [ApplicationFolderAssociation] = [],
+        discoveredApplications: [ApplicationDiscoveryRecord] = []
     ) {
         self.observations = observations
         self.ramObservations = ramObservations
         self.memoryPressureObservations = memoryPressureObservations
         self.capacityObservations = capacityObservations
         self.applicationAssociations = applicationAssociations
+        self.discoveredApplications = discoveredApplications
     }
 
     private enum CodingKeys: String, CodingKey {
         case observations, ramObservations, memoryPressureObservations
-        case capacityObservations, applicationAssociations
+        case capacityObservations, applicationAssociations, discoveredApplications
     }
 
     public init(from decoder: Decoder) throws {
@@ -34,6 +37,7 @@ public struct LocalHistory: Codable, Sendable {
         ) ?? []
         capacityObservations = try values.decodeIfPresent([CapacityObservation].self, forKey: .capacityObservations) ?? []
         applicationAssociations = try values.decodeIfPresent([ApplicationFolderAssociation].self, forKey: .applicationAssociations) ?? []
+        discoveredApplications = try values.decodeIfPresent([ApplicationDiscoveryRecord].self, forKey: .discoveredApplications) ?? []
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -43,6 +47,7 @@ public struct LocalHistory: Codable, Sendable {
         try values.encode(memoryPressureObservations, forKey: .memoryPressureObservations)
         try values.encode(capacityObservations, forKey: .capacityObservations)
         try values.encode(applicationAssociations, forKey: .applicationAssociations)
+        try values.encode(discoveredApplications, forKey: .discoveredApplications)
     }
 }
 
@@ -50,6 +55,7 @@ public enum ObservationStore {
     private static let fileName = "observations.json"
     private static let maximumObservationCount = 180
     private static let maximumHistoryFileSize = 256 * 1024 * 1024
+    private static let maximumApplicationDiscoveryRecords = ApplicationBundleIndex.maximumDiscoveryRecords
 
     public static func load(from fileURL: URL? = nil) throws -> LocalHistory {
         guard let url = fileURL ?? historyURL() else { throw StorageReadError.historyLocationUnavailable }
@@ -66,6 +72,12 @@ public enum ObservationStore {
             history.capacityObservations = Array(history.capacityObservations.suffix(maximumObservationCount))
             history.applicationAssociations = Array(
                 history.applicationAssociations.suffix(maximumObservationCount)
+            )
+            history.discoveredApplications = Array(
+                history.discoveredApplications.sorted {
+                    if $0.lastSeenAt != $1.lastSeenAt { return $0.lastSeenAt > $1.lastSeenAt }
+                    return $0.path < $1.path
+                }.prefix(maximumApplicationDiscoveryRecords)
             )
             return history
         } catch {
@@ -157,6 +169,19 @@ public enum ObservationStore {
         } else {
             history.applicationAssociations.remove(at: index)
         }
+        try save(history, fileURL: fileURL)
+        return history
+    }
+
+    @discardableResult
+    public static func updateDiscoveredApplications(
+        _ records: [ApplicationDiscoveryRecord], to fileURL: URL? = nil
+    ) throws -> LocalHistory {
+        var history = try load(from: fileURL)
+        history.discoveredApplications = Array(records.sorted {
+            if $0.lastSeenAt != $1.lastSeenAt { return $0.lastSeenAt > $1.lastSeenAt }
+            return $0.path < $1.path
+        }.prefix(maximumApplicationDiscoveryRecords))
         try save(history, fileURL: fileURL)
         return history
     }

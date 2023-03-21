@@ -35,6 +35,7 @@ private struct DiskerCoreChecks {
             ("selected-folder growth aligned with capacity loss", testCapacityIntervalFolderGrowth),
             ("bounded history chart ranges", testObservationTimeRanges),
             ("explicit application bundle history index", testApplicationBundleIndex),
+            ("scoped application discovery filtering and bounded history", testApplicationDiscoveryIndex),
             ("explicitly selected app bundle identity read", testApplicationBundleMetadata),
             ("evidence-scoped application container attribution", testApplicationPathAttribution),
             ("read-only app footprint review", testApplicationFootprintReview),
@@ -530,6 +531,56 @@ private struct DiskerCoreChecks {
         )
         try expect(legacySelectedBundle.selectedAsApplicationBundle,
                    "legacy app observations with stored bundle IDs should retain their explicit-app classification")
+    }
+
+    private static func testApplicationDiscoveryIndex() throws {
+        let scopes = ["/Applications", "/Users/example/Applications"]
+        let candidates = [
+            ApplicationDiscoveryCandidate(path: "/Applications/Alpha.app", displayName: "Alpha"),
+            ApplicationDiscoveryCandidate(path: "/Applications/Alpha.app", displayName: "Duplicate"),
+            ApplicationDiscoveryCandidate(path: "/Applications/Folder/Deep.app", displayName: "Deep"),
+            ApplicationDiscoveryCandidate(path: "/Applications/Readme.txt", displayName: "Readme"),
+            ApplicationDiscoveryCandidate(path: "/Applications/Container.app/Contents/Helper.app", displayName: "Nested helper"),
+            ApplicationDiscoveryCandidate(path: "/ApplicationsBackup/Outside.app", displayName: "Outside"),
+            ApplicationDiscoveryCandidate(path: "/Users/example/Applications/User.app", displayName: "User"),
+        ]
+        let filtered = ApplicationBundleIndex.scopedCandidates(candidates, within: scopes)
+        try expect(filtered.map(\.path) == [
+            "/Applications/Alpha.app", "/Applications/Folder/Deep.app", "/Users/example/Applications/User.app",
+        ], "discovery must keep only deduplicated .app results lexically within explicit scopes")
+        try expect(ApplicationBundleIndex.scopedCandidates(candidates, within: scopes, limit: 2).count == 2,
+                   "discovery results must honor the requested display bound")
+        try withTemporaryDirectory { root in
+            let realBundle = root.appendingPathComponent("Real.app", isDirectory: true)
+            try FileManager.default.createDirectory(at: realBundle, withIntermediateDirectories: false)
+            let linkedBundle = root.appendingPathComponent("Linked.app", isDirectory: true)
+            try FileManager.default.createSymbolicLink(at: linkedBundle, withDestinationURL: realBundle)
+            let ancestorLink = root.appendingPathComponent("Alias", isDirectory: true)
+            try FileManager.default.createSymbolicLink(at: ancestorLink, withDestinationURL: root)
+            try expect(ApplicationBundleIndex.isDirectoryWithoutFollowingSymlinks(at: realBundle),
+                       "discovery should accept a real bundle directory")
+            try expect(!ApplicationBundleIndex.isDirectoryWithoutFollowingSymlinks(at: linkedBundle),
+                       "discovery must reject a bundle path that is a symlink")
+            try expect(!ApplicationBundleIndex.isDirectoryWithoutFollowingSymlinks(
+                at: ancestorLink.appendingPathComponent("Real.app", isDirectory: true)
+            ), "discovery must reject a bundle path with a symlink ancestor")
+        }
+
+        let first = Date(timeIntervalSince1970: 10)
+        let later = Date(timeIntervalSince1970: 20)
+        let initial = ApplicationBundleIndex.updatingDiscoveryHistory([], with: filtered, at: first)
+        let updated = ApplicationBundleIndex.updatingDiscoveryHistory(
+            initial, with: [filtered[0]], at: later, limit: 2
+        )
+        guard let alpha = updated.first(where: { $0.path == filtered[0].path }) else {
+            throw CheckFailure.assertion("updated discovery history should retain Alpha")
+        }
+        try expect(alpha.firstSeenAt == first && alpha.lastSeenAt == later,
+                   "history must preserve first-seen time and refresh last-seen time")
+        try expect(updated.count == 2,
+                   "discovery history must remain bounded and keep the most recently observed paths")
+        try expect(ApplicationBundleIndex.updatingDiscoveryHistory(initial, with: [], at: later, limit: 0).isEmpty,
+                   "a zero retention bound must retain no discovery records")
     }
 
     private static func testApplicationPathAttribution() throws {
@@ -3951,6 +4002,24 @@ private struct DiskerCoreChecks {
             try expect(withCapacityHistory.capacityObservations.last?.availableBytes == 720, "latest capacity sample should survive reload")
             try expect(withCapacityHistory.ramObservations.count == 180 && withCapacityHistory.observations.count == 180,
                        "capacity samples should preserve folder and RAM history")
+
+            let discoveryRecords = (0...ApplicationBundleIndex.maximumDiscoveryRecords).map { index in
+                let timestamp = Date(timeIntervalSince1970: TimeInterval(index))
+                return ApplicationDiscoveryRecord(
+                    path: "/Applications/App\(index).app", displayName: "App \(index)",
+                    firstSeenAt: timestamp, lastSeenAt: timestamp
+                )
+            }
+            let withDiscovery = try ObservationStore.updateDiscoveredApplications(discoveryRecords, to: fileURL)
+            let reloadedDiscovery = try ObservationStore.load(from: fileURL)
+            try expect(withDiscovery.discoveredApplications.count == ApplicationBundleIndex.maximumDiscoveryRecords,
+                       "application discovery history should be capped at its configured bound")
+            try expect(withDiscovery.discoveredApplications.first?.path == "/Applications/App\(ApplicationBundleIndex.maximumDiscoveryRecords).app",
+                       "application discovery retention should preserve the newest observed records")
+            try expect(reloadedDiscovery.discoveredApplications == withDiscovery.discoveredApplications,
+                       "bounded application discovery dates should persist across history reload")
+            try expect(reloadedDiscovery.observations.count == 180 && reloadedDiscovery.capacityObservations.count == 180,
+                       "saving application discovery history should preserve other local observations")
 
             let pressureFileURL = root.appendingPathComponent("pressure-history.json")
             for index in 0...180 {
