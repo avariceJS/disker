@@ -68,6 +68,36 @@ private extension SWKPICard where Trailing == EmptyView {
     }
 }
 
+/// A compact semantic state chip adapted from ShipSwift's status-badge pattern.
+/// It uses native system colors and adds no package or platform dependency.
+private struct DiscoveryStatusBadge: View {
+    enum Style {
+        case measured, partial, unmeasured
+
+        var tint: Color {
+            switch self {
+            case .measured: .green
+            case .partial: .orange
+            case .unmeasured: .secondary
+            }
+        }
+    }
+
+    let title: LocalizedStringKey
+    let style: Style
+
+    var body: some View {
+        Text(title)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(style.tint)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(style.tint.opacity(0.12), in: Capsule())
+            .overlay(Capsule().strokeBorder(style.tint.opacity(0.28), lineWidth: 0.5))
+            .accessibilityAddTraits(.isStaticText)
+    }
+}
+
 private func folderMeasurementSummary(_ observation: FolderObservation) -> String {
     let logical = ByteCountFormatter.string(fromByteCount: observation.logicalBytes, countStyle: .file)
     let allocated = ByteCountFormatter.string(fromByteCount: observation.allocatedBytes, countStyle: .file)
@@ -1202,6 +1232,7 @@ struct DashboardView: View {
     @State private var isConfirmingHistoryClear = false
     @State private var isAutomaticRAMSamplingEnabled = false
     @State private var applicationReviewBundle: FolderObservation?
+    @State private var applicationDiscoverySearchText = ""
     @State private var developerArtifactReviewFolder: FolderObservation?
     @Environment(\.scenePhase) private var scenePhase
 
@@ -2272,8 +2303,9 @@ struct DashboardView: View {
     }
 
     private var applicationsPage: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
                 header("Application bundles", subtitle: "Measure the selected .app bundle; associated data is outside this measurement.")
                 if hasApplicationHistoryChart { historyRangePicker }
                 Label {
@@ -2289,7 +2321,11 @@ struct DashboardView: View {
                     if model.isScanning { model.cancelScan() }
                     else { model.chooseApplicationBundle() }
                 }
-                applicationDiscoverySection
+                applicationDiscoverySection { path in
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        scrollProxy.scrollTo(path, anchor: .top)
+                    }
+                }
                 if model.isScanning {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
@@ -2509,16 +2545,38 @@ struct DashboardView: View {
                         .padding(16)
                         .background(.background, in: RoundedRectangle(cornerRadius: 12))
                         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
+                        .id(bundle.path)
                     }
                 }
             }
             .padding(30)
             .frame(maxWidth: 960, alignment: .leading)
+            }
         }
     }
 
-    private var applicationDiscoverySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private func applicationDiscoverySection(scrollToMeasurement: @escaping (String) -> Void) -> some View {
+        let measurementsByPath = Dictionary(
+            model.measuredApplicationBundles.map { ($0.path, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let discoveryRecordsByPath = Dictionary(
+            applicationDiscovery.history.map { ($0.path, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let candidates = applicationDiscovery.candidates.filter { candidate in
+            applicationDiscoverySearchText.isEmpty
+                || candidate.displayName.localizedStandardContains(applicationDiscoverySearchText)
+                || candidate.path.localizedStandardContains(applicationDiscoverySearchText)
+        }
+        let measuredCount = applicationDiscovery.candidates.reduce(into: 0) { count, candidate in
+            if measurementsByPath[candidate.path] != nil { count += 1 }
+        }
+        let matchingMeasuredCount = candidates.reduce(into: 0) { count, candidate in
+            if measurementsByPath[candidate.path] != nil { count += 1 }
+        }
+
+        return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Label("Discovered applications", systemImage: "sparkle.magnifyingglass")
                     .font(.headline)
@@ -2540,12 +2598,44 @@ struct DashboardView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if !applicationDiscovery.candidates.isEmpty {
+                HStack(alignment: .center, spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField("Filter by app name or path", text: $applicationDiscoverySearchText)
+                        .textFieldStyle(.plain)
+                        .accessibilityLabel("Filter discovered applications")
+                    if !applicationDiscoverySearchText.isEmpty {
+                        Button {
+                            applicationDiscoverySearchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Clear application filter")
+                    }
+                }
+                .padding(8)
+                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
+                Text(applicationDiscoverySearchText.isEmpty
+                     ? "\(applicationDiscovery.candidates.count) shown · \(measuredCount) measured"
+                     : "\(candidates.count) \(candidates.count == 1 ? "match" : "matches") · \(matchingMeasuredCount) measured · \(applicationDiscovery.candidates.count) in catalog sample")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
             if applicationDiscovery.candidates.isEmpty {
                 Text(applicationDiscovery.isRunning ? "No matching bundles have been reported yet." : "Discovery is stopped while this page is closed.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            } else if candidates.isEmpty {
+                ContentUnavailableView.search(text: applicationDiscoverySearchText)
+                    .frame(maxWidth: .infinity, minHeight: 90)
             } else {
-                ForEach(applicationDiscovery.candidates) { candidate in
+                LazyVStack(spacing: 0) {
+                ForEach(candidates) { candidate in
+                    let measurement = measurementsByPath[candidate.path]
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: "app")
                             .foregroundStyle(.secondary)
@@ -2557,14 +2647,38 @@ struct DashboardView: View {
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
-                            if let record = applicationDiscovery.history.first(where: { $0.path == candidate.path }) {
+                            if let record = discoveryRecordsByPath[candidate.path] {
                                 Text("First seen by Disker · \(record.firstSeenAt.formatted(date: .abbreviated, time: .shortened))")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }
+                            if let measurement {
+                                HStack(spacing: 6) {
+                                    DiscoveryStatusBadge(
+                                        title: measurement.complete ? "Measured" : "Partial measurement",
+                                        style: measurement.complete ? .measured : .partial
+                                    )
+                                    Text(folderMeasurementSummary(measurement))
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Text("Last measured · \(measurement.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                DiscoveryStatusBadge(title: "Not measured", style: .unmeasured)
+                            }
                         }
                         Spacer(minLength: 8)
-                        Button("Measure…") {
+                        if measurement != nil {
+                            Button("View measurement") {
+                                scrollToMeasurement(candidate.path)
+                            }
+                            .controlSize(.small)
+                            .buttonStyle(.borderless)
+                        }
+                        Button(measurement == nil ? "Measure…" : "Measure again…") {
                             model.chooseApplicationBundle(
                                 startingAt: URL(fileURLWithPath: candidate.path).deletingLastPathComponent(),
                                 expectedPath: candidate.path
@@ -2574,7 +2688,8 @@ struct DashboardView: View {
                         .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
                     }
                     .padding(.vertical, 5)
-                    if candidate.id != applicationDiscovery.candidates.last?.id { Divider() }
+                    if candidate.id != candidates.last?.id { Divider() }
+                }
                 }
             }
         }

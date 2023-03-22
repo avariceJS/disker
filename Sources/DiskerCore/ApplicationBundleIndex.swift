@@ -29,6 +29,12 @@ public struct ApplicationDiscoveryCandidate: Equatable, Identifiable, Sendable {
     }
 }
 
+/// A bounded view of indexed application candidates and whether the bound omitted any.
+public struct ApplicationDiscoverySample: Equatable, Sendable {
+    public let candidates: [ApplicationDiscoveryCandidate]
+    public let hasMore: Bool
+}
+
 public enum ApplicationBundleIndex {
     public static let maximumDiscoveryRecords = 500
 
@@ -55,6 +61,23 @@ public enum ApplicationBundleIndex {
         }
         .prefix(limit)
         .map { $0 }
+    }
+
+    /// Returns a sorted display sample and accurately reports when valid scoped
+    /// candidates were omitted by the requested bound.
+    public static func scopedCandidateSample(
+        _ candidates: [ApplicationDiscoveryCandidate], within scopes: [String], limit: Int
+    ) -> ApplicationDiscoverySample {
+        guard limit > 0 else {
+            return ApplicationDiscoverySample(
+                candidates: [], hasMore: !scopedCandidates(candidates, within: scopes).isEmpty
+            )
+        }
+        let lookaheadLimit = limit == Int.max ? Int.max : limit + 1
+        let bounded = scopedCandidates(candidates, within: scopes, limit: lookaheadLimit)
+        return ApplicationDiscoverySample(
+            candidates: Array(bounded.prefix(limit)), hasMore: bounded.count > limit
+        )
     }
 
     /// Confirms every existing path component with lstat; no symlink is followed.

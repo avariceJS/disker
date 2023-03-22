@@ -121,7 +121,9 @@ final class ApplicationDiscoveryModel {
         if finished { isGathering = false }
 
         var raw: [ApplicationDiscoveryCandidate] = []
-        let count = min(query.resultCount, 5_000)
+        let maximumIndexedResults = 5_000
+        let maximumDisplayedResults = ApplicationBundleIndex.maximumDiscoveryRecords
+        let count = min(query.resultCount, maximumIndexedResults)
         for index in 0..<count {
             guard let item = query.result(at: index) as? NSMetadataItem,
                   let path = item.value(forAttribute: NSMetadataItemPathKey) as? String
@@ -132,9 +134,13 @@ final class ApplicationDiscoveryModel {
                 ?? url.deletingPathExtension().lastPathComponent
             raw.append(ApplicationDiscoveryCandidate(path: url.path, displayName: name))
         }
-        let scoped = ApplicationBundleIndex.scopedCandidates(raw, within: scopePaths)
-        candidates = scoped
-        let updatedHistory = ApplicationBundleIndex.updatingDiscoveryHistory(history, with: scoped)
+        let scoped = ApplicationBundleIndex.scopedCandidateSample(
+            raw, within: scopePaths, limit: maximumDisplayedResults
+        )
+        let sampleIsTruncated = query.resultCount > maximumIndexedResults || scoped.hasMore
+        let displayed = scoped.candidates
+        candidates = displayed
+        let updatedHistory = ApplicationBundleIndex.updatingDiscoveryHistory(history, with: displayed)
         if updatedHistory != history {
             do {
                 history = try ObservationStore.updateDiscoveredApplications(updatedHistory).discoveredApplications
@@ -143,8 +149,8 @@ final class ApplicationDiscoveryModel {
                 statusMessage = "Spotlight results are available, but their local discovery dates could not be saved."
             }
         }
-        statusMessage = query.resultCount > 5_000
-            ? "Showing a bounded sample of Spotlight results. Search scope or index coverage may omit applications."
+        statusMessage = sampleIsTruncated
+            ? "Showing up to 500 matching applications. Search scope or index coverage may omit applications."
             : "Discovery uses Spotlight's current index; excluded or unindexed locations remain unknown."
     }
 

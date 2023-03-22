@@ -550,6 +550,19 @@ private struct DiskerCoreChecks {
         ], "discovery must keep only deduplicated .app results lexically within explicit scopes")
         try expect(ApplicationBundleIndex.scopedCandidates(candidates, within: scopes, limit: 2).count == 2,
                    "discovery results must honor the requested display bound")
+        let overLimit = (0...2).map { index in
+            ApplicationDiscoveryCandidate(path: "/Applications/Bound\(index).app", displayName: "Bound \(index)")
+        }
+        let limitedSample = ApplicationBundleIndex.scopedCandidateSample(
+            overLimit, within: scopes, limit: 2
+        )
+        try expect(limitedSample.candidates.count == 2 && limitedSample.hasMore,
+                   "discovery must disclose when valid applications exceed the displayed sample")
+        let completeSample = ApplicationBundleIndex.scopedCandidateSample(
+            Array(overLimit.prefix(2)), within: scopes, limit: 2
+        )
+        try expect(completeSample.candidates.count == 2 && !completeSample.hasMore,
+                   "a sample at its exact display bound must not claim that results were omitted")
         try withTemporaryDirectory { root in
             let realBundle = root.appendingPathComponent("Real.app", isDirectory: true)
             try FileManager.default.createDirectory(at: realBundle, withIntermediateDirectories: false)
