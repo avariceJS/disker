@@ -27,6 +27,8 @@
 /* Application discovery and measured bundle inventory. */
 "Application bundles" = "Пакеты приложений";
 "Measure the selected .app bundle; associated data is outside this measurement." = "Измеряйте выбранный пакет .app; связанные данные в это измерение не входят.";
+"Disker does not infer support folders, caches, containers, or shared files. Those locations are not included unless you measure them separately, and a bundle total alone is not an uninstall plan." = "Disker не приписывает приложению папки поддержки, кэши, контейнеры и общие файлы автоматически. Они не входят в размер без отдельного измерения, а размер пакета сам по себе не является планом удаления приложения.";
+"Choose an Application Bundle…" = "Выбрать пакет приложения…";
 "Discovered applications" = "Найденные приложения";
 "Add Discovery Folder…" = "Добавить папку поиска…";
 "Spotlight searches only /Applications, /System/Applications, ~/Applications, and folders you add here. Discovery reads indexed metadata only; it does not measure bundles or their data. Press Measure and confirm the exact bundle in the picker before Disker scans it." = "Spotlight ищет только в /Applications, /System/Applications, ~/Applications и папках, добавленных здесь. Поиск использует только индексированные метаданные и не измеряет пакеты или связанные данные. Нажмите «Измерить» и подтвердите точный пакет в окне выбора, прежде чем Disker начнёт сканирование.";
@@ -56,6 +58,10 @@
 "Spotlight results are available, but their local discovery dates could not be saved." = "Результаты Spotlight доступны, но даты их обнаружения не удалось сохранить локально.";
 "Showing up to 500 matching applications. Search scope or index coverage may omit applications." = "Показано не более 500 приложений. Выбранные папки и покрытие индекса могут не включать другие приложения.";
 "Discovery uses Spotlight's current index; excluded or unindexed locations remain unknown." = "Поиск использует текущий индекс Spotlight; приложения в исключённых или неиндексируемых местах остаются неизвестны.";
+"24 hours" = "24 часа";
+"7 days" = "7 дней";
+"30 days" = "30 дней";
+"All saved" = "Вся история";
 "No bytes measured · total unknown" = "Ничего не измерено · общий размер неизвестен";
 "Measured so far · logical %@ · allocated estimate ~%@ · total unknown" = "Пока измерено · логический размер %@ · оценка выделенного места ~%@ · общий размер неизвестен";
 "Logical %@ · allocated estimate ~%@" = "Логический размер %@ · оценка выделенного места ~%@";

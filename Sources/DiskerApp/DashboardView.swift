@@ -2348,9 +2348,10 @@ struct DashboardView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-                Button(model.isScanning ? "Cancel Scan" : "Choose an Application Bundle…") {
-                    if model.isScanning { model.cancelScan() }
-                    else { model.chooseApplicationBundle() }
+                if model.isScanning {
+                    Button("Cancel Scan") { model.cancelScan() }
+                } else {
+                    Button("Choose an Application Bundle…") { model.chooseApplicationBundle() }
                 }
                 applicationDiscoverySection { path in
                     withAnimation(.easeInOut(duration: 0.25)) {
@@ -2376,9 +2377,10 @@ struct DashboardView: View {
                     } description: {
                         Text("Choose one .app bundle to measure its file tree. Disker will not scan neighboring support data.")
                     } actions: {
-                        Button(model.isScanning ? "Cancel Scan" : "Choose an Application Bundle…") {
-                            if model.isScanning { model.cancelScan() }
-                            else { model.chooseApplicationBundle() }
+                        if model.isScanning {
+                            Button("Cancel Scan") { model.cancelScan() }
+                        } else {
+                            Button("Choose an Application Bundle…") { model.chooseApplicationBundle() }
                         }
                     }
                     .frame(maxWidth: .infinity, minHeight: 190)
@@ -4796,7 +4798,7 @@ struct DashboardView: View {
         .padding(.top, 4)
     }
 
-    private func header(_ title: String, subtitle: String) -> some View {
+    private func header(_ title: LocalizedStringKey, subtitle: LocalizedStringKey) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.system(size: 30, weight: .bold, design: .rounded))
             Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
@@ -4861,7 +4863,7 @@ struct DashboardView: View {
     private var historyRangePicker: some View {
         Picker("History range", selection: $historyChartRange) {
             ForEach(ObservationTimeRange.allCases) { range in
-                Text(range.title).tag(range)
+                Text(NSLocalizedString(range.title, comment: "Storage history chart time range")).tag(range)
             }
         }
         .pickerStyle(.segmented)
