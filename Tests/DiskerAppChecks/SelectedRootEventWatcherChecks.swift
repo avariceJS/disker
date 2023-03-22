@@ -2,18 +2,18 @@ import Foundation
 
 private final class EventSignal: @unchecked Sendable {
     private let lock = NSLock()
-    private var received = false
+    private var eventCount = 0
 
     func record() {
         lock.lock()
-        received = true
+        eventCount += 1
         lock.unlock()
     }
 
-    var didReceiveEvent: Bool {
+    var count: Int {
         lock.lock()
         defer { lock.unlock() }
-        return received
+        return eventCount
     }
 }
 
@@ -36,15 +36,31 @@ private enum SelectedRootEventWatcherChecks {
         )
 
         let deadline = Date.now.addingTimeInterval(8)
-        while Date.now < deadline && !signal.didReceiveEvent {
+        while Date.now < deadline && signal.count == 0 {
             RunLoop.current.run(until: min(deadline, Date.now.addingTimeInterval(0.05)))
         }
-        guard signal.didReceiveEvent else {
+        guard signal.count > 0 else {
             throw NSError(domain: "Disker.SelectedRootEventWatcherChecks", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "FSEvents did not notify Disker about a synthetic selected-root change within eight seconds."
             ])
         }
+        // Drain any callbacks for the first write before establishing the
+        // post-stop count. A stopped stream must not deliver later changes.
+        RunLoop.current.run(until: Date.now.addingTimeInterval(0.25))
+        let countAfterFirstChange = signal.count
         watcher.stop()
-        print("PASS  selected-root FSEvents delivers a synthetic file change")
+        try Data([0x73, 0x74, 0x6f, 0x70]).write(
+            to: fixtureRoot.appendingPathComponent("after-stop.bin")
+        )
+        let stopDeadline = Date.now.addingTimeInterval(1.5)
+        while Date.now < stopDeadline {
+            RunLoop.current.run(until: min(stopDeadline, Date.now.addingTimeInterval(0.05)))
+        }
+        guard signal.count == countAfterFirstChange else {
+            throw NSError(domain: "Disker.SelectedRootEventWatcherChecks", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "A stopped FSEvents watcher delivered a later synthetic filesystem change."
+            ])
+        }
+        print("PASS  selected-root FSEvents delivers changes and stops cleanly")
     }
 }
