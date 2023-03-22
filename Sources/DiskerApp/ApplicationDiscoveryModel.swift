@@ -33,9 +33,12 @@ final class ApplicationDiscoveryModel {
 
     func addUserSelectedScope() {
         let panel = NSOpenPanel()
-        panel.title = "Add an application discovery folder"
-        panel.prompt = "Search This Folder"
-        panel.message = "Spotlight will look for application bundles inside this folder. Disker will not scan or measure its contents."
+        panel.title = NSLocalizedString("Add an application discovery folder", comment: "Application discovery folder picker title")
+        panel.prompt = NSLocalizedString("Search This Folder", comment: "Application discovery folder picker action")
+        panel.message = NSLocalizedString(
+            "Spotlight will look for application bundles inside this folder. Disker will not scan or measure its contents.",
+            comment: "Application discovery folder picker explanation"
+        )
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
@@ -49,7 +52,10 @@ final class ApplicationDiscoveryModel {
         let didStartAccess = url.startAccessingSecurityScopedResource()
         let isSandboxed = ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil
         guard didStartAccess || !isSandboxed else {
-            statusMessage = "macOS did not grant access to that discovery folder. No scan was started."
+            statusMessage = NSLocalizedString(
+                "macOS did not grant access to that discovery folder. No scan was started.",
+                comment: "Discovery folder permission status"
+            )
             return
         }
         if didStartAccess { securityScopedPaths.insert(url.path) }
@@ -84,7 +90,10 @@ final class ApplicationDiscoveryModel {
     private func runQuery() {
         let activeScopes = selectedScopeURLs.filter(Self.isRealDirectory)
         guard !activeScopes.isEmpty else {
-            statusMessage = "No accessible application folders are available for Spotlight discovery."
+            statusMessage = NSLocalizedString(
+                "No accessible application folders are available for Spotlight discovery.",
+                comment: "No application discovery scopes are available"
+            )
             return
         }
 
@@ -94,7 +103,10 @@ final class ApplicationDiscoveryModel {
         query.notificationBatchingInterval = 1
         self.query = query
         scopePaths = activeScopes.map(\.path)
-        statusMessage = "Waiting for Spotlight's indexed results. Index coverage may be incomplete."
+        statusMessage = NSLocalizedString(
+            "Waiting for Spotlight's indexed results. Index coverage may be incomplete.",
+            comment: "Application discovery is waiting for indexed results"
+        )
         isGathering = true
         isRunning = true
 
@@ -109,7 +121,10 @@ final class ApplicationDiscoveryModel {
             })
         }
         if !query.start() {
-            statusMessage = "Spotlight could not start this scoped query. Try again later."
+            statusMessage = NSLocalizedString(
+                "Spotlight could not start this scoped query. Try again later.",
+                comment: "Application discovery query could not start"
+            )
             stop()
         }
     }
@@ -146,12 +161,21 @@ final class ApplicationDiscoveryModel {
                 history = try ObservationStore.updateDiscoveredApplications(updatedHistory).discoveredApplications
             } catch {
                 history = updatedHistory
-                statusMessage = "Spotlight results are available, but their local discovery dates could not be saved."
+                statusMessage = NSLocalizedString(
+                    "Spotlight results are available, but their local discovery dates could not be saved.",
+                    comment: "Application discovery history could not be saved"
+                )
             }
         }
         statusMessage = sampleIsTruncated
-            ? "Showing up to 500 matching applications. Search scope or index coverage may omit applications."
-            : "Discovery uses Spotlight's current index; excluded or unindexed locations remain unknown."
+            ? NSLocalizedString(
+                "Showing up to 500 matching applications. Search scope or index coverage may omit applications.",
+                comment: "Application discovery results are capped"
+            )
+            : NSLocalizedString(
+                "Discovery uses Spotlight's current index; excluded or unindexed locations remain unknown.",
+                comment: "Application discovery index coverage caveat"
+            )
     }
 
     private static func isRealDirectory(_ url: URL) -> Bool {

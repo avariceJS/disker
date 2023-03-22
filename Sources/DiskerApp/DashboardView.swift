@@ -83,7 +83,7 @@ private struct DiscoveryStatusBadge: View {
         }
     }
 
-    let title: LocalizedStringKey
+    let title: String
     let style: Style
 
     var body: some View {
@@ -98,28 +98,59 @@ private struct DiscoveryStatusBadge: View {
     }
 }
 
-private func folderMeasurementSummary(_ observation: FolderObservation) -> String {
-    let logical = ByteCountFormatter.string(fromByteCount: observation.logicalBytes, countStyle: .file)
-    let allocated = ByteCountFormatter.string(fromByteCount: observation.allocatedBytes, countStyle: .file)
-    guard observation.complete else {
-        guard observation.logicalBytes > 0 || observation.allocatedBytes > 0 else {
-            return "No bytes measured · total unknown"
-        }
-        return "Measured so far · logical \(logical) · allocated estimate ~\(allocated) · total unknown"
+private func measuredBytesSummary(logicalBytes: Int64, allocatedBytes: Int64, complete: Bool) -> String {
+    let logical = ByteCountFormatter.string(fromByteCount: logicalBytes, countStyle: .file)
+    let allocated = ByteCountFormatter.string(fromByteCount: allocatedBytes, countStyle: .file)
+    if !complete && logicalBytes == 0 && allocatedBytes == 0 {
+        return NSLocalizedString("No bytes measured · total unknown", comment: "No bytes measured in an incomplete scope")
     }
-    return "Logical \(logical) · allocated estimate ~\(allocated)"
+    if !complete {
+        let format = NSLocalizedString(
+            "Measured so far · logical %@ · allocated estimate ~%@ · total unknown",
+            comment: "Partial logical and allocated-byte estimates for a selected scope"
+        )
+        return String.localizedStringWithFormat(format, logical, allocated)
+    }
+    let format = NSLocalizedString(
+        "Logical %@ · allocated estimate ~%@",
+        comment: "Logical bytes and allocated-byte estimate for a measured scope"
+    )
+    return String.localizedStringWithFormat(format, logical, allocated)
+}
+
+private func folderMeasurementSummary(_ observation: FolderObservation) -> String {
+    measuredBytesSummary(
+        logicalBytes: observation.logicalBytes,
+        allocatedBytes: observation.allocatedBytes,
+        complete: observation.complete
+    )
+}
+
+private func applicationDiscoverySummary(
+    catalogCount: Int, measuredCount: Int, matchCount: Int?
+) -> String {
+    if let matchCount {
+        let format = NSLocalizedString(
+            "Application discovery results · filtered",
+            value: "Matches: %ld · measured: %ld · catalog sample: %ld",
+            comment: "Counts for filtered Spotlight application results"
+        )
+        return String.localizedStringWithFormat(format, matchCount, measuredCount, catalogCount)
+    }
+    let format = NSLocalizedString(
+        "Application discovery results · all",
+        value: "Catalog sample: %ld · measured: %ld",
+        comment: "Counts for all displayed Spotlight application results"
+    )
+    return String.localizedStringWithFormat(format, catalogCount, measuredCount)
 }
 
 private func directoryMeasurementSummary(_ usage: DirectoryUsage) -> String {
-    let logical = ByteCountFormatter.string(fromByteCount: usage.logicalBytes, countStyle: .file)
-    let allocated = ByteCountFormatter.string(fromByteCount: usage.allocatedBytes, countStyle: .file)
-    guard usage.complete else {
-        guard usage.logicalBytes > 0 || usage.allocatedBytes > 0 else {
-            return "No bytes measured · total unknown"
-        }
-        return "Measured so far · logical \(logical) · allocated estimate ~\(allocated) · total unknown"
-    }
-    return "Logical \(logical) · allocated estimate ~\(allocated)"
+    measuredBytesSummary(
+        logicalBytes: usage.logicalBytes,
+        allocatedBytes: usage.allocatedBytes,
+        complete: usage.complete
+    )
 }
 
 private func directoryAllocatedValue(_ usage: DirectoryUsage) -> String {
@@ -2619,9 +2650,11 @@ struct DashboardView: View {
                 .padding(8)
                 .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
-                Text(applicationDiscoverySearchText.isEmpty
-                     ? "\(applicationDiscovery.candidates.count) shown · \(measuredCount) measured"
-                     : "\(candidates.count) \(candidates.count == 1 ? "match" : "matches") · \(matchingMeasuredCount) measured · \(applicationDiscovery.candidates.count) in catalog sample")
+                Text(applicationDiscoverySummary(
+                    catalogCount: applicationDiscovery.candidates.count,
+                    measuredCount: applicationDiscoverySearchText.isEmpty ? measuredCount : matchingMeasuredCount,
+                    matchCount: applicationDiscoverySearchText.isEmpty ? nil : candidates.count
+                ))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -2655,7 +2688,10 @@ struct DashboardView: View {
                             if let measurement {
                                 HStack(spacing: 6) {
                                     DiscoveryStatusBadge(
-                                        title: measurement.complete ? "Measured" : "Partial measurement",
+                                        title: NSLocalizedString(
+                                            measurement.complete ? "Measured" : "Partial measurement",
+                                            comment: "Measured application bundle coverage state"
+                                        ),
                                         style: measurement.complete ? .measured : .partial
                                     )
                                     Text(folderMeasurementSummary(measurement))
@@ -2667,7 +2703,10 @@ struct DashboardView: View {
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             } else {
-                                DiscoveryStatusBadge(title: "Not measured", style: .unmeasured)
+                                DiscoveryStatusBadge(
+                                    title: NSLocalizedString("Not measured", comment: "Application bundle has not been measured"),
+                                    style: .unmeasured
+                                )
                             }
                         }
                         Spacer(minLength: 8)
@@ -2678,14 +2717,25 @@ struct DashboardView: View {
                             .controlSize(.small)
                             .buttonStyle(.borderless)
                         }
-                        Button(measurement == nil ? "Measure…" : "Measure again…") {
-                            model.chooseApplicationBundle(
-                                startingAt: URL(fileURLWithPath: candidate.path).deletingLastPathComponent(),
-                                expectedPath: candidate.path
-                            )
+                        if measurement == nil {
+                            Button("Measure…") {
+                                model.chooseApplicationBundle(
+                                    startingAt: URL(fileURLWithPath: candidate.path).deletingLastPathComponent(),
+                                    expectedPath: candidate.path
+                                )
+                            }
+                            .controlSize(.small)
+                            .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
+                        } else {
+                            Button("Measure again…") {
+                                model.chooseApplicationBundle(
+                                    startingAt: URL(fileURLWithPath: candidate.path).deletingLastPathComponent(),
+                                    expectedPath: candidate.path
+                                )
+                            }
+                            .controlSize(.small)
+                            .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
                         }
-                        .controlSize(.small)
-                        .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
                     }
                     .padding(.vertical, 5)
                     if candidate.id != candidates.last?.id { Divider() }
