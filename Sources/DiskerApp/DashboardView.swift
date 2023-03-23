@@ -211,8 +211,7 @@ final class DashboardModel {
     var countedFileObjects = 0
     private var scanTask: Task<DetailedScanObservation, Never>?
     private var fileInventoryTask: Task<[FileInventoryRecordResult], Error>?
-    enum ScanOrigin { case manual, scheduled, eventTriggered }
-    private var scanOrigin: ScanOrigin?
+    private var scanOrigin: StorageScanOrigin?
     private var scanRootPaths = Set<String>()
     var scheduledScanPath: String?
     var eventTriggeredScanPath: String?
@@ -639,10 +638,10 @@ final class DashboardModel {
         scan([chosenURL])
     }
 
-    private func rescanRememberedFolder(_ path: String, origin: ScanOrigin) {
+    private func rescanRememberedFolder(_ path: String, origin: StorageScanOrigin) {
         guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
         guard let bookmark = rememberedScopes.first(where: { $0.path == path }) else {
-            if origin == .scheduled {
+            if origin.isMonitoring {
                 pauseStorageMonitoring(path, reason: "Saved access is missing. Select this folder again before resuming.")
             }
             return
@@ -656,7 +655,7 @@ final class DashboardModel {
             }
             scan([url], origin: origin)
         } catch {
-            if origin == .scheduled {
+            if origin.isMonitoring {
                 pauseStorageMonitoring(path, reason: "Saved access needs attention. Choose this folder again, then resume monitoring.")
             }
             errorMessage = error.localizedDescription
@@ -700,7 +699,7 @@ final class DashboardModel {
 
     func scan(
         _ urls: [URL], applicationBundleIdentities: [String: ApplicationBundleIdentity] = [:],
-        inspectSelectedAppBundles: Bool = false, origin: ScanOrigin = .manual
+        inspectSelectedAppBundles: Bool = false, origin: StorageScanOrigin = .manual
     ) {
         guard !urls.isEmpty, !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
         guard urls.count <= ApplicationFolderAssociation.maximumRelatedFolderCount else {

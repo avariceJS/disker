@@ -1,5 +1,16 @@
 import Foundation
 
+/// Distinguishes explicit user scans from scans started by opted-in monitoring.
+public enum StorageScanOrigin: Equatable, Sendable {
+    case manual
+    case scheduled
+    case eventTriggered
+
+    public var isMonitoring: Bool {
+        self != .manual
+    }
+}
+
 /// Pure scheduling decisions for opt-in scans of explicitly saved folder roots.
 /// This type never resolves bookmarks, accesses paths, or starts/cancels work.
 public enum StorageMonitoringPolicy {

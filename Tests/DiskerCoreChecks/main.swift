@@ -1833,6 +1833,10 @@ private struct DiskerCoreChecks {
 
     private static func testStorageMonitoringPolicy() throws {
         let start = Date(timeIntervalSince1970: 10_000)
+        try expect(!StorageScanOrigin.manual.isMonitoring
+                   && StorageScanOrigin.scheduled.isMonitoring
+                   && StorageScanOrigin.eventTriggered.isMonitoring,
+                   "only scans started by monitoring should pause opt-in when saved access fails")
         let roots: Set<String> = ["/saved/alpha", "/saved/beta", "/saved/gamma"]
         let base = StorageMonitoringPolicy.Input(
             enabled: true,
