@@ -200,6 +200,9 @@ final class DashboardModel {
     var applicationBundlePathStatuses: [String: SelectedScopePathProbe.Status] = [:]
     var checkingApplicationBundlePaths = Set<String>()
     private var applicationBundlePathCheckIDs: [String: UUID] = [:]
+    var applicationDataLocationStatuses: [String: SelectedScopePathProbe.Status] = [:]
+    var checkingApplicationDataLocationPaths = Set<String>()
+    private var applicationDataLocationCheckIDs: [String: UUID] = [:]
     var applicationAssociatedPathStatuses: [String: SelectedScopePathProbe.Status] = [:]
     var checkingApplicationAssociatedPaths = Set<String>()
     private var applicationAssociatedPathCheckIDs: [String: UUID] = [:]
@@ -310,6 +313,36 @@ final class DashboardModel {
             applicationBundlePathCheckIDs.removeValue(forKey: path)
             checkingApplicationBundlePaths.remove(path)
             applicationBundlePathStatuses[path] = status
+        }
+    }
+
+    func checkApplicationDataLocation(_ path: String, for bundle: FolderObservation) {
+        let candidates = ApplicationDataLocationCandidates.suggestions(
+            bundleIdentifier: bundle.applicationBundleIdentifier,
+            homeDirectoryPath: NSHomeDirectory(),
+            claimedGroupIdentifiers: bundle.applicationGroupIdentifiers,
+            signatureValidated: bundle.applicationSignatureValidated,
+            signedBundleIdentifier: bundle.applicationSignedBundleIdentifier
+        )
+        let normalizedPath = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path
+        guard candidates.contains(where: {
+            URL(fileURLWithPath: $0.path, isDirectory: true).standardizedFileURL.path == normalizedPath
+        }), checkingApplicationDataLocationPaths.insert(normalizedPath).inserted else { return }
+
+        let requestID = UUID()
+        applicationDataLocationCheckIDs[normalizedPath] = requestID
+        applicationDataLocationStatuses.removeValue(forKey: normalizedPath)
+        let generation = historyGeneration.token()
+        let task = Task.detached(priority: .utility) {
+            SelectedScopePathProbe.probe(at: normalizedPath)
+        }
+        Task {
+            let status = await task.value
+            guard applicationDataLocationCheckIDs[normalizedPath] == requestID,
+                  historyGeneration.accepts(generation) else { return }
+            applicationDataLocationCheckIDs.removeValue(forKey: normalizedPath)
+            checkingApplicationDataLocationPaths.remove(normalizedPath)
+            applicationDataLocationStatuses[normalizedPath] = status
         }
     }
 
@@ -1180,6 +1213,9 @@ final class DashboardModel {
         applicationBundlePathStatuses = [:]
         checkingApplicationBundlePaths = []
         applicationBundlePathCheckIDs = [:]
+        applicationDataLocationStatuses = [:]
+        checkingApplicationDataLocationPaths = []
+        applicationDataLocationCheckIDs = [:]
         applicationAssociatedPathStatuses = [:]
         checkingApplicationAssociatedPaths = []
         applicationAssociatedPathCheckIDs = [:]
@@ -3441,11 +3477,14 @@ struct DashboardView: View {
             if !suggestions.isEmpty {
                 DisclosureGroup("Possible data locations · not measured") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("These conventional paths come from the selected app's bundle ID and embedded group claims. Disker has not checked whether they exist or who uses them. Choose a path to open the folder picker; only folders you select will be measured.")
+                        Text("These conventional paths come from the selected app's bundle ID and embedded group claims. Disker checks only the exact path when asked; this does not scan its contents or establish ownership. Choose a path to open the folder picker, and only folders you explicitly select will be measured.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         ForEach(suggestions) { suggestion in
+                            let candidatePath = URL(fileURLWithPath: suggestion.path, isDirectory: true)
+                                .standardizedFileURL.path
+                            let candidateStatus = model.applicationDataLocationStatuses[candidatePath]
                             HStack(alignment: .top, spacing: 12) {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(suggestion.title)
@@ -3458,16 +3497,51 @@ struct DashboardView: View {
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                         .fixedSize(horizontal: false, vertical: true)
+                                    if let candidateStatus {
+                                        Label(
+                                            applicationDataLocationStatusText(candidateStatus),
+                                            systemImage: associatedPathStatusSymbol(candidateStatus)
+                                        )
+                                        .font(.caption2)
+                                        .foregroundStyle(associatedPathStatusColor(candidateStatus))
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    }
                                 }
                                 Spacer(minLength: 4)
-                                Button("Select…") {
-                                    model.chooseRelatedFolders(
-                                        for: bundle.path,
-                                        startingAt: URL(fileURLWithPath: suggestion.path).deletingLastPathComponent()
+                                HStack(spacing: 8) {
+                                    Button {
+                                        model.checkApplicationDataLocation(suggestion.path, for: bundle)
+                                    } label: {
+                                        if model.checkingApplicationDataLocationPaths.contains(candidatePath) {
+                                            ProgressView()
+                                                .controlSize(.small)
+                                        } else {
+                                            Label(
+                                                candidateStatus == nil ? "Check exact path" : "Check again",
+                                                systemImage: "magnifyingglass"
+                                            )
+                                        }
+                                    }
+                                    .controlSize(.small)
+                                    .disabled(model.checkingApplicationDataLocationPaths.contains(candidatePath))
+                                    .help("Check only this exact folder path; no descendants or file contents are read")
+                                    .accessibilityLabel(
+                                        model.checkingApplicationDataLocationPaths.contains(candidatePath)
+                                            ? "Checking exact path…"
+                                            : candidateStatus == nil ? "Check exact path" : "Check again"
                                     )
+                                    Button("Choose to measure…") {
+                                        let startingPath = candidateStatus == .availableDirectory
+                                            ? suggestion.path
+                                            : URL(fileURLWithPath: suggestion.path).deletingLastPathComponent().path
+                                        model.chooseRelatedFolders(
+                                            for: bundle.path,
+                                            startingAt: URL(fileURLWithPath: startingPath, isDirectory: true)
+                                        )
+                                    }
+                                    .controlSize(.small)
+                                    .disabled(model.isScanning)
                                 }
-                                .controlSize(.small)
-                                .disabled(model.isScanning)
                             }
                             if suggestion.id != suggestions.last?.id { Divider() }
                         }
@@ -3518,6 +3592,51 @@ struct DashboardView: View {
             "Saved access is stale · select the same folder again"
         case .mismatchedBookmark:
             "Saved access resolves to a different path · no check was performed"
+        }
+    }
+
+    private func applicationDataLocationStatusText(_ status: SelectedScopePathProbe.Status) -> String {
+        switch status {
+        case .availableDirectory:
+            NSLocalizedString(
+                "Suggested folder exists · contents not checked",
+                comment: "Exact application data folder path exists; contents were not scanned"
+            )
+        case .missingOrUnreachable:
+            NSLocalizedString(
+                "Path not found; its absence is unconfirmed",
+                comment: "Suggested application data path cannot be reached"
+            )
+        case .permissionOrAccessUnknown:
+            NSLocalizedString(
+                "Access could not be confirmed · presence unknown",
+                comment: "Suggested application data path access is unknown"
+            )
+        case .notDirectory:
+            NSLocalizedString(
+                "Exact path is not a folder",
+                comment: "Suggested application data path is not a directory"
+            )
+        case .symbolicLink:
+            NSLocalizedString(
+                "Symbolic link · not followed",
+                comment: "Suggested application data path is a symbolic link"
+            )
+        case .invalidBookmark:
+            NSLocalizedString(
+                "Saved access unavailable · choose the folder again",
+                comment: "Bookmark status for a suggested application data path"
+            )
+        case .staleBookmark:
+            NSLocalizedString(
+                "Saved access is stale · choose the folder again",
+                comment: "Bookmark status for a suggested application data path"
+            )
+        case .mismatchedBookmark:
+            NSLocalizedString(
+                "Saved access points elsewhere · no check performed",
+                comment: "Bookmark status for a suggested application data path"
+            )
         }
     }
 

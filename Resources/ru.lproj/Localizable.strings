@@ -65,3 +65,17 @@
 "No bytes measured · total unknown" = "Ничего не измерено · общий размер неизвестен";
 "Measured so far · logical %@ · allocated estimate ~%@ · total unknown" = "Пока измерено · логический размер %@ · оценка выделенного места ~%@ · общий размер неизвестен";
 "Logical %@ · allocated estimate ~%@" = "Логический размер %@ · оценка выделенного места ~%@";
+"These conventional paths come from the selected app's bundle ID and embedded group claims. Disker checks only the exact path when asked; this does not scan its contents or establish ownership. Choose a path to open the folder picker, and only folders you explicitly select will be measured." = "Стандартные пути предложены по bundle ID выбранного приложения и встроенным заявлениям о группах. По запросу Disker проверяет только точный путь: содержимое не сканируется, принадлежность не устанавливается. Выберите путь, чтобы открыть диалог папок; измеряются только папки, выбранные вами явно.";
+"Check exact path" = "Проверить точный путь";
+"Check again" = "Проверить снова";
+"Checking exact path…" = "Проверка точного пути…";
+"Choose to measure…" = "Выбрать для измерения…";
+"Check only this exact folder path; no descendants or file contents are read" = "Проверяется только точный путь папки; вложенные элементы и содержимое файлов не читаются";
+"Suggested folder exists · contents not checked" = "Папка найдена · содержимое не проверялось";
+"Path not found; its absence is unconfirmed" = "Путь не найден · это не подтверждает его отсутствие";
+"Access could not be confirmed · presence unknown" = "Доступ не подтверждён · наличие неизвестно";
+"Exact path is not a folder" = "Указанный путь не является папкой";
+"Symbolic link · not followed" = "Символическая ссылка · переход запрещён";
+"Saved access unavailable · choose the folder again" = "Сохранённый доступ недоступен · выберите папку повторно";
+"Saved access is stale · choose the folder again" = "Сохранённый доступ устарел · выберите папку повторно";
+"Saved access points elsewhere · no check performed" = "Сохранённый доступ ведёт в другое место · проверка не выполнена";

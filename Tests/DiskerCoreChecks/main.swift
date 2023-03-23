@@ -38,6 +38,7 @@ private struct DiskerCoreChecks {
             ("scoped application discovery filtering and bounded history", testApplicationDiscoveryIndex),
             ("explicitly selected app bundle identity read", testApplicationBundleMetadata),
             ("evidence-scoped application container attribution", testApplicationPathAttribution),
+            ("explicit application data path probes", testApplicationDataLocationProbe),
             ("read-only app footprint review", testApplicationFootprintReview),
             ("measured selected-scope subtotal safety", testApplicationFootprintSubtotal),
             ("read-only application-removal review planner", testApplicationRemovalReviewPlanner),
@@ -784,6 +785,47 @@ private struct DiskerCoreChecks {
             bundleIdentifier: "../Other", homeDirectoryPath: home,
             claimedGroupIdentifiers: [groupIdentifier]
         ).isEmpty, "invalid identifiers must not generate app-data paths")
+    }
+
+    private static func testApplicationDataLocationProbe() throws {
+        try withTemporaryDirectory { root in
+            let home = root.appendingPathComponent("synthetic-home", isDirectory: true)
+            let candidates = ApplicationDataLocationCandidates.suggestions(
+                bundleIdentifier: "com.example.Probe",
+                homeDirectoryPath: home.path,
+                claimedGroupIdentifiers: ["TEAM.shared"]
+            )
+            guard candidates.count == 4,
+                  let support = candidates.first(where: {
+                      $0.evidence == .probableNamedSupportDirectory && $0.path.contains("Application Support")
+                  }),
+                  let cache = candidates.first(where: {
+                      $0.evidence == .probableNamedSupportDirectory && $0.path.contains("/Caches/")
+                  }),
+                  let group = candidates.first(where: { $0.evidence == .declaredSharedGroupClaim })
+            else {
+                throw CheckFailure.assertion("a selected bundle should yield its bounded conventional data paths")
+            }
+
+            try FileManager.default.createDirectory(
+                at: URL(fileURLWithPath: support.path, isDirectory: true),
+                withIntermediateDirectories: true
+            )
+            let outside = root.appendingPathComponent("outside", isDirectory: true)
+            try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: false)
+            let cacheURL = URL(fileURLWithPath: cache.path, isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
+            try FileManager.default.createSymbolicLink(at: cacheURL, withDestinationURL: outside)
+
+            try expect(SelectedScopePathProbe.probe(at: support.path) == .availableDirectory,
+                       "an explicitly requested candidate-path check should report an existing directory without scanning descendants")
+            try expect(SelectedScopePathProbe.probe(at: cache.path) == .symbolicLink,
+                       "candidate-path checks must report a symbolic link without following its target")
+            try expect(SelectedScopePathProbe.probe(at: group.path) == .missingOrUnreachable,
+                       "a missing candidate path must remain distinct from an existing measured folder")
+        }
     }
 
     private static func testApplicationFootprintReview() throws {
