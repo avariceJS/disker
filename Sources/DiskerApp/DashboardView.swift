@@ -992,28 +992,31 @@ final class DashboardModel {
         storageEventScanTask?.cancel()
         storageEventScanTask = Task { [weak self] in
             do {
-                try await Task.sleep(nanoseconds: 3_000_000_000)
+                try await Task.sleep(nanoseconds: UInt64(
+                    StorageMonitoringPolicy.eventDebounceInterval * 1_000_000_000
+                ))
             } catch { return }
             guard let self else { return }
             while !Task.isCancelled, self.storageMonitoringSessionOpen, !self.pendingStorageEventPaths.isEmpty {
-                if !self.isScanning && !self.isMeasuringOwnFootprint && !self.isVerifyingDuplicates {
-                    let now = Date.now
-                    if let path = self.pendingStorageEventPaths
-                        .intersection(self.monitoredScopePaths)
-                        .subtracting(self.pausedMonitoringReasons.keys)
-                        .sorted()
-                        .first(where: { candidate in
-                            guard let lastScan = self.lastStorageEventScanAt[candidate] else { return true }
-                            return now.timeIntervalSince(lastScan) >= 60
-                        }) {
-                        self.pendingStorageEventPaths.remove(path)
-                        self.lastStorageEventScanAt[path] = now
-                        self.storageMonitoringCooldownByPath[path] = now
-                        self.storageMonitoringLastAttempt[path] = now
-                        self.storageEventScanTask = nil
-                        self.rescanRememberedFolder(path, origin: .eventTriggered)
-                        return
-                    }
+                let now = Date.now
+                let path = StorageMonitoringPolicy.nextEventTriggeredRoot(
+                    monitoringSessionOpen: self.storageMonitoringSessionOpen,
+                    scanInProgress: self.isScanning || self.isMeasuringOwnFootprint || self.isVerifyingDuplicates,
+                    pendingRootIdentifiers: self.pendingStorageEventPaths,
+                    savedRootIdentifiers: Set(self.rememberedScopes.map(\.path)),
+                    selectedRootIdentifiers: self.monitoredScopePaths,
+                    pausedRootIdentifiers: Set(self.pausedMonitoringReasons.keys),
+                    lastEventScanAtByRoot: self.lastStorageEventScanAt,
+                    at: now
+                )
+                if let path {
+                    self.pendingStorageEventPaths.remove(path)
+                    self.lastStorageEventScanAt[path] = now
+                    self.storageMonitoringCooldownByPath[path] = now
+                    self.storageMonitoringLastAttempt[path] = now
+                    self.storageEventScanTask = nil
+                    self.rescanRememberedFolder(path, origin: .eventTriggered)
+                    return
                 }
                 do { try await Task.sleep(nanoseconds: 1_000_000_000) }
                 catch { return }

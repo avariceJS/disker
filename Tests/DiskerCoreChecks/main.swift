@@ -1940,6 +1940,76 @@ private struct DiskerCoreChecks {
         )
         try expect(malformedCadence.effectiveInterval == StorageMonitoringPolicy.defaultInterval,
                    "non-finite interval settings should fall back to the safe default")
+
+        let eventPending: Set<String> = [
+            "/saved/alpha", "/saved/beta", "/saved/gamma", "/saved/unselected", "/missing/root"
+        ]
+        let eventThrottle = StorageMonitoringPolicy.nextEventTriggeredRoot(
+            monitoringSessionOpen: true,
+            scanInProgress: false,
+            pendingRootIdentifiers: eventPending,
+            savedRootIdentifiers: roots,
+            selectedRootIdentifiers: roots,
+            pausedRootIdentifiers: ["/saved/gamma"],
+            lastEventScanAtByRoot: [
+                "/saved/alpha": start.addingTimeInterval(841),
+                "/saved/beta": start.addingTimeInterval(840),
+            ],
+            at: start.addingTimeInterval(900)
+        )
+        try expect(eventThrottle == "/saved/beta",
+                   "event scans should choose the first saved, opted-in, unpaused root whose minute throttle elapsed")
+        let eventNotDue = StorageMonitoringPolicy.nextEventTriggeredRoot(
+            monitoringSessionOpen: true,
+            scanInProgress: false,
+            pendingRootIdentifiers: eventPending,
+            savedRootIdentifiers: roots,
+            selectedRootIdentifiers: roots,
+            pausedRootIdentifiers: ["/saved/gamma"],
+            lastEventScanAtByRoot: [
+                "/saved/alpha": start.addingTimeInterval(841),
+                "/saved/beta": start.addingTimeInterval(841),
+            ],
+            at: start.addingTimeInterval(900)
+        )
+        try expect(eventNotDue == nil,
+                   "event scans should wait until a full minute has elapsed since the previous event scan")
+        let eventBlocked = StorageMonitoringPolicy.nextEventTriggeredRoot(
+            monitoringSessionOpen: false,
+            scanInProgress: false,
+            pendingRootIdentifiers: eventPending,
+            savedRootIdentifiers: roots,
+            selectedRootIdentifiers: roots,
+            pausedRootIdentifiers: [],
+            lastEventScanAtByRoot: [:],
+            at: start.addingTimeInterval(900)
+        )
+        try expect(eventBlocked == nil,
+                   "event scans must not be scheduled while the Disker monitoring window is closed")
+        let eventBusy = StorageMonitoringPolicy.nextEventTriggeredRoot(
+            monitoringSessionOpen: true,
+            scanInProgress: true,
+            pendingRootIdentifiers: eventPending,
+            savedRootIdentifiers: roots,
+            selectedRootIdentifiers: roots,
+            pausedRootIdentifiers: [],
+            lastEventScanAtByRoot: [:],
+            at: start.addingTimeInterval(900)
+        )
+        try expect(eventBusy == nil,
+                   "event scans must wait while another scan or verification is active")
+        let eventClockRollback = StorageMonitoringPolicy.nextEventTriggeredRoot(
+            monitoringSessionOpen: true,
+            scanInProgress: false,
+            pendingRootIdentifiers: ["/saved/alpha"],
+            savedRootIdentifiers: roots,
+            selectedRootIdentifiers: roots,
+            pausedRootIdentifiers: [],
+            lastEventScanAtByRoot: ["/saved/alpha": start.addingTimeInterval(901)],
+            at: start.addingTimeInterval(900)
+        )
+        try expect(eventClockRollback == nil,
+                   "a wall-clock rollback should not make a recently scanned event root eligible early")
     }
 
     private static func testStorageMonitoringPreferences() throws {

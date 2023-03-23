@@ -5,6 +5,31 @@ import Foundation
 public enum StorageMonitoringPolicy {
     public static let defaultInterval: TimeInterval = 15 * 60
     public static let minimumInterval: TimeInterval = 5 * 60
+    public static let eventDebounceInterval: TimeInterval = 3
+    public static let minimumEventScanInterval: TimeInterval = 60
+
+    /// Selects one stable, opted-in root for an event-triggered reconciliation.
+    /// This does not treat events as a change log or authorize a filesystem scan.
+    public static func nextEventTriggeredRoot(
+        monitoringSessionOpen: Bool,
+        scanInProgress: Bool,
+        pendingRootIdentifiers: Set<String>,
+        savedRootIdentifiers: Set<String>,
+        selectedRootIdentifiers: Set<String>,
+        pausedRootIdentifiers: Set<String>,
+        lastEventScanAtByRoot: [String: Date],
+        at now: Date
+    ) -> String? {
+        guard monitoringSessionOpen, !scanInProgress else { return nil }
+        let eligible = pendingRootIdentifiers
+            .intersection(savedRootIdentifiers)
+            .intersection(selectedRootIdentifiers)
+            .subtracting(pausedRootIdentifiers)
+        return eligible.sorted().first { rootIdentifier in
+            guard let lastScan = lastEventScanAtByRoot[rootIdentifier] else { return true }
+            return now.timeIntervalSince(lastScan) >= minimumEventScanInterval
+        }
+    }
 
     /// A scheduled root that yielded no measurable files and incomplete coverage
     /// cannot produce a useful comparison. Pause it until the user reviews access.
