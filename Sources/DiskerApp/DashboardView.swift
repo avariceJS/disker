@@ -3902,12 +3902,13 @@ struct DashboardView: View {
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if ramSamples.count > 1 {
-                            let selectedRAMSample = selectedRAMDate.flatMap { selectedDate in
-                                ramSamples.min {
-                                    abs($0.observedAt.timeIntervalSince(selectedDate))
-                                        < abs($1.observedAt.timeIntervalSince(selectedDate))
+                            let selectedRAMIndex = selectedRAMDate.flatMap { selectedDate in
+                                ramSamples.indices.min {
+                                    abs(ramSamples[$0].observedAt.timeIntervalSince(selectedDate))
+                                        < abs(ramSamples[$1].observedAt.timeIntervalSince(selectedDate))
                                 }
                             }
+                            let selectedRAMSample = selectedRAMIndex.map { ramSamples[$0] }
                             if let selectedRAMSample {
                                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                                     Text(selectedRAMSample.observedAt.formatted(date: .abbreviated, time: .shortened))
@@ -3920,12 +3921,46 @@ struct DashboardView: View {
                                     } else {
                                         Text("Swap unavailable")
                                     }
+                                    Button {
+                                        guard let selectedRAMIndex, selectedRAMIndex > 0 else { return }
+                                        selectedRAMDate = ramSamples[selectedRAMIndex - 1].observedAt
+                                    } label: {
+                                        Image(systemName: "chevron.left")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .disabled(selectedRAMIndex == 0)
+                                    .help("Previous sample")
+                                    .accessibilityLabel("Previous sample")
+                                    .accessibilityHint("Moves selection to the previous RAM sample.")
+                                    Button {
+                                        guard let selectedRAMIndex,
+                                              selectedRAMIndex + 1 < ramSamples.count else { return }
+                                        selectedRAMDate = ramSamples[selectedRAMIndex + 1].observedAt
+                                    } label: {
+                                        Image(systemName: "chevron.right")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .disabled(selectedRAMIndex.map { $0 + 1 >= ramSamples.count } ?? true)
+                                    .help("Next sample")
+                                    .accessibilityLabel("Next sample")
+                                    .accessibilityHint("Moves selection to the next RAM sample.")
                                     Button("Clear") { selectedRAMDate = nil }
                                         .buttonStyle(.link)
                                 }
                                 .font(.caption2.monospacedDigit())
                                 .foregroundStyle(.secondary)
-                                .accessibilityElement(children: .combine)
+                            } else {
+                                HStack(spacing: 8) {
+                                    Text("No RAM sample selected")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Spacer(minLength: 4)
+                                    Button("Select latest sample") {
+                                        selectedRAMDate = ramSamples.last?.observedAt
+                                    }
+                                    .buttonStyle(.link)
+                                    .accessibilityHint("Selects the newest recorded RAM snapshot.")
+                                }
                             }
                             Chart {
                                 ForEach(ramSamples, id: \.observedAt) { sample in

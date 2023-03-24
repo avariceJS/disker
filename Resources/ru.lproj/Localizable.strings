@@ -79,3 +79,10 @@
 "Saved access unavailable · choose the folder again" = "Сохранённый доступ недоступен · выберите папку повторно";
 "Saved access is stale · choose the folder again" = "Сохранённый доступ устарел · выберите папку повторно";
 "Saved access points elsewhere · no check performed" = "Сохранённый доступ ведёт в другое место · проверка не выполнена";
+"No RAM sample selected" = "Снимок ОЗУ не выбран";
+"Select latest sample" = "Выбрать последний снимок";
+"Selects the newest recorded RAM snapshot." = "Выбирает последний сохранённый снимок ОЗУ.";
+"Previous sample" = "Предыдущий снимок";
+"Moves selection to the previous RAM sample." = "Перемещает выбор к предыдущему снимку ОЗУ.";
+"Next sample" = "Следующий снимок";
+"Moves selection to the next RAM sample." = "Перемещает выбор к следующему снимку ОЗУ.";
