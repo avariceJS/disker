@@ -2020,6 +2020,33 @@ private struct DiskerCoreChecks {
         )
         try expect(eventNotDue == nil,
                    "event scans should wait until a full minute has elapsed since the previous event scan")
+        let eventThrottleDelay = StorageMonitoringPolicy.nextEventThrottleDelay(
+            monitoringSessionOpen: true,
+            scanInProgress: false,
+            pendingRootIdentifiers: ["/saved/alpha", "/saved/beta", "/saved/gamma"],
+            savedRootIdentifiers: roots,
+            selectedRootIdentifiers: roots,
+            pausedRootIdentifiers: ["/saved/gamma"],
+            lastEventScanAtByRoot: [
+                "/saved/alpha": start.addingTimeInterval(841),
+                "/saved/beta": start.addingTimeInterval(842),
+            ],
+            at: start.addingTimeInterval(900)
+        )
+        try expect(eventThrottleDelay.map { abs($0 - 1) < 0.001 } == true,
+                   "event retries should sleep only for the nearest eligible root's remaining throttle")
+        let eventRollbackDelay = StorageMonitoringPolicy.nextEventThrottleDelay(
+            monitoringSessionOpen: true,
+            scanInProgress: false,
+            pendingRootIdentifiers: ["/saved/alpha"],
+            savedRootIdentifiers: roots,
+            selectedRootIdentifiers: roots,
+            pausedRootIdentifiers: [],
+            lastEventScanAtByRoot: ["/saved/alpha": start.addingTimeInterval(901)],
+            at: start.addingTimeInterval(900)
+        )
+        try expect(eventRollbackDelay == 61,
+                   "event retries should preserve the full throttle after a wall-clock rollback")
         let eventBlocked = StorageMonitoringPolicy.nextEventTriggeredRoot(
             monitoringSessionOpen: false,
             scanInProgress: false,

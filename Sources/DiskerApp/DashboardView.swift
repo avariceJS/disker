@@ -1031,13 +1031,17 @@ final class DashboardModel {
             guard let self else { return }
             while !Task.isCancelled, self.storageMonitoringSessionOpen, !self.pendingStorageEventPaths.isEmpty {
                 let now = Date.now
+                let scanInProgress = self.isScanning || self.isMeasuringOwnFootprint || self.isVerifyingDuplicates
+                let pendingPaths = self.pendingStorageEventPaths
+                let savedPaths = Set(self.rememberedScopes.map(\.path))
+                let pausedPaths = Set(self.pausedMonitoringReasons.keys)
                 let path = StorageMonitoringPolicy.nextEventTriggeredRoot(
                     monitoringSessionOpen: self.storageMonitoringSessionOpen,
-                    scanInProgress: self.isScanning || self.isMeasuringOwnFootprint || self.isVerifyingDuplicates,
-                    pendingRootIdentifiers: self.pendingStorageEventPaths,
-                    savedRootIdentifiers: Set(self.rememberedScopes.map(\.path)),
+                    scanInProgress: scanInProgress,
+                    pendingRootIdentifiers: pendingPaths,
+                    savedRootIdentifiers: savedPaths,
                     selectedRootIdentifiers: self.monitoredScopePaths,
-                    pausedRootIdentifiers: Set(self.pausedMonitoringReasons.keys),
+                    pausedRootIdentifiers: pausedPaths,
                     lastEventScanAtByRoot: self.lastStorageEventScanAt,
                     at: now
                 )
@@ -1050,7 +1054,18 @@ final class DashboardModel {
                     self.rescanRememberedFolder(path, origin: .eventTriggered)
                     return
                 }
-                do { try await Task.sleep(nanoseconds: 1_000_000_000) }
+                let throttleDelay = StorageMonitoringPolicy.nextEventThrottleDelay(
+                    monitoringSessionOpen: self.storageMonitoringSessionOpen,
+                    scanInProgress: scanInProgress,
+                    pendingRootIdentifiers: pendingPaths,
+                    savedRootIdentifiers: savedPaths,
+                    selectedRootIdentifiers: self.monitoredScopePaths,
+                    pausedRootIdentifiers: pausedPaths,
+                    lastEventScanAtByRoot: self.lastStorageEventScanAt,
+                    at: now
+                )
+                let retryDelay = min(max(throttleDelay ?? 1, 0.05), 60)
+                do { try await Task.sleep(nanoseconds: UInt64(retryDelay * 1_000_000_000)) }
                 catch { return }
             }
             self.storageEventScanTask = nil

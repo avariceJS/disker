@@ -42,6 +42,29 @@ public enum StorageMonitoringPolicy {
         }
     }
 
+    /// Returns the remaining throttle wait for pending, otherwise eligible roots.
+    /// A nil result means the caller should wait for another state change or retry later.
+    public static func nextEventThrottleDelay(
+        monitoringSessionOpen: Bool,
+        scanInProgress: Bool,
+        pendingRootIdentifiers: Set<String>,
+        savedRootIdentifiers: Set<String>,
+        selectedRootIdentifiers: Set<String>,
+        pausedRootIdentifiers: Set<String>,
+        lastEventScanAtByRoot: [String: Date],
+        at now: Date
+    ) -> TimeInterval? {
+        guard monitoringSessionOpen, !scanInProgress else { return nil }
+        let eligible = pendingRootIdentifiers
+            .intersection(savedRootIdentifiers)
+            .intersection(selectedRootIdentifiers)
+            .subtracting(pausedRootIdentifiers)
+        return eligible.compactMap { rootIdentifier in
+            guard let lastScan = lastEventScanAtByRoot[rootIdentifier] else { return 0 }
+            return max(0, lastScan.addingTimeInterval(minimumEventScanInterval).timeIntervalSince(now))
+        }.min()
+    }
+
     /// A scheduled root that yielded no measurable files and incomplete coverage
     /// cannot produce a useful comparison. Pause it until the user reviews access.
     public static func shouldPauseAfterScheduledScan(_ folder: FolderObservation) -> Bool {
