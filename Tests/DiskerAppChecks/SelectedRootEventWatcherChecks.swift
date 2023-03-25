@@ -98,7 +98,7 @@ private enum SelectedRootEventWatcherChecks {
             savedRootIdentifiers: [rootPath],
             selectedRootIdentifiers: [rootPath],
             pausedRootIdentifiers: [],
-            lastEventScanAtByRoot: [:],
+            lastScanAtByRoot: [:],
             at: eventAt
         )
         guard eventScanRoot == rootPath else {
@@ -165,7 +165,7 @@ private enum SelectedRootEventWatcherChecks {
         }
 
         let throttledAt = Date.now
-        let lastEventScanAt = [rootPath: throttledAt]
+        let lastScanAt = [rootPath: throttledAt]
         let tooSoon = StorageMonitoringPolicy.nextEventTriggeredRoot(
             monitoringSessionOpen: true,
             scanInProgress: false,
@@ -173,7 +173,7 @@ private enum SelectedRootEventWatcherChecks {
             savedRootIdentifiers: [rootPath],
             selectedRootIdentifiers: [rootPath],
             pausedRootIdentifiers: [],
-            lastEventScanAtByRoot: lastEventScanAt,
+            lastScanAtByRoot: lastScanAt,
             at: throttledAt.addingTimeInterval(3)
         )
         let remainingThrottle = StorageMonitoringPolicy.nextEventThrottleDelay(
@@ -183,12 +183,12 @@ private enum SelectedRootEventWatcherChecks {
             savedRootIdentifiers: [rootPath],
             selectedRootIdentifiers: [rootPath],
             pausedRootIdentifiers: [],
-            lastEventScanAtByRoot: lastEventScanAt,
+            lastScanAtByRoot: lastScanAt,
             at: throttledAt.addingTimeInterval(3)
         )
         guard tooSoon == nil, let remainingThrottle,
-              abs(remainingThrottle - 57) < 0.01 else {
-            throw checkFailure("A second event must remain pending for the final 57 seconds of its per-root throttle.")
+              abs(remainingThrottle - 297) < 0.01 else {
+            throw checkFailure("A second event must remain pending for the final 297 seconds of its five-minute per-root throttle.")
         }
 
         // Drain any callbacks for the first write before establishing the
@@ -302,7 +302,7 @@ private enum SelectedRootEventWatcherChecks {
             savedRootIdentifiers: Set(bookmarks.map(\.path)),
             selectedRootIdentifiers: consentedPaths,
             pausedRootIdentifiers: [],
-            lastEventScanAtByRoot: [:],
+            lastScanAtByRoot: [:],
             at: .now
         )
         guard scanRoot == rootPath else {
@@ -338,7 +338,7 @@ private enum SelectedRootEventWatcherChecks {
             savedRootIdentifiers: Set(bookmarks.map(\.path)),
             selectedRootIdentifiers: consentedPaths,
             pausedRootIdentifiers: [],
-            lastEventScanAtByRoot: [:],
+            lastScanAtByRoot: [:],
             at: .now
         )
         guard bookmarks.contains(where: { $0.path == rootPath }),

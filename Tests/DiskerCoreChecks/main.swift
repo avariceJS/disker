@@ -1997,14 +1997,14 @@ private struct DiskerCoreChecks {
             savedRootIdentifiers: roots,
             selectedRootIdentifiers: roots,
             pausedRootIdentifiers: ["/saved/gamma"],
-            lastEventScanAtByRoot: [
-                "/saved/alpha": start.addingTimeInterval(841),
-                "/saved/beta": start.addingTimeInterval(840),
+            lastScanAtByRoot: [
+                "/saved/alpha": start.addingTimeInterval(601),
+                "/saved/beta": start.addingTimeInterval(600),
             ],
             at: start.addingTimeInterval(900)
         )
         try expect(eventThrottle == "/saved/beta",
-                   "event scans should choose the first saved, opted-in, unpaused root whose minute throttle elapsed")
+                   "event scans should choose the first saved, opted-in, unpaused root whose five-minute throttle elapsed")
         let eventNotDue = StorageMonitoringPolicy.nextEventTriggeredRoot(
             monitoringSessionOpen: true,
             scanInProgress: false,
@@ -2012,14 +2012,14 @@ private struct DiskerCoreChecks {
             savedRootIdentifiers: roots,
             selectedRootIdentifiers: roots,
             pausedRootIdentifiers: ["/saved/gamma"],
-            lastEventScanAtByRoot: [
-                "/saved/alpha": start.addingTimeInterval(841),
-                "/saved/beta": start.addingTimeInterval(841),
+            lastScanAtByRoot: [
+                "/saved/alpha": start.addingTimeInterval(601),
+                "/saved/beta": start.addingTimeInterval(601),
             ],
             at: start.addingTimeInterval(900)
         )
         try expect(eventNotDue == nil,
-                   "event scans should wait until a full minute has elapsed since the previous event scan")
+                   "event scans should wait until five minutes have elapsed since the previous full scan")
         let eventThrottleDelay = StorageMonitoringPolicy.nextEventThrottleDelay(
             monitoringSessionOpen: true,
             scanInProgress: false,
@@ -2027,9 +2027,9 @@ private struct DiskerCoreChecks {
             savedRootIdentifiers: roots,
             selectedRootIdentifiers: roots,
             pausedRootIdentifiers: ["/saved/gamma"],
-            lastEventScanAtByRoot: [
-                "/saved/alpha": start.addingTimeInterval(841),
-                "/saved/beta": start.addingTimeInterval(842),
+            lastScanAtByRoot: [
+                "/saved/alpha": start.addingTimeInterval(601),
+                "/saved/beta": start.addingTimeInterval(602),
             ],
             at: start.addingTimeInterval(900)
         )
@@ -2042,10 +2042,10 @@ private struct DiskerCoreChecks {
             savedRootIdentifiers: roots,
             selectedRootIdentifiers: roots,
             pausedRootIdentifiers: [],
-            lastEventScanAtByRoot: ["/saved/alpha": start.addingTimeInterval(901)],
+            lastScanAtByRoot: ["/saved/alpha": start.addingTimeInterval(901)],
             at: start.addingTimeInterval(900)
         )
-        try expect(eventRollbackDelay == 61,
+        try expect(eventRollbackDelay == 301,
                    "event retries should preserve the full throttle after a wall-clock rollback")
         let eventBlocked = StorageMonitoringPolicy.nextEventTriggeredRoot(
             monitoringSessionOpen: false,
@@ -2054,7 +2054,7 @@ private struct DiskerCoreChecks {
             savedRootIdentifiers: roots,
             selectedRootIdentifiers: roots,
             pausedRootIdentifiers: [],
-            lastEventScanAtByRoot: [:],
+            lastScanAtByRoot: [:],
             at: start.addingTimeInterval(900)
         )
         try expect(eventBlocked == nil,
@@ -2066,7 +2066,7 @@ private struct DiskerCoreChecks {
             savedRootIdentifiers: roots,
             selectedRootIdentifiers: roots,
             pausedRootIdentifiers: [],
-            lastEventScanAtByRoot: [:],
+            lastScanAtByRoot: [:],
             at: start.addingTimeInterval(900)
         )
         try expect(eventBusy == nil,
@@ -2078,7 +2078,7 @@ private struct DiskerCoreChecks {
             savedRootIdentifiers: roots,
             selectedRootIdentifiers: roots,
             pausedRootIdentifiers: [],
-            lastEventScanAtByRoot: ["/saved/alpha": start.addingTimeInterval(901)],
+            lastScanAtByRoot: ["/saved/alpha": start.addingTimeInterval(901)],
             at: start.addingTimeInterval(900)
         )
         try expect(eventClockRollback == nil,

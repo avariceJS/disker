@@ -221,7 +221,6 @@ final class DashboardModel {
     private var storageEventScanTask: Task<Void, Never>?
     private var storageEventWatchers: [String: SelectedRootEventWatcher] = [:]
     private var pendingStorageEventPaths = Set<String>()
-    private var lastStorageEventScanAt: [String: Date] = [:]
     private var historyGeneration = HistoryGeneration()
     private var ownFootprintTask: Task<ScanObservation, Never>?
     private var ownFootprintRequestID: UUID?
@@ -1006,7 +1005,6 @@ final class DashboardModel {
         storageEventWatchers.removeValue(forKey: path)?.stop()
         storageEventWatcherErrors.removeValue(forKey: path)
         pendingStorageEventPaths.remove(path)
-        lastStorageEventScanAt.removeValue(forKey: path)
     }
 
     private func requestMonitoringBaseline(for path: String) {
@@ -1042,12 +1040,11 @@ final class DashboardModel {
                     savedRootIdentifiers: savedPaths,
                     selectedRootIdentifiers: self.monitoredScopePaths,
                     pausedRootIdentifiers: pausedPaths,
-                    lastEventScanAtByRoot: self.lastStorageEventScanAt,
+                    lastScanAtByRoot: self.storageMonitoringCooldownByPath,
                     at: now
                 )
                 if let path {
                     self.pendingStorageEventPaths.remove(path)
-                    self.lastStorageEventScanAt[path] = now
                     self.storageMonitoringCooldownByPath[path] = now
                     self.storageMonitoringLastAttempt[path] = now
                     self.storageEventScanTask = nil
@@ -1061,7 +1058,7 @@ final class DashboardModel {
                     savedRootIdentifiers: savedPaths,
                     selectedRootIdentifiers: self.monitoredScopePaths,
                     pausedRootIdentifiers: pausedPaths,
-                    lastEventScanAtByRoot: self.lastStorageEventScanAt,
+                    lastScanAtByRoot: self.storageMonitoringCooldownByPath,
                     at: now
                 )
                 let retryDelay = min(max(throttleDelay ?? 1, 0.05), 60)
@@ -1220,7 +1217,6 @@ final class DashboardModel {
         storageMonitoringEnabledAtByPath = [:]
         storageMonitoringCooldownByPath = [:]
         storageMonitoringLastAttempt = [:]
-        lastStorageEventScanAt = [:]
         scheduledScanPath = nil
         stopStorageMonitoringScheduler()
         stopStorageEventWatchers()
@@ -2833,7 +2829,7 @@ struct DashboardView: View {
                             .help("Choose the interval for opted-in saved locations")
                         }
                         DisclosureGroup("How monitoring works") {
-                            Text("Enabling monitoring remembers your choice and requests a fresh baseline scan. For each opted-in saved folder, macOS events request debounced metadata-only scans at most once a minute, with periodic scans for reconciliation. Monitoring resumes when Disker opens and continues only while this window remains open, even when you switch to another app. Closing the window or quitting stops scans until the next launch. macOS sleep may defer scans; events can be missed or coalesced, and files created and removed between scans cannot be reconstructed. No background helper or unselected path is monitored.")
+                            Text("Enabling monitoring remembers your choice and requests a fresh baseline scan. During a running Disker session, event-triggered scans of an opted-in folder share a five-minute cooldown with manual and scheduled full scans. Periodic scans reconcile changes at your chosen interval. Monitoring resumes when Disker opens and continues only while this window remains open, even when you switch to another app. Closing the window or quitting stops scans until the next launch. macOS sleep may defer scans; events can be missed or coalesced, and files created and removed between scans cannot be reconstructed. No background helper or unselected path is monitored.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)

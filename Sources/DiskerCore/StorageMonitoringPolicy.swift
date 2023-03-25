@@ -17,9 +17,10 @@ public enum StorageMonitoringPolicy {
     public static let defaultInterval: TimeInterval = 15 * 60
     public static let minimumInterval: TimeInterval = 5 * 60
     public static let eventDebounceInterval: TimeInterval = 3
-    public static let minimumEventScanInterval: TimeInterval = 60
+    public static let minimumEventScanInterval: TimeInterval = minimumInterval
 
     /// Selects one stable, opted-in root for an event-triggered reconciliation.
+    /// The throttle is shared with scheduled and manual full scans of that root.
     /// This does not treat events as a change log or authorize a filesystem scan.
     public static func nextEventTriggeredRoot(
         monitoringSessionOpen: Bool,
@@ -28,7 +29,7 @@ public enum StorageMonitoringPolicy {
         savedRootIdentifiers: Set<String>,
         selectedRootIdentifiers: Set<String>,
         pausedRootIdentifiers: Set<String>,
-        lastEventScanAtByRoot: [String: Date],
+        lastScanAtByRoot: [String: Date],
         at now: Date
     ) -> String? {
         guard monitoringSessionOpen, !scanInProgress else { return nil }
@@ -37,7 +38,7 @@ public enum StorageMonitoringPolicy {
             .intersection(selectedRootIdentifiers)
             .subtracting(pausedRootIdentifiers)
         return eligible.sorted().first { rootIdentifier in
-            guard let lastScan = lastEventScanAtByRoot[rootIdentifier] else { return true }
+            guard let lastScan = lastScanAtByRoot[rootIdentifier] else { return true }
             return now.timeIntervalSince(lastScan) >= minimumEventScanInterval
         }
     }
@@ -51,7 +52,7 @@ public enum StorageMonitoringPolicy {
         savedRootIdentifiers: Set<String>,
         selectedRootIdentifiers: Set<String>,
         pausedRootIdentifiers: Set<String>,
-        lastEventScanAtByRoot: [String: Date],
+        lastScanAtByRoot: [String: Date],
         at now: Date
     ) -> TimeInterval? {
         guard monitoringSessionOpen, !scanInProgress else { return nil }
@@ -60,7 +61,7 @@ public enum StorageMonitoringPolicy {
             .intersection(selectedRootIdentifiers)
             .subtracting(pausedRootIdentifiers)
         return eligible.compactMap { rootIdentifier in
-            guard let lastScan = lastEventScanAtByRoot[rootIdentifier] else { return 0 }
+            guard let lastScan = lastScanAtByRoot[rootIdentifier] else { return 0 }
             return max(0, lastScan.addingTimeInterval(minimumEventScanInterval).timeIntervalSince(now))
         }.min()
     }
