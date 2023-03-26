@@ -580,6 +580,25 @@ private struct DiskerCoreChecks {
         )
         try expect(completeSample.candidates.count == 2 && !completeSample.hasMore,
                    "a sample at its exact display bound must not claim that results were omitted")
+        let broadCatalog = (0..<(ApplicationBundleIndex.maximumDiscoveryRecords + 1)).map { index in
+            let name = String(format: "Alpha %03d", index)
+            return ApplicationDiscoveryCandidate(
+                path: "/Applications/\(name).app", displayName: name
+            )
+        } + [ApplicationDiscoveryCandidate(path: "/Applications/Zulu.app", displayName: "Zulu")]
+        let boundedDisplay = ApplicationBundleIndex.scopedCandidateSample(
+            broadCatalog, within: scopes, limit: ApplicationBundleIndex.maximumDiscoveryRecords
+        )
+        let boundedSearch = ApplicationBundleIndex.scopedCandidates(
+            broadCatalog, within: scopes,
+            limit: ApplicationBundleIndex.maximumSearchableDiscoveryResults
+        )
+        try expect(boundedDisplay.hasMore
+                   && !boundedDisplay.candidates.contains(where: { $0.displayName == "Zulu" })
+                   && boundedSearch.contains(where: {
+                       $0.displayName.localizedStandardContains("Zulu")
+                   }),
+                   "search should reach a bounded indexed candidate outside the initial 500-row display sample")
         try withTemporaryDirectory { root in
             let realBundle = root.appendingPathComponent("Real.app", isDirectory: true)
             try FileManager.default.createDirectory(at: realBundle, withIntermediateDirectories: false)

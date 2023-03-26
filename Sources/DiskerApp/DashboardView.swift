@@ -138,15 +138,16 @@ private func folderMeasurementSummary(_ observation: FolderObservation) -> Strin
 }
 
 private func applicationDiscoverySummary(
-    catalogCount: Int, completeCount: Int, matchCount: Int?
+    catalogCount: Int, searchableCount: Int, completeCount: Int,
+    matchCount: Int?, shownCount: Int
 ) -> String {
     if let matchCount {
         let format = NSLocalizedString(
             "Application discovery results · filtered",
-            value: "Matches: %ld · complete: %ld · catalog sample: %ld",
-            comment: "Counts for filtered Spotlight application results and complete bundle measurements"
+            value: "Matches: %ld · showing: %ld · complete: %ld · Spotlight sample: %ld",
+            comment: "Counts for filtered Spotlight results, visible rows, complete bundle measurements, and bounded query results"
         )
-        return String.localizedStringWithFormat(format, matchCount, completeCount, catalogCount)
+        return String.localizedStringWithFormat(format, matchCount, shownCount, completeCount, searchableCount)
     }
     let format = NSLocalizedString(
         "Application discovery results · all",
@@ -2658,14 +2659,20 @@ struct DashboardView: View {
             applicationDiscovery.history.map { ($0.path, $0) },
             uniquingKeysWith: { first, _ in first }
         )
-        let candidates = applicationDiscovery.candidates.filter { candidate in
+        let searchesExtendedSample = !applicationDiscoverySearchText.isEmpty
+            || applicationDiscoveryMeasurementFilter != .all
+        let sourceCandidates = searchesExtendedSample
+            ? applicationDiscovery.searchableCandidates
+            : applicationDiscovery.candidates
+        let matchingCandidates = sourceCandidates.filter { candidate in
             let matchesSearch = applicationDiscoverySearchText.isEmpty
                 || candidate.displayName.localizedStandardContains(applicationDiscoverySearchText)
                 || candidate.path.localizedStandardContains(applicationDiscoverySearchText)
             return matchesSearch
                 && applicationDiscoveryMeasurementFilter.includes(measurementsByPath[candidate.path])
         }
-        let visibleCompleteCount = candidates.reduce(into: 0) { count, candidate in
+        let candidates = Array(matchingCandidates.prefix(ApplicationBundleIndex.maximumDiscoveryRecords))
+        let completeCount = matchingCandidates.reduce(into: 0) { count, candidate in
             if measurementsByPath[candidate.path]?.complete == true { count += 1 }
         }
 
@@ -2722,9 +2729,10 @@ struct DashboardView: View {
                 .accessibilityLabel("Filter applications by measurement")
                 Text(applicationDiscoverySummary(
                     catalogCount: applicationDiscovery.candidates.count,
-                    completeCount: visibleCompleteCount,
-                    matchCount: applicationDiscoverySearchText.isEmpty
-                        && applicationDiscoveryMeasurementFilter == .all ? nil : candidates.count
+                    searchableCount: applicationDiscovery.searchableCandidates.count,
+                    completeCount: completeCount,
+                    matchCount: searchesExtendedSample ? matchingCandidates.count : nil,
+                    shownCount: candidates.count
                 ))
                     .font(.caption2)
                     .foregroundStyle(.secondary)

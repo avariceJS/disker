@@ -7,6 +7,7 @@ import Observation
 @Observable
 final class ApplicationDiscoveryModel {
     private(set) var candidates: [ApplicationDiscoveryCandidate] = []
+    private(set) var searchableCandidates: [ApplicationDiscoveryCandidate] = []
     private(set) var history: [ApplicationDiscoveryRecord] = []
     private(set) var isGathering = false
     private(set) var isRunning = false
@@ -78,6 +79,7 @@ final class ApplicationDiscoveryModel {
         isRunning = false
         isGathering = false
         candidates = []
+        searchableCandidates = []
         if releaseScopes {
             for url in selectedScopeURLs where securityScopedPaths.remove(url.path) != nil {
                 url.stopAccessingSecurityScopedResource()
@@ -136,7 +138,7 @@ final class ApplicationDiscoveryModel {
         if finished { isGathering = false }
 
         var raw: [ApplicationDiscoveryCandidate] = []
-        let maximumIndexedResults = 5_000
+        let maximumIndexedResults = ApplicationBundleIndex.maximumSearchableDiscoveryResults
         let maximumDisplayedResults = ApplicationBundleIndex.maximumDiscoveryRecords
         let count = min(query.resultCount, maximumIndexedResults)
         for index in 0..<count {
@@ -151,6 +153,9 @@ final class ApplicationDiscoveryModel {
         }
         let scoped = ApplicationBundleIndex.scopedCandidateSample(
             raw, within: scopePaths, limit: maximumDisplayedResults
+        )
+        searchableCandidates = ApplicationBundleIndex.scopedCandidates(
+            raw, within: scopePaths, limit: maximumIndexedResults
         )
         let sampleIsTruncated = query.resultCount > maximumIndexedResults || scoped.hasMore
         let displayed = scoped.candidates
@@ -169,7 +174,7 @@ final class ApplicationDiscoveryModel {
         }
         statusMessage = sampleIsTruncated
             ? NSLocalizedString(
-                "Showing up to 500 matching applications. Search scope or index coverage may omit applications.",
+                "The catalog shows up to 500 applications and searches up to 5,000 indexed results. Excluded or unindexed locations remain unknown.",
                 comment: "Application discovery results are capped"
             )
             : NSLocalizedString(

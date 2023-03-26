@@ -38,7 +38,7 @@
 "Clear application filter" = "Очистить фильтр приложений";
 "All" = "Все";
 "Application discovery results · all" = "В выборке: %ld · полностью измерено: %ld";
-"Application discovery results · filtered" = "Совпадений: %ld · полностью измерено: %ld · всего в выборке: %ld";
+"Application discovery results · filtered" = "Совпадений: %ld · показано: %ld · полностью измерено: %ld · выборка Spotlight: %ld";
 "No discovered applications" = "Приложения не найдены";
 "Spotlight has not returned an application bundle in this sample. Index coverage may be incomplete." = "Spotlight пока не вернул ни одного приложения в этой выборке. Индекс может охватывать не все места.";
 "No applications without a measurement" = "Для всех приложений есть результат";
@@ -68,7 +68,7 @@
 "Waiting for Spotlight's indexed results. Index coverage may be incomplete." = "Ожидание результатов индекса Spotlight. Индекс может охватывать не все приложения.";
 "Spotlight could not start this scoped query. Try again later." = "Не удалось запустить поиск Spotlight в выбранных папках. Попробуйте позже.";
 "Spotlight results are available, but their local discovery dates could not be saved." = "Результаты Spotlight доступны, но даты их обнаружения не удалось сохранить локально.";
-"Showing up to 500 matching applications. Search scope or index coverage may omit applications." = "Показано не более 500 приложений. Выбранные папки и покрытие индекса могут не включать другие приложения.";
+"The catalog shows up to 500 applications and searches up to 5,000 indexed results. Excluded or unindexed locations remain unknown." = "В каталоге показано до 500 приложений; поиск проверяет до 5 000 результатов Spotlight. Исключённые и неиндексируемые места остаются неизвестными.";
 "Discovery uses Spotlight's current index; excluded or unindexed locations remain unknown." = "Поиск использует текущий индекс Spotlight; приложения в исключённых или неиндексируемых местах остаются неизвестны.";
 "24 hours" = "24 часа";
 "7 days" = "7 дней";

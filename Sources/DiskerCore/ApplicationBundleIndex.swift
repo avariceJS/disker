@@ -57,6 +57,7 @@ public enum ApplicationDiscoveryMeasurementFilter: String, CaseIterable, Identif
 
 public enum ApplicationBundleIndex {
     public static let maximumDiscoveryRecords = 500
+    public static let maximumSearchableDiscoveryResults = 5_000
 
     /// Applies lexical scope and bundle-name checks to metadata-index results.
     /// Filesystem identity and symlink checks remain the caller's responsibility.
