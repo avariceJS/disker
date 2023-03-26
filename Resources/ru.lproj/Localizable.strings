@@ -34,9 +34,17 @@
 "Spotlight searches only /Applications, /System/Applications, ~/Applications, and folders you add here. Discovery reads indexed metadata only; it does not measure bundles or their data. Press Measure and confirm the exact bundle in the picker before Disker scans it." = "Spotlight ищет только в /Applications, /System/Applications, ~/Applications и папках, добавленных здесь. Поиск использует только индексированные метаданные и не измеряет пакеты или связанные данные. Нажмите «Измерить» и подтвердите точный пакет в окне выбора, прежде чем Disker начнёт сканирование.";
 "Filter by app name or path" = "Фильтр по имени приложения или пути";
 "Filter discovered applications" = "Фильтровать найденные приложения";
+"Filter applications by measurement" = "Фильтровать приложения по статусу измерения";
 "Clear application filter" = "Очистить фильтр приложений";
+"All" = "Все";
 "Application discovery results · all" = "В выборке: %ld · измерено: %ld";
 "Application discovery results · filtered" = "Совпадений: %ld · измерено: %ld · всего в выборке: %ld";
+"No discovered applications" = "Приложения не найдены";
+"Spotlight has not returned an application bundle in this sample. Index coverage may be incomplete." = "Spotlight пока не вернул ни одного приложения в этой выборке. Индекс может охватывать не все места.";
+"No applications need measurement" = "Все приложения уже измерены";
+"Every application in this catalog sample already has a saved measurement." = "Для каждого приложения в этой выборке уже сохранено измерение.";
+"No measured applications yet" = "Измерений приложений пока нет";
+"Measure a discovered application bundle to include it in this list." = "Измерьте найденный пакет приложения, чтобы он появился в этом списке.";
 "Measured" = "Измерено";
 "Partial measurement" = "Частичное измерение";
 "Not measured" = "Не измерено";

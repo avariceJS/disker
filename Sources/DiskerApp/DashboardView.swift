@@ -98,6 +98,22 @@ private struct DiscoveryStatusBadge: View {
     }
 }
 
+private enum ApplicationMeasurementFilter: String, CaseIterable, Identifiable {
+    case all
+    case unmeasured
+    case measured
+
+    var id: String { rawValue }
+
+    var title: LocalizedStringKey {
+        switch self {
+        case .all: "All"
+        case .unmeasured: "Not measured"
+        case .measured: "Measured"
+        }
+    }
+}
+
 private func measuredBytesSummary(logicalBytes: Int64, allocatedBytes: Int64, complete: Bool) -> String {
     let logical = ByteCountFormatter.string(fromByteCount: logicalBytes, countStyle: .file)
     let allocated = ByteCountFormatter.string(fromByteCount: allocatedBytes, countStyle: .file)
@@ -1313,6 +1329,7 @@ struct DashboardView: View {
     @State private var isAutomaticRAMSamplingEnabled = false
     @State private var applicationReviewBundle: FolderObservation?
     @State private var applicationDiscoverySearchText = ""
+    @State private var applicationDiscoveryMeasurementFilter: ApplicationMeasurementFilter = .all
     @State private var developerArtifactReviewFolder: FolderObservation?
     @Environment(\.scenePhase) private var scenePhase
 
@@ -2420,7 +2437,7 @@ struct DashboardView: View {
                 }
 
                 let bundles = model.measuredApplicationBundles
-                if bundles.isEmpty {
+                if bundles.isEmpty && applicationDiscovery.candidates.isEmpty {
                     ContentUnavailableView {
                         Label("No application bundles measured", systemImage: "app.dashed")
                     } description: {
@@ -2647,14 +2664,18 @@ struct DashboardView: View {
             uniquingKeysWith: { first, _ in first }
         )
         let candidates = applicationDiscovery.candidates.filter { candidate in
-            applicationDiscoverySearchText.isEmpty
+            let matchesSearch = applicationDiscoverySearchText.isEmpty
                 || candidate.displayName.localizedStandardContains(applicationDiscoverySearchText)
                 || candidate.path.localizedStandardContains(applicationDiscoverySearchText)
+            let isMeasured = measurementsByPath[candidate.path] != nil
+            let matchesMeasurementFilter = switch applicationDiscoveryMeasurementFilter {
+            case .all: true
+            case .unmeasured: !isMeasured
+            case .measured: isMeasured
+            }
+            return matchesSearch && matchesMeasurementFilter
         }
-        let measuredCount = applicationDiscovery.candidates.reduce(into: 0) { count, candidate in
-            if measurementsByPath[candidate.path] != nil { count += 1 }
-        }
-        let matchingMeasuredCount = candidates.reduce(into: 0) { count, candidate in
+        let visibleMeasuredCount = candidates.reduce(into: 0) { count, candidate in
             if measurementsByPath[candidate.path] != nil { count += 1 }
         }
 
@@ -2701,10 +2722,19 @@ struct DashboardView: View {
                 .padding(8)
                 .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
+                Picker("Filter applications by measurement", selection: $applicationDiscoveryMeasurementFilter) {
+                    ForEach(ApplicationMeasurementFilter.allCases) { filter in
+                        Text(filter.title).tag(filter)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.small)
+                .accessibilityLabel("Filter applications by measurement")
                 Text(applicationDiscoverySummary(
                     catalogCount: applicationDiscovery.candidates.count,
-                    measuredCount: applicationDiscoverySearchText.isEmpty ? measuredCount : matchingMeasuredCount,
-                    matchCount: applicationDiscoverySearchText.isEmpty ? nil : candidates.count
+                    measuredCount: visibleMeasuredCount,
+                    matchCount: applicationDiscoverySearchText.isEmpty
+                        && applicationDiscoveryMeasurementFilter == .all ? nil : candidates.count
                 ))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -2714,8 +2744,34 @@ struct DashboardView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else if candidates.isEmpty {
-                ContentUnavailableView.search(text: applicationDiscoverySearchText)
+                if !applicationDiscoverySearchText.isEmpty {
+                    ContentUnavailableView.search(text: applicationDiscoverySearchText)
+                        .frame(maxWidth: .infinity, minHeight: 90)
+                } else {
+                    Group {
+                        switch applicationDiscoveryMeasurementFilter {
+                        case .all:
+                            ContentUnavailableView(
+                                "No discovered applications",
+                                systemImage: "app.dashed",
+                                description: Text("Spotlight has not returned an application bundle in this sample. Index coverage may be incomplete.")
+                            )
+                        case .unmeasured:
+                            ContentUnavailableView(
+                                "No applications need measurement",
+                                systemImage: "checkmark.circle",
+                                description: Text("Every application in this catalog sample already has a saved measurement.")
+                            )
+                        case .measured:
+                            ContentUnavailableView(
+                                "No measured applications yet",
+                                systemImage: "app.badge.checkmark",
+                                description: Text("Measure a discovered application bundle to include it in this list.")
+                            )
+                        }
+                    }
                     .frame(maxWidth: .infinity, minHeight: 90)
+                }
             } else {
                 LazyVStack(spacing: 0) {
                 ForEach(candidates) { candidate in
