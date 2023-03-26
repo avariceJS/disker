@@ -55,7 +55,7 @@ public enum ObservationStore {
     private static let fileName = "observations.json"
     private static let maximumObservationCount = 180
     private static let maximumHistoryFileSize = 256 * 1024 * 1024
-    private static let maximumApplicationDiscoveryRecords = ApplicationBundleIndex.maximumDiscoveryRecords
+    private static let maximumApplicationDiscoveryRecords = ApplicationBundleIndex.maximumPersistedDiscoveryRecords
 
     public static func load(from fileURL: URL? = nil) throws -> LocalHistory {
         guard let url = fileURL ?? historyURL() else { throw StorageReadError.historyLocationUnavailable }

@@ -154,13 +154,14 @@ final class ApplicationDiscoveryModel {
         let scoped = ApplicationBundleIndex.scopedCandidateSample(
             raw, within: scopePaths, limit: maximumDisplayedResults
         )
-        searchableCandidates = ApplicationBundleIndex.scopedCandidates(
+        let searchable = ApplicationBundleIndex.scopedCandidates(
             raw, within: scopePaths, limit: maximumIndexedResults
         )
+        searchableCandidates = searchable
         let sampleIsTruncated = query.resultCount > maximumIndexedResults || scoped.hasMore
         let displayed = scoped.candidates
         candidates = displayed
-        let updatedHistory = ApplicationBundleIndex.updatingDiscoveryHistory(history, with: displayed)
+        let updatedHistory = ApplicationBundleIndex.updatingDiscoveryHistory(history, with: searchable)
         if updatedHistory != history {
             do {
                 history = try ObservationStore.updateDiscoveredApplications(updatedHistory).discoveredApplications

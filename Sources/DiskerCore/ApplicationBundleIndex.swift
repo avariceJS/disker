@@ -58,6 +58,7 @@ public enum ApplicationDiscoveryMeasurementFilter: String, CaseIterable, Identif
 public enum ApplicationBundleIndex {
     public static let maximumDiscoveryRecords = 500
     public static let maximumSearchableDiscoveryResults = 5_000
+    public static let maximumPersistedDiscoveryRecords = maximumSearchableDiscoveryResults
 
     /// Applies lexical scope and bundle-name checks to metadata-index results.
     /// Filesystem identity and symlink checks remain the caller's responsibility.
@@ -121,7 +122,7 @@ public enum ApplicationBundleIndex {
     /// their first-seen timestamp, including when absent from an intermediate query.
     public static func updatingDiscoveryHistory(
         _ history: [ApplicationDiscoveryRecord], with candidates: [ApplicationDiscoveryCandidate],
-        at date: Date = .now, limit: Int = maximumDiscoveryRecords
+        at date: Date = .now, limit: Int = maximumPersistedDiscoveryRecords
     ) -> [ApplicationDiscoveryRecord] {
         guard limit > 0 else { return [] }
         var byPath = Dictionary(history.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })

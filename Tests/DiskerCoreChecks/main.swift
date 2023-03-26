@@ -599,6 +599,11 @@ private struct DiskerCoreChecks {
                        $0.displayName.localizedStandardContains("Zulu")
                    }),
                    "search should reach a bounded indexed candidate outside the initial 500-row display sample")
+        let broadDiscoveryHistory = ApplicationBundleIndex.updatingDiscoveryHistory(
+            [], with: boundedSearch, at: Date(timeIntervalSince1970: 30)
+        )
+        try expect(broadDiscoveryHistory.contains(where: { $0.path == "/Applications/Zulu.app" }),
+                   "discovery history should persist an indexed result found beyond the initial display sample")
         try withTemporaryDirectory { root in
             let realBundle = root.appendingPathComponent("Real.app", isDirectory: true)
             try FileManager.default.createDirectory(at: realBundle, withIntermediateDirectories: false)
@@ -4194,7 +4199,7 @@ private struct DiskerCoreChecks {
             try expect(withCapacityHistory.ramObservations.count == 180 && withCapacityHistory.observations.count == 180,
                        "capacity samples should preserve folder and RAM history")
 
-            let discoveryRecords = (0...ApplicationBundleIndex.maximumDiscoveryRecords).map { index in
+            let discoveryRecords = (0...ApplicationBundleIndex.maximumPersistedDiscoveryRecords).map { index in
                 let timestamp = Date(timeIntervalSince1970: TimeInterval(index))
                 return ApplicationDiscoveryRecord(
                     path: "/Applications/App\(index).app", displayName: "App \(index)",
@@ -4203,9 +4208,9 @@ private struct DiskerCoreChecks {
             }
             let withDiscovery = try ObservationStore.updateDiscoveredApplications(discoveryRecords, to: fileURL)
             let reloadedDiscovery = try ObservationStore.load(from: fileURL)
-            try expect(withDiscovery.discoveredApplications.count == ApplicationBundleIndex.maximumDiscoveryRecords,
+            try expect(withDiscovery.discoveredApplications.count == ApplicationBundleIndex.maximumPersistedDiscoveryRecords,
                        "application discovery history should be capped at its configured bound")
-            try expect(withDiscovery.discoveredApplications.first?.path == "/Applications/App\(ApplicationBundleIndex.maximumDiscoveryRecords).app",
+            try expect(withDiscovery.discoveredApplications.first?.path == "/Applications/App\(ApplicationBundleIndex.maximumPersistedDiscoveryRecords).app",
                        "application discovery retention should preserve the newest observed records")
             try expect(reloadedDiscovery.discoveredApplications == withDiscovery.discoveredApplications,
                        "bounded application discovery dates should persist across history reload")
