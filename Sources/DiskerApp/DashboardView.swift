@@ -98,18 +98,13 @@ private struct DiscoveryStatusBadge: View {
     }
 }
 
-private enum ApplicationMeasurementFilter: String, CaseIterable, Identifiable {
-    case all
-    case unmeasured
-    case measured
-
-    var id: String { rawValue }
-
+private extension ApplicationDiscoveryMeasurementFilter {
     var title: LocalizedStringKey {
         switch self {
         case .all: "All"
         case .unmeasured: "Not measured"
-        case .measured: "Measured"
+        case .partial: "Partial"
+        case .complete: "Complete"
         }
     }
 }
@@ -143,22 +138,22 @@ private func folderMeasurementSummary(_ observation: FolderObservation) -> Strin
 }
 
 private func applicationDiscoverySummary(
-    catalogCount: Int, measuredCount: Int, matchCount: Int?
+    catalogCount: Int, completeCount: Int, matchCount: Int?
 ) -> String {
     if let matchCount {
         let format = NSLocalizedString(
             "Application discovery results · filtered",
-            value: "Matches: %ld · measured: %ld · catalog sample: %ld",
-            comment: "Counts for filtered Spotlight application results"
+            value: "Matches: %ld · complete: %ld · catalog sample: %ld",
+            comment: "Counts for filtered Spotlight application results and complete bundle measurements"
         )
-        return String.localizedStringWithFormat(format, matchCount, measuredCount, catalogCount)
+        return String.localizedStringWithFormat(format, matchCount, completeCount, catalogCount)
     }
     let format = NSLocalizedString(
         "Application discovery results · all",
-        value: "Catalog sample: %ld · measured: %ld",
-        comment: "Counts for all displayed Spotlight application results"
+        value: "Catalog sample: %ld · complete: %ld",
+        comment: "Counts for displayed Spotlight results and complete bundle measurements"
     )
-    return String.localizedStringWithFormat(format, catalogCount, measuredCount)
+    return String.localizedStringWithFormat(format, catalogCount, completeCount)
 }
 
 private func directoryMeasurementSummary(_ usage: DirectoryUsage) -> String {
@@ -1329,7 +1324,7 @@ struct DashboardView: View {
     @State private var isAutomaticRAMSamplingEnabled = false
     @State private var applicationReviewBundle: FolderObservation?
     @State private var applicationDiscoverySearchText = ""
-    @State private var applicationDiscoveryMeasurementFilter: ApplicationMeasurementFilter = .all
+    @State private var applicationDiscoveryMeasurementFilter: ApplicationDiscoveryMeasurementFilter = .all
     @State private var developerArtifactReviewFolder: FolderObservation?
     @Environment(\.scenePhase) private var scenePhase
 
@@ -2667,16 +2662,11 @@ struct DashboardView: View {
             let matchesSearch = applicationDiscoverySearchText.isEmpty
                 || candidate.displayName.localizedStandardContains(applicationDiscoverySearchText)
                 || candidate.path.localizedStandardContains(applicationDiscoverySearchText)
-            let isMeasured = measurementsByPath[candidate.path] != nil
-            let matchesMeasurementFilter = switch applicationDiscoveryMeasurementFilter {
-            case .all: true
-            case .unmeasured: !isMeasured
-            case .measured: isMeasured
-            }
-            return matchesSearch && matchesMeasurementFilter
+            return matchesSearch
+                && applicationDiscoveryMeasurementFilter.includes(measurementsByPath[candidate.path])
         }
-        let visibleMeasuredCount = candidates.reduce(into: 0) { count, candidate in
-            if measurementsByPath[candidate.path] != nil { count += 1 }
+        let visibleCompleteCount = candidates.reduce(into: 0) { count, candidate in
+            if measurementsByPath[candidate.path]?.complete == true { count += 1 }
         }
 
         return VStack(alignment: .leading, spacing: 12) {
@@ -2723,7 +2713,7 @@ struct DashboardView: View {
                 .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
                 Picker("Filter applications by measurement", selection: $applicationDiscoveryMeasurementFilter) {
-                    ForEach(ApplicationMeasurementFilter.allCases) { filter in
+                    ForEach(ApplicationDiscoveryMeasurementFilter.allCases) { filter in
                         Text(filter.title).tag(filter)
                     }
                 }
@@ -2732,7 +2722,7 @@ struct DashboardView: View {
                 .accessibilityLabel("Filter applications by measurement")
                 Text(applicationDiscoverySummary(
                     catalogCount: applicationDiscovery.candidates.count,
-                    measuredCount: visibleMeasuredCount,
+                    completeCount: visibleCompleteCount,
                     matchCount: applicationDiscoverySearchText.isEmpty
                         && applicationDiscoveryMeasurementFilter == .all ? nil : candidates.count
                 ))
@@ -2758,15 +2748,21 @@ struct DashboardView: View {
                             )
                         case .unmeasured:
                             ContentUnavailableView(
-                                "No applications need measurement",
+                                "No applications without a measurement",
                                 systemImage: "checkmark.circle",
-                                description: Text("Every application in this catalog sample already has a saved measurement.")
+                                description: Text("Every application in this catalog sample has a saved result; some scans may be partial.")
                             )
-                        case .measured:
+                        case .partial:
                             ContentUnavailableView(
-                                "No measured applications yet",
+                                "No partial measurements",
+                                systemImage: "checkmark.circle",
+                                description: Text("No application in this catalog sample currently has a partial scan.")
+                            )
+                        case .complete:
+                            ContentUnavailableView(
+                                "No complete measurements yet",
                                 systemImage: "app.badge.checkmark",
-                                description: Text("Measure a discovered application bundle to include it in this list.")
+                                description: Text("Measure a discovered application bundle to add a complete result to this list.")
                             )
                         }
                     }

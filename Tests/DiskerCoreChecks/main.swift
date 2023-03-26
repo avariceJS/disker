@@ -467,6 +467,22 @@ private struct DiskerCoreChecks {
         let unreadableBundle = folder("/Applications/Unknown.app", 600)
         let genericAppDirectory = folder("/Projects/Example.app", 1000)
         let notBundle = folder("/Projects/Example.app-cache", 10)
+        try expect(ApplicationDiscoveryMeasurementFilter.all.includes(nil)
+                   && ApplicationDiscoveryMeasurementFilter.all.includes(firstBundle)
+                   && ApplicationDiscoveryMeasurementFilter.all.includes(laterBundle),
+                   "the all filter should retain unmeasured, partial, and complete candidates")
+        try expect(ApplicationDiscoveryMeasurementFilter.unmeasured.includes(nil)
+                   && !ApplicationDiscoveryMeasurementFilter.unmeasured.includes(laterBundle)
+                   && !ApplicationDiscoveryMeasurementFilter.unmeasured.includes(firstBundle),
+                   "the unmeasured filter should include only candidates without saved observations")
+        try expect(ApplicationDiscoveryMeasurementFilter.partial.includes(laterBundle)
+                   && !ApplicationDiscoveryMeasurementFilter.partial.includes(nil)
+                   && !ApplicationDiscoveryMeasurementFilter.partial.includes(firstBundle),
+                   "the partial filter should distinguish incomplete scans from missing and complete observations")
+        try expect(ApplicationDiscoveryMeasurementFilter.complete.includes(firstBundle)
+                   && !ApplicationDiscoveryMeasurementFilter.complete.includes(laterBundle)
+                   && !ApplicationDiscoveryMeasurementFilter.complete.includes(nil),
+                   "the complete filter should include only complete bundle observations")
         let enriched = ScanObservation(
             startedAt: Date(timeIntervalSince1970: 3),
             folders: [firstBundle, notBundle], cancelled: false

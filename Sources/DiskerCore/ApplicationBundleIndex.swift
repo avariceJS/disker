@@ -35,6 +35,26 @@ public struct ApplicationDiscoverySample: Equatable, Sendable {
     public let hasMore: Bool
 }
 
+/// Keeps partial bundle observations distinct from complete measurements in
+/// discovery results and counts.
+public enum ApplicationDiscoveryMeasurementFilter: String, CaseIterable, Identifiable, Sendable {
+    case all
+    case unmeasured
+    case partial
+    case complete
+
+    public var id: String { rawValue }
+
+    public func includes(_ measurement: FolderObservation?) -> Bool {
+        switch self {
+        case .all: true
+        case .unmeasured: measurement == nil
+        case .partial: measurement?.complete == false
+        case .complete: measurement?.complete == true
+        }
+    }
+}
+
 public enum ApplicationBundleIndex {
     public static let maximumDiscoveryRecords = 500
 
