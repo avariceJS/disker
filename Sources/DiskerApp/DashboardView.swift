@@ -4034,9 +4034,10 @@ struct DashboardView: View {
                                     }
                                     .buttonStyle(.borderless)
                                     .disabled(selectedRAMIndex == 0)
-                                    .help("Previous sample")
+                                    .help("Previous sample (⌘←)")
                                     .accessibilityLabel("Previous sample")
-                                    .accessibilityHint("Moves selection to the previous RAM sample.")
+                                    .accessibilityHint("Moves selection to the previous RAM sample. Press Command–Left Arrow to activate.")
+                                    .keyboardShortcut(.leftArrow, modifiers: .command)
                                     Button {
                                         guard let selectedRAMIndex,
                                               selectedRAMIndex + 1 < ramSamples.count else { return }
@@ -4046,9 +4047,10 @@ struct DashboardView: View {
                                     }
                                     .buttonStyle(.borderless)
                                     .disabled(selectedRAMIndex.map { $0 + 1 >= ramSamples.count } ?? true)
-                                    .help("Next sample")
+                                    .help("Next sample (⌘→)")
                                     .accessibilityLabel("Next sample")
-                                    .accessibilityHint("Moves selection to the next RAM sample.")
+                                    .accessibilityHint("Moves selection to the next RAM sample. Press Command–Right Arrow to activate.")
+                                    .keyboardShortcut(.rightArrow, modifiers: .command)
                                     Button("Clear") { selectedRAMDate = nil }
                                         .buttonStyle(.link)
                                 }
