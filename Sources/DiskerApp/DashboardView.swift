@@ -1469,7 +1469,7 @@ struct DashboardView: View {
             }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("This removes saved capacity, folder, file-change, RAM and system-pressure history, application discovery dates and app-folder associations, and remembered scan locations from this Mac. Active storage and RAM monitoring will stop. Your files and folders will not be changed.")
+            Text("This removes saved capacity, folder, file-change, RAM and system-pressure history, application discovery dates, saved application discovery folders and app-folder associations, and remembered scan locations from this Mac. Active storage and RAM monitoring will stop. Your files and folders will not be changed.")
         }
     }
 
@@ -2683,11 +2683,45 @@ struct DashboardView: View {
                 Spacer()
                 Button("Add Discovery Folder…") { applicationDiscovery.addUserSelectedScope() }
                     .controlSize(.small)
+                    .disabled(
+                        applicationDiscovery.userSelectedScopePaths.count
+                            >= ApplicationDiscoveryModel.maximumUserSelectedScopeCount
+                    )
             }
             Text("Spotlight searches only /Applications, /System/Applications, ~/Applications, and folders you add here. Discovery reads indexed metadata only; it does not measure bundles or their data. Press Measure and confirm the exact bundle in the picker before Disker scans it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if !applicationDiscovery.userSelectedScopePaths.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Additional Spotlight folders")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ForEach(applicationDiscovery.userSelectedScopePaths, id: \.self) { path in
+                        HStack(spacing: 10) {
+                            Image(systemName: "folder")
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(URL(fileURLWithPath: path).lastPathComponent)
+                                    .font(.caption.weight(.medium))
+                                Text(path)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            Spacer(minLength: 8)
+                            Button("Remove") {
+                                applicationDiscovery.removeUserSelectedScope(path: path)
+                            }
+                            .controlSize(.small)
+                            .accessibilityLabel("Remove application search folder at \(path)")
+                        }
+                    }
+                }
+                .padding(10)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+            }
             if let message = applicationDiscovery.statusMessage {
                 Text(message)
                     .font(.caption2)

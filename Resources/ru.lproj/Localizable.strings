@@ -31,6 +31,9 @@
 "Choose an Application Bundle…" = "Выбрать пакет приложения…";
 "Discovered applications" = "Найденные приложения";
 "Add Discovery Folder…" = "Добавить папку поиска…";
+"Additional Spotlight folders" = "Дополнительные папки Spotlight";
+"Remove" = "Удалить";
+"Remove application search folder at %@" = "Удалить папку поиска приложений: %@";
 "Spotlight searches only /Applications, /System/Applications, ~/Applications, and folders you add here. Discovery reads indexed metadata only; it does not measure bundles or their data. Press Measure and confirm the exact bundle in the picker before Disker scans it." = "Spotlight ищет только в /Applications, /System/Applications, ~/Applications и папках, добавленных здесь. Поиск использует только индексированные метаданные и не измеряет пакеты или связанные данные. Нажмите «Измерить» и подтвердите точный пакет в окне выбора, прежде чем Disker начнёт сканирование.";
 "Filter by app name or path" = "Фильтр по имени приложения или пути";
 "Filter discovered applications" = "Фильтровать найденные приложения";
@@ -64,10 +67,14 @@
 "Search This Folder" = "Искать в этой папке";
 "Spotlight will look for application bundles inside this folder. Disker will not scan or measure its contents." = "Spotlight будет искать пакеты приложений в этой папке. Disker не сканирует и не измеряет её содержимое.";
 "macOS did not grant access to that discovery folder. No scan was started." = "macOS не предоставила доступ к этой папке. Сканирование не запускалось.";
+"Disker can remember up to 20 application discovery folders. Remove one before adding another." = "Disker может запомнить до 20 папок для поиска приложений. Удалите одну, прежде чем добавить новую.";
+"Disker could not prepare local storage for this discovery folder. No Spotlight query was started." = "Не удалось подготовить локальное хранилище для этой папки. Поиск Spotlight не запускался.";
+"One or more saved discovery folders could not be reopened. Reselect an accessible folder or remove the saved entry." = "Не удалось повторно открыть одну или несколько папок поиска. Выберите доступную папку заново или удалите сохранённую запись.";
 "No accessible application folders are available for Spotlight discovery." = "Нет доступных папок для поиска приложений через Spotlight.";
 "Waiting for Spotlight's indexed results. Index coverage may be incomplete." = "Ожидание результатов индекса Spotlight. Индекс может охватывать не все приложения.";
 "Spotlight could not start this scoped query. Try again later." = "Не удалось запустить поиск Spotlight в выбранных папках. Попробуйте позже.";
 "Spotlight results are available, but their local discovery dates could not be saved." = "Результаты Spotlight доступны, но даты их обнаружения не удалось сохранить локально.";
+"This removes saved capacity, folder, file-change, RAM and system-pressure history, application discovery dates, saved application discovery folders and app-folder associations, and remembered scan locations from this Mac. Active storage and RAM monitoring will stop. Your files and folders will not be changed." = "Это удалит с этого Mac сохранённую историю ёмкости, папок, изменений файлов, ОЗУ и системного давления, даты обнаружения приложений, папки поиска приложений, связи приложений с папками и сохранённые места сканирования. Мониторинг хранилища и ОЗУ остановится. Ваши файлы и папки не изменятся.";
 "The catalog shows up to 500 applications and searches up to 5,000 indexed results. Excluded or unindexed locations remain unknown." = "В каталоге показано до 500 приложений; поиск проверяет до 5 000 результатов Spotlight. Исключённые и неиндексируемые места остаются неизвестными.";
 "Discovery uses Spotlight's current index; excluded or unindexed locations remain unknown." = "Поиск использует текущий индекс Spotlight; приложения в исключённых или неиндексируемых местах остаются неизвестны.";
 "24 hours" = "24 часа";
