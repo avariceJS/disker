@@ -86,6 +86,7 @@ private struct DiskerCoreChecks {
             ("directory summary cap and stable order", testDirectorySummaryCap),
             ("bounded largest-file metadata summaries", testLargestFileSummaries),
             ("complete selected-root file inventory and change history", testFileInventoryHistory),
+            ("same-size file candidate indexing and persistence", testSameSizeFileCandidates),
             ("cautious large-file modification-age review", testLargeFileModificationReview),
             ("old history JSON defaults new fields", testOldHistoryDecoding),
             ("sparse file size accounting", testSparseFileAccounting),
@@ -3933,6 +3934,161 @@ private struct DiskerCoreChecks {
                        "a bounded top-100 changed-path list must preserve exact changed counts and net totals")
             try expect(cappedReport?.changes.map(\.relativePath) == olderEntries.prefix(100).map(\.relativePath),
                        "equal-growth paths should retain deterministic UTF-8 ordering in the capped report")
+        }
+    }
+
+    private static func testSameSizeFileCandidates() throws {
+        try withTemporaryDirectory { temporaryRoot in
+            let root = temporaryRoot.appendingPathComponent("candidate-root", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+            let first = root.appendingPathComponent("first.dat")
+            let second = root.appendingPathComponent("second.dat")
+            let third = root.appendingPathComponent("nested/third.dat")
+            let fourth = root.appendingPathComponent("nested/fourth.dat")
+            try FileManager.default.createDirectory(at: third.deletingLastPathComponent(), withIntermediateDirectories: false)
+            try Data(repeating: 0x11, count: 1_048_576).write(to: first)
+            try Data(repeating: 0x22, count: 1_048_576).write(to: second)
+            try Data(repeating: 0x33, count: 2_097_152).write(to: third)
+            try Data(repeating: 0x44, count: 2_097_152).write(to: fourth)
+            try Data(repeating: 0x55, count: 1_048_575).write(to: root.appendingPathComponent("below-threshold.dat"))
+            try FileManager.default.linkItem(at: first, to: root.appendingPathComponent("first-hard-link.dat"))
+
+            let outside = temporaryRoot.appendingPathComponent("outside", isDirectory: true)
+            try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: false)
+            try Data(repeating: 0x66, count: 1_048_576).write(to: outside.appendingPathComponent("not-followed.dat"))
+            try FileManager.default.createSymbolicLink(
+                at: root.appendingPathComponent("external-link", isDirectory: true),
+                withDestinationURL: outside
+            )
+
+            let scan = FolderScanner.scanWithFileInventories(roots: [root])
+            guard let snapshot = scan.fileInventories.first else {
+                throw CheckFailure.assertion("selected-root scanning should return a regular-file inventory")
+            }
+            let summary = SameSizeFileCandidateIndex.makeSummary(from: snapshot)
+            try expect(snapshot.complete && snapshot.excludedSymlinkCount == 1,
+                       "candidate indexing should use the complete no-follow regular-file inventory and disclose excluded symlinks")
+            try expect(summary?.eligibleFileCount == 4 && summary?.groups.count == 2,
+                       "only files at or above the 1 MiB threshold should enter same-size groups")
+            try expect(summary?.groups.map(\.logicalBytes) == [2_097_152, 1_048_576],
+                       "candidate groups should be ordered by descending logical size")
+            try expect(summary.map { candidateSummary in
+                candidateSummary.groups.allSatisfy { $0.fileCount == 2 && $0.files.count == 2 }
+                    && candidateSummary.groups.flatMap(\.files).allSatisfy { $0.allocatedBytes >= 0 }
+            } == true,
+                       "groups should report exact file counts and separate allocated-byte estimates")
+            let candidatePaths = Set(summary?.groups.flatMap(\.files).map(\.relativePath) ?? [])
+            try expect(!(candidatePaths.contains("first.dat") && candidatePaths.contains("first-hard-link.dat"))
+                       && !candidatePaths.contains(where: { $0.contains("not-followed") }),
+                       "hard links should contribute one canonical candidate path and symlink targets none")
+
+            let storeURL = temporaryRoot.appendingPathComponent("private/Disker/file-inventory.plist")
+            let recorded = try FileInventoryStore.recordWithTrendPoints(snapshot, at: storeURL)
+            let persisted = try FileInventoryStore.loadDashboardHistory(at: storeURL).sameSizeCandidates[root.path]
+            try expect(recorded?.sameSizeCandidates == summary && persisted == summary,
+                       "candidate metadata should be committed atomically with the complete inventory and reload exactly")
+
+            let incomplete = FileInventorySnapshot(
+                rootPath: root.path,
+                volumeDeviceID: snapshot.volumeDeviceID,
+                observedAt: snapshot.observedAt.addingTimeInterval(10),
+                entries: [], complete: false, excludedSymlinkCount: 0
+            )
+            let incompleteResult = try FileInventoryStore.recordWithTrendPoints(incomplete, at: storeURL)
+            try expect(incompleteResult == nil,
+                       "partial inventories must not replace the last complete candidate index")
+            let retained = try FileInventoryStore.loadDashboardHistory(at: storeURL).sameSizeCandidates[root.path]
+            try expect(retained == summary && retained?.folderObservationID != incomplete.folderObservationID,
+                       "a partial scan should leave the old candidate evidence available only with its old observation identity")
+
+            let corruptedCandidateURL = temporaryRoot.appendingPathComponent("private/Disker/corrupt-candidates.plist")
+            try FileManager.default.copyItem(at: storeURL, to: corruptedCandidateURL)
+            let validCandidateBytes = try Data(contentsOf: corruptedCandidateURL)
+            var propertyList = try PropertyListSerialization.propertyList(
+                from: validCandidateBytes, options: .mutableContainersAndLeaves, format: nil
+            ) as? [String: Any]
+            var summaries = propertyList?["sameSizeCandidates"] as? [String: [String: Any]]
+            var candidate = summaries?[root.path]
+            var groups = candidate?["groups"] as? [[String: Any]]
+            var firstGroup = groups?.first
+            var files = firstGroup?["files"] as? [[String: Any]]
+            guard files?.count == 2,
+                  let repeatedRelativePath = files?.first?["relativePath"] as? String else {
+                throw CheckFailure.assertion("the persisted synthetic candidate group should contain two paths")
+            }
+            files?[1]["relativePath"] = repeatedRelativePath
+            firstGroup?["files"] = files
+            groups?[0] = firstGroup ?? [:]
+            candidate?["groups"] = groups
+            summaries?[root.path] = candidate
+            propertyList?["sameSizeCandidates"] = summaries
+            let corruptCandidateBytes = try PropertyListSerialization.data(
+                fromPropertyList: propertyList as Any, format: .binary, options: 0
+            )
+            try corruptCandidateBytes.write(to: corruptedCandidateURL)
+            var rejectedDashboardCandidate = false
+            do { _ = try FileInventoryStore.loadDashboardHistory(at: corruptedCandidateURL) }
+            catch { rejectedDashboardCandidate = true }
+            var rejectedStoreCandidate = false
+            do { _ = try FileInventoryStore.record(snapshot, at: corruptedCandidateURL) }
+            catch { rejectedStoreCandidate = true }
+            let retainedCorruptCandidateBytes = try Data(contentsOf: corruptedCandidateURL)
+            try expect(rejectedDashboardCandidate && rejectedStoreCandidate
+                       && retainedCorruptCandidateBytes == corruptCandidateBytes,
+                       "both dashboard and write paths must reject malformed candidate paths without replacing the stored bytes")
+
+            let unsafe = SameSizeFileCandidateSummary(
+                rootPath: root.path, folderObservationID: UUID(), observedAt: Date(),
+                excludedSymlinkCount: 0, eligibleFileCount: 2,
+                groups: [SameSizeCandidateGroup(
+                    logicalBytes: SameSizeFileCandidateIndex.minimumLogicalBytes,
+                    fileCount: 2,
+                    files: [
+                        SameSizeCandidateFile(relativePath: "../outside", logicalBytes: SameSizeFileCandidateIndex.minimumLogicalBytes, allocatedBytes: 1),
+                        SameSizeCandidateFile(relativePath: "inside", logicalBytes: SameSizeFileCandidateIndex.minimumLogicalBytes, allocatedBytes: 1)
+                    ],
+                    omittedFileCount: 0
+                )],
+                omittedGroupCount: 0, sizeBucketLimitReached: false
+            )
+            try expect(!unsafe.isValid(for: root.path),
+                       "persisted candidate groups must reject traversal-like relative paths")
+            let repeatedPath = SameSizeFileCandidateSummary(
+                rootPath: root.path, folderObservationID: UUID(), observedAt: Date(),
+                excludedSymlinkCount: 0, eligibleFileCount: 2,
+                groups: [SameSizeCandidateGroup(
+                    logicalBytes: SameSizeFileCandidateIndex.minimumLogicalBytes,
+                    fileCount: 2,
+                    files: [
+                        SameSizeCandidateFile(relativePath: "same.dat", logicalBytes: SameSizeFileCandidateIndex.minimumLogicalBytes, allocatedBytes: 1),
+                        SameSizeCandidateFile(relativePath: "same.dat", logicalBytes: SameSizeFileCandidateIndex.minimumLogicalBytes, allocatedBytes: 1)
+                    ],
+                    omittedFileCount: 0
+                )],
+                omittedGroupCount: 0, sizeBucketLimitReached: false
+            )
+            try expect(!repeatedPath.isValid(for: root.path),
+                       "persisted candidate groups must reject repeated path identifiers")
+
+            let cappedEntries = (0...SameSizeFileCandidateIndex.maximumTrackedSizeBuckets).map { index in
+                FileInventoryEntry(
+                    relativePath: "unique-\(index).dat",
+                    logicalBytes: SameSizeFileCandidateIndex.minimumLogicalBytes + Int64(index),
+                    allocatedBytes: 1
+                )
+            } + [FileInventoryEntry(
+                relativePath: "late-match.dat",
+                logicalBytes: SameSizeFileCandidateIndex.minimumLogicalBytes
+                    + Int64(SameSizeFileCandidateIndex.maximumTrackedSizeBuckets),
+                allocatedBytes: 1
+            )]
+            let capped = SameSizeFileCandidateIndex.makeSummary(from: FileInventorySnapshot(
+                rootPath: root.path + "/many-sizes", volumeDeviceID: 1, observedAt: Date(),
+                entries: cappedEntries, complete: true, excludedSymlinkCount: 0
+            ))
+            try expect(capped?.sizeBucketLimitReached == true && capped?.groups.isEmpty == true
+                       && capped?.isCandidateIndexComplete == false,
+                       "a bounded size-bucket index must disclose omitted buckets instead of claiming no candidates")
         }
     }
 

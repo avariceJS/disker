@@ -15,11 +15,13 @@ public enum FileInventoryStoreError: Error, LocalizedError {
 public struct FileInventoryDashboardHistory: Sendable {
     public let reports: [String: FileInventoryChangeSet]
     public let trendPoints: [String: [FileInventoryTrendPoint]]
+    public let sameSizeCandidates: [String: SameSizeFileCandidateSummary]
 }
 
 public struct FileInventoryRecordResult: Sendable {
     public let report: FileInventoryChangeSet
     public let trendPoints: [String: [FileInventoryTrendPoint]]
+    public let sameSizeCandidates: SameSizeFileCandidateSummary
 }
 
 @_spi(DiskerTesting)
@@ -40,12 +42,14 @@ public enum FileInventoryStore {
         var snapshots: [String: StoredSnapshot] = [:]
         var reports: [String: FileInventoryChangeSet] = [:]
         var trendPoints: [String: [FileInventoryTrendPoint]]?
+        var sameSizeCandidates: [String: SameSizeFileCandidateSummary]?
 
         private enum CodingKeys: String, CodingKey {
             case snapshotFormatVersion
             case snapshots
             case reports
             case trendPoints
+            case sameSizeCandidates
         }
 
         private struct SnapshotKey: CodingKey, Hashable {
@@ -120,6 +124,16 @@ public enum FileInventoryStore {
             trendPoints = try container.decodeIfPresent(
                 [String: [FileInventoryTrendPoint]].self, forKey: .trendPoints
             )
+            sameSizeCandidates = try container.decodeIfPresent(
+                [String: SameSizeFileCandidateSummary].self, forKey: .sameSizeCandidates
+            )
+            guard (sameSizeCandidates?.count ?? 0) <= maximumRootCount,
+                  sameSizeCandidates?.allSatisfy({ $0.value.isValid(for: $0.key) }) ?? true else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .sameSizeCandidates, in: container,
+                    debugDescription: "The same-size candidate index is outside its bounds."
+                )
+            }
         }
 
         func encode(to encoder: Encoder) throws {
@@ -128,6 +142,7 @@ public enum FileInventoryStore {
             try container.encode(snapshots, forKey: .snapshots)
             try container.encode(reports, forKey: .reports)
             try container.encodeIfPresent(trendPoints, forKey: .trendPoints)
+            try container.encodeIfPresent(sameSizeCandidates, forKey: .sameSizeCandidates)
         }
     }
 
@@ -209,6 +224,29 @@ public enum FileInventoryStore {
     private struct DashboardState: Decodable {
         let reports: [String: FileInventoryChangeSet]
         let trendPoints: [String: [FileInventoryTrendPoint]]?
+        let sameSizeCandidates: [String: SameSizeFileCandidateSummary]?
+
+        private enum CodingKeys: String, CodingKey {
+            case reports
+            case trendPoints
+            case sameSizeCandidates
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            reports = try container.decode([String: FileInventoryChangeSet].self, forKey: .reports)
+            trendPoints = try container.decodeIfPresent([String: [FileInventoryTrendPoint]].self, forKey: .trendPoints)
+            sameSizeCandidates = try container.decodeIfPresent(
+                [String: SameSizeFileCandidateSummary].self, forKey: .sameSizeCandidates
+            )
+            guard (sameSizeCandidates?.count ?? 0) <= maximumRootCount,
+                  sameSizeCandidates?.allSatisfy({ $0.value.isValid(for: $0.key) }) ?? true else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .sameSizeCandidates, in: container,
+                    debugDescription: "The same-size candidate index is outside its bounds."
+                )
+            }
+        }
     }
 
     private static let fileName = "file-inventory.plist"
@@ -225,14 +263,15 @@ public enum FileInventoryStore {
         defer { lock.unlock() }
         let url = try resolvedURL(fileURL)
         guard let data = try LocalStoreFile.read(at: url, maximumBytes: maximumFileSize) else {
-            return FileInventoryDashboardHistory(reports: [:], trendPoints: [:])
+            return FileInventoryDashboardHistory(reports: [:], trendPoints: [:], sameSizeCandidates: [:])
         }
         let state: DashboardState
         do { state = try PropertyListDecoder().decode(DashboardState.self, from: data) }
         catch { throw HistoryDecodeError.invalidHistory(error.localizedDescription) }
         return FileInventoryDashboardHistory(
             reports: state.reports,
-            trendPoints: state.trendPoints ?? [:]
+            trendPoints: state.trendPoints ?? [:],
+            sameSizeCandidates: state.sameSizeCandidates ?? [:]
         )
     }
 
@@ -318,6 +357,12 @@ public enum FileInventoryStore {
             trendPoints[snapshot.rootPath] = rootPoints
         }
         state.trendPoints = trendPoints
+        guard let sameSizeCandidates = SameSizeFileCandidateIndex.makeSummary(from: snapshot) else {
+            return nil
+        }
+        var candidateSummaries = state.sameSizeCandidates ?? [:]
+        candidateSummaries[snapshot.rootPath] = sameSizeCandidates
+        state.sameSizeCandidates = candidateSummaries
         do { state.snapshots[snapshot.rootPath] = try StoredSnapshot(snapshot) }
         catch PackedInventoryEntriesError.exceedsLimit { throw FileInventoryStoreError.tooLarge }
         stageObserver?(.afterSnapshotEncoding)
@@ -326,7 +371,11 @@ public enum FileInventoryStore {
         guard !Task.isCancelled else { return nil }
         stageObserver?(.beforeEncoding)
         try save(state, at: url) { stage in stageObserver?(stage) }
-        return FileInventoryRecordResult(report: report, trendPoints: trendPoints)
+        return FileInventoryRecordResult(
+            report: report,
+            trendPoints: trendPoints,
+            sameSizeCandidates: sameSizeCandidates
+        )
     }
 
     private static func compare(
@@ -479,6 +528,7 @@ public enum FileInventoryStore {
             state.snapshots.removeValue(forKey: oldest.rootPath)
             state.reports.removeValue(forKey: oldest.rootPath)
             state.trendPoints?.removeValue(forKey: oldest.rootPath)
+            state.sameSizeCandidates?.removeValue(forKey: oldest.rootPath)
         }
         while (state.trendPoints?.values.reduce(0, { $0 + $1.count }) ?? 0) > maximumTotalTrendPointCount {
             guard let oldestRoot = state.trendPoints?.compactMap({ rootPath, points in

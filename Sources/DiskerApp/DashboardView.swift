@@ -187,6 +187,7 @@ final class DashboardModel {
     var history = LocalHistory()
     var fileInventoryReports: [String: FileInventoryChangeSet] = [:]
     var fileInventoryTrends: [String: [FileInventoryTrendPoint]] = [:]
+    var sameSizeFileCandidates: [String: SameSizeFileCandidateSummary] = [:]
     var isScanning = false
     var isSamplingRAM = false
     var isAppActive = false
@@ -251,6 +252,7 @@ final class DashboardModel {
             let fileInventoryHistory = try FileInventoryStore.loadDashboardHistory()
             fileInventoryReports = fileInventoryHistory.reports
             fileInventoryTrends = fileInventoryHistory.trendPoints
+            sameSizeFileCandidates = fileInventoryHistory.sameSizeCandidates
         } catch {
             errorMessage = "File change history could not be loaded: \(error.localizedDescription)"
         }
@@ -781,6 +783,7 @@ final class DashboardModel {
                         if historyGeneration.accepts(generation) {
                             for update in inventoryUpdates {
                                 fileInventoryReports[update.report.rootPath] = update.report
+                                sameSizeFileCandidates[update.sameSizeCandidates.rootPath] = update.sameSizeCandidates
                             }
                             if let latest = inventoryUpdates.last {
                                 fileInventoryTrends = latest.trendPoints
@@ -1260,6 +1263,7 @@ final class DashboardModel {
             history = LocalHistory()
             fileInventoryReports = [:]
             fileInventoryTrends = [:]
+            sameSizeFileCandidates = [:]
             rememberedScopes = []
             ram = nil
             errorMessage = nil
@@ -3291,6 +3295,7 @@ struct DashboardView: View {
                     "Duplicate review",
                     subtitle: "Confirm byte-identical files inside folders you choose. Disker will not change them."
                 )
+                sameSizeFileCandidateSection
                 if model.isVerifyingDuplicates {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(duplicateProgressTitle)
@@ -3883,7 +3888,171 @@ struct DashboardView: View {
         .background(alignment: .bottom) { Divider() }
     }
 
+    private var sameSizeFileCandidateSection: some View {
+        let currentSummaries = model.sameSizeFileCandidates.values
+            .filter { summary in
+                model.latestFolderObservation(at: summary.rootPath)?.id == summary.folderObservationID
+            }
+            .sorted {
+                if $0.observedAt != $1.observedAt { return $0.observedAt > $1.observedAt }
+                return $0.rootPath.localizedStandardCompare($1.rootPath) == .orderedAscending
+            }
+        let currentRootPaths = currentSummaries.prefix(5)
+            .map(\.rootPath)
+
+        return GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("A complete no-follow inventory can surface regular files of the same logical size (at least 1 MiB). The selected folder may still have partial overall coverage when links or other items are excluded. Candidates are not confirmed duplicates; file contents have not been read.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if currentRootPaths.isEmpty {
+                    Text("A current list requires a complete regular-file inventory. Partial inventories do not create one; excluded links or other items can still leave the selected folder's overall coverage partial.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                ForEach(currentRootPaths, id: \.self) { path in
+                    if let summary = model.sameSizeFileCandidates[path],
+                       let folder = model.latestFolderObservation(at: path),
+                       folder.id == summary.folderObservationID {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Label(folder.displayName, systemImage: "folder")
+                                    .font(.subheadline.weight(.semibold))
+                                Spacer()
+                                Text(summary.observedAt.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(path)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            if summary.excludedSymlinkCount > 0 {
+                                Text(sameSizeCandidateText(
+                                    "%ld symlink entries were excluded; their targets were not followed.",
+                                    Int64(summary.excludedSymlinkCount)
+                                ))
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+                            }
+                            if !folder.complete {
+                                Text("The selected folder has partial overall coverage; this list includes only regular files from the complete no-follow inventory.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+                            }
+                            if summary.groups.isEmpty {
+                                if summary.isCandidateIndexComplete {
+                                    Text(sameSizeCandidateText(
+                                        "No same-size groups at or above 1 MiB were found among %ld indexed regular files.",
+                                        Int64(summary.eligibleFileCount)
+                                    ))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Text("No groups were found in the indexed portion. The candidate index reached its size-bucket limit, so additional matches may be omitted.")
+                                        .font(.caption)
+                                        .foregroundStyle(.orange)
+                                }
+                            } else {
+                                ForEach(Array(summary.groups.prefix(3))) { group in
+                                    sameSizeCandidateGroupRow(group)
+                                }
+                                if summary.groups.count > 3 {
+                                    DisclosureGroup(sameSizeCandidateText(
+                                        "Show %ld more size groups", Int64(summary.groups.count - 3)
+                                    )) {
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            ForEach(Array(summary.groups.dropFirst(3))) { group in
+                                                sameSizeCandidateGroupRow(group)
+                                            }
+                                        }
+                                        .padding(.top, 6)
+                                    }
+                                    .font(.caption)
+                                }
+                                if !summary.isCandidateIndexComplete {
+                                    Text("The bounded candidate index omitted additional size groups or buckets; this list may be incomplete.")
+                                        .font(.caption2)
+                                        .foregroundStyle(.orange)
+                                }
+                            }
+                            HStack {
+                                Spacer()
+                                Button("Choose folders for verification…") {
+                                    chooseDuplicateFolders(
+                                        startingAt: URL(fileURLWithPath: path).deletingLastPathComponent()
+                                    )
+                                }
+                                .controlSize(.small)
+                                .disabled(model.isVerifyingDuplicates || model.isScanning || model.isMeasuringOwnFootprint)
+                            }
+                        }
+                        .padding(.vertical, 8)
+                        Divider()
+                    }
+                }
+                if currentSummaries.count > currentRootPaths.count {
+                    Text("Showing the five most recent complete candidate inventories. Other selected roots remain available in Folders.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } label: {
+            Label("Same-size file candidates", systemImage: "doc.on.doc")
+                .font(.headline)
+        }
+    }
+
+    private func sameSizeCandidateGroupRow(_ group: SameSizeCandidateGroup) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label(sameSizeCandidateText(
+                "Files with logical size %@: %ld",
+                format(group.logicalBytes), Int64(group.fileCount)
+            ), systemImage: "equal.circle")
+                .font(.caption.weight(.medium))
+            ForEach(group.files, id: \.relativePath) { file in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(file.relativePath)
+                        .font(.caption2.monospaced())
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    Spacer(minLength: 4)
+                    Text(sameSizeCandidateText("allocated ~%@", format(file.allocatedBytes)))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if group.omittedFileCount > 0 {
+                Text(sameSizeCandidateText(
+                    "%ld more paths have this logical size.", Int64(group.omittedFileCount)
+                ))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(9)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func sameSizeCandidateText(_ key: String, _ arguments: CVarArg...) -> String {
+        String(
+            format: NSLocalizedString(key, comment: "Same-size file candidate details"),
+            locale: Locale.current,
+            arguments: arguments
+        )
+    }
+
     private func chooseDuplicateFolders() {
+        chooseDuplicateFolders(startingAt: nil)
+    }
+
+    private func chooseDuplicateFolders(startingAt directory: URL?) {
         let panel = NSOpenPanel()
         panel.title = "Choose folders for duplicate verification"
         panel.prompt = "Choose Folders"
@@ -3892,6 +4061,7 @@ struct DashboardView: View {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
         panel.canCreateDirectories = false
+        panel.directoryURL = directory
         guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
         guard panel.urls.count <= DuplicateVerifier.maximumSelectedRootCount else {
             model.errorMessage = "Choose no more than \(DuplicateVerifier.maximumSelectedRootCount) locations for duplicate verification. No file contents were read."

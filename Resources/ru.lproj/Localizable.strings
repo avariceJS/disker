@@ -28,6 +28,22 @@
 "Application bundles" = "Пакеты приложений";
 "Measure the selected .app bundle; associated data is outside this measurement." = "Измеряйте выбранный пакет .app; связанные данные в это измерение не входят.";
 "Disker does not infer support folders, caches, containers, or shared files. Those locations are not included unless you measure them separately, and a bundle total alone is not an uninstall plan." = "Disker не приписывает приложению папки поддержки, кэши, контейнеры и общие файлы автоматически. Они не входят в размер без отдельного измерения, а размер пакета сам по себе не является планом удаления приложения.";
+
+/* Metadata-only same-size duplicate candidates. */
+"Same-size file candidates" = "Файлы одинакового размера";
+"A complete no-follow inventory can surface regular files of the same logical size (at least 1 MiB). The selected folder may still have partial overall coverage when links or other items are excluded. Candidates are not confirmed duplicates; file contents have not been read." = "Полная инвентаризация без перехода по ссылкам может показать обычные файлы одинакового логического размера (от 1 МиБ). Общий охват выбранной папки всё ещё может быть частичным, если ссылки или другие элементы исключены. Это только кандидаты: файлы не подтверждены как дубликаты, их содержимое не читалось.";
+"A current list requires a complete regular-file inventory. Partial inventories do not create one; excluded links or other items can still leave the selected folder's overall coverage partial." = "Для актуального списка нужна полная инвентаризация обычных файлов. Частичная инвентаризация не создаёт такой список; исключённые ссылки и другие элементы могут оставить общий охват папки частичным.";
+"%ld symlink entries were excluded; their targets were not followed." = "Исключено ссылок: %ld; перехода к их целям не было.";
+"The selected folder has partial overall coverage; this list includes only regular files from the complete no-follow inventory." = "Общий охват выбранной папки частичный; в этом списке только обычные файлы из полной инвентаризации без перехода по ссылкам.";
+"No same-size groups at or above 1 MiB were found among %ld indexed regular files." = "Среди проиндексированных обычных файлов (%ld) не найдено групп одинакового размера от 1 МиБ.";
+"No groups were found in the indexed portion. The candidate index reached its size-bucket limit, so additional matches may be omitted." = "В проиндексированной части группы не найдены. Индекс достиг лимита размерных групп, поэтому дополнительные совпадения могли быть пропущены.";
+"The bounded candidate index omitted additional size groups or buckets; this list may be incomplete." = "Ограниченный индекс пропустил дополнительные размерные группы; список может быть неполным.";
+"Show %ld more size groups" = "Показать ещё групп: %ld";
+"Files with logical size %@: %ld" = "Файлов с логическим размером %@: %ld";
+"allocated ~%@" = "на диске около %@";
+"%ld more paths have this logical size." = "Файлов с таким логическим размером ещё: %ld.";
+"Choose folders for verification…" = "Выбрать папки для проверки…";
+"Showing the five most recent complete candidate inventories. Other selected roots remain available in Folders." = "Показаны пять последних полных инвентаризаций кандидатов. Остальные выбранные папки доступны в разделе «Папки».";
 "Choose an Application Bundle…" = "Выбрать пакет приложения…";
 "Discovered applications" = "Найденные приложения";
 "Add Discovery Folder…" = "Добавить папку поиска…";
