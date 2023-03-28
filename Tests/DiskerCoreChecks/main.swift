@@ -39,6 +39,7 @@ private struct DiskerCoreChecks {
             ("explicitly selected app bundle identity read", testApplicationBundleMetadata),
             ("evidence-scoped application container attribution", testApplicationPathAttribution),
             ("explicit application data path probes", testApplicationDataLocationProbe),
+            ("selected app bundle file-growth history", testApplicationBundleFileGrowthHistory),
             ("read-only app footprint review", testApplicationFootprintReview),
             ("measured selected-scope subtotal safety", testApplicationFootprintSubtotal),
             ("read-only application-removal review planner", testApplicationRemovalReviewPlanner),
@@ -1359,6 +1360,81 @@ private struct DiskerCoreChecks {
             try FileManager.default.createDirectory(at: ordinaryFolder, withIntermediateDirectories: false)
             try expect(ApplicationBundleMetadata.identity(fromSelectedBundleAt: ordinaryFolder) == nil,
                        "bundle identity lookup must not inspect non-app folders")
+        }
+    }
+
+    private static func testApplicationBundleFileGrowthHistory() throws {
+        try withTemporaryDirectory { temporaryRoot in
+            let bundle = temporaryRoot.appendingPathComponent("Synthetic.app", isDirectory: true)
+            let contents = bundle.appendingPathComponent("Contents", isDirectory: true)
+            let resources = contents.appendingPathComponent("Resources", isDirectory: true)
+            try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+            let info: [String: Any] = [
+                "CFBundleIdentifier": "com.synthetic.DiskerGrowth",
+                "CFBundlePackageType": "APPL",
+            ]
+            let plist = try PropertyListSerialization.data(
+                fromPropertyList: info, format: .xml, options: 0
+            )
+            try plist.write(to: contents.appendingPathComponent("Info.plist"))
+            let asset = resources.appendingPathComponent("Assets.car")
+            try Data(repeating: 0x11, count: 32).write(to: asset)
+
+            let identity = try requireApplicationIdentity(at: bundle)
+            let firstScan = FolderScanner.scanWithFileInventories(roots: [bundle])
+            guard let firstInventory = firstScan.fileInventories.first,
+                  let firstFolder = firstScan.observation.folders.first else {
+                throw CheckFailure.assertion("a selected synthetic app bundle should produce a folder and file-inventory observation")
+            }
+            let firstObservation = firstScan.observation.includingApplicationBundleIdentities(
+                [bundle.path: identity], selectedApplicationBundlePaths: [bundle.path]
+            )
+            let storeURL = temporaryRoot.appendingPathComponent("local/Disker/file-inventory.plist")
+            let baseline = try FileInventoryStore.record(firstInventory, at: storeURL)
+            try expect(firstObservation.folders.count == 1
+                       && firstObservation.folders[0].path == bundle.path
+                       && firstObservation.folders[0].selectedAsApplicationBundle
+                       && firstObservation.folders[0].applicationBundleIdentifier == identity.bundleIdentifier
+                       && firstFolder.id == firstInventory.folderObservationID
+                       && baseline?.hasBaseline == false,
+                       "the selected bundle should be a single identified root whose first full inventory records a baseline only")
+
+            try Data(repeating: 0x22, count: 80).write(to: asset)
+            let added = resources.appendingPathComponent("Localized.txt")
+            try Data(repeating: 0x33, count: 20).write(to: added)
+            let secondScan = FolderScanner.scanWithFileInventories(roots: [bundle])
+            guard let secondInventory = secondScan.fileInventories.first else {
+                throw CheckFailure.assertion("a second selected bundle scan should produce a comparable inventory")
+            }
+            let secondObservation = secondScan.observation.includingApplicationBundleIdentities(
+                [bundle.path: identity], selectedApplicationBundlePaths: [bundle.path]
+            )
+            guard let currentFolder = secondObservation.folders.first else {
+                throw CheckFailure.assertion("the second selected bundle observation should be retained")
+            }
+            let report = try FileInventoryStore.record(secondInventory, at: storeURL)
+            let measurements = ApplicationBundleIndex.latestMeasurements(in: LocalHistory(observations: [
+                firstObservation, secondObservation,
+            ]))
+            let changesByPath = Dictionary(uniqueKeysWithValues: (report?.changes ?? []).map {
+                ($0.relativePath, $0)
+            })
+            try expect(report?.folderObservationID == secondInventory.folderObservationID
+                       && report?.hasBaseline == true
+                       && report?.netLogicalDelta == 68
+                       && report?.changedPathCount == 2
+                       && report?.folderObservationID == secondObservation.folders.first?.id,
+                       "a second complete bundle inventory should compare against its same-path baseline with exact net logical growth")
+            try expect(changesByPath["Contents/Resources/Assets.car"]?.kind == .resized
+                       && changesByPath["Contents/Resources/Assets.car"]?.logicalDelta == 48
+                       && changesByPath["Contents/Resources/Localized.txt"]?.kind == .added
+                       && changesByPath["Contents/Resources/Localized.txt"]?.logicalDelta == 20,
+                       "bundle growth should retain exact resized and added file paths separately")
+            try expect(measurements.count == 1
+                       && measurements.first?.id == report?.folderObservationID
+                       && measurements[0].complete
+                       && measurements[0].logicalBytes == currentFolder.logicalBytes,
+                       "the Applications detail should resolve the latest selected bundle observation that owns the current change report")
         }
     }
 
