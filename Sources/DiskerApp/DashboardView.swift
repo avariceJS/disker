@@ -2635,6 +2635,15 @@ struct DashboardView: View {
                                 .padding(12)
                                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
                             }
+                            DisclosureGroup {
+                                fileInventoryChangeSection(for: bundle, showHeading: false)
+                                    .padding(.top, 6)
+                            } label: {
+                                Label("File-level changes inside this bundle", systemImage: "doc.badge.arrow.up")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .padding(12)
+                            .background(.orange.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
                             folderHistoryChart(for: bundle)
                         }
                         .padding(16)
@@ -4718,14 +4727,22 @@ struct DashboardView: View {
         .padding(.bottom, 8)
     }
 
-    private func fileInventoryChangeSection(for folder: FolderObservation) -> some View {
+    private func fileInventoryChangeSection(
+        for folder: FolderObservation,
+        showHeading: Bool = true
+    ) -> some View {
         let report = model.fileInventoryReports[folder.path]
         let reportMatchesCurrentScan = report?.folderObservationID == folder.id
         return VStack(alignment: .leading, spacing: 7) {
-            Label("File changes across the selected folder", systemImage: "arrow.up.arrow.down")
-                .font(.caption.weight(.semibold))
+            if showHeading {
+                Label("File changes across the selected folder", systemImage: "arrow.up.arrow.down")
+                    .font(.caption.weight(.semibold))
+            }
             if !reportMatchesCurrentScan {
-                Text("\(fileInventoryIncompleteness(for: folder)) Disker keeps the prior baseline and will compare again after a complete scan. Symlink targets are excluded.")
+                let followUp = report == nil
+                    ? "No complete file-level baseline is available for this observation. A later scan that records a complete inventory can establish one; earlier changes cannot be reconstructed."
+                    : "The prior complete report remains stored; Disker can compare again after a later complete inventory."
+                Text("\(fileInventoryIncompleteness(for: folder)) \(followUp) Symlink targets are excluded.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
