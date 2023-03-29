@@ -6,6 +6,8 @@ import Observation
 @MainActor
 @Observable
 final class ApplicationDiscoveryModel {
+    private static let launchServicesLastOpenedAttribute = "kMDItemLastUsedDate"
+
     private(set) var candidates: [ApplicationDiscoveryCandidate] = []
     private(set) var searchableCandidates: [ApplicationDiscoveryCandidate] = []
     private(set) var history: [ApplicationDiscoveryRecord] = []
@@ -269,7 +271,14 @@ final class ApplicationDiscoveryModel {
             guard Self.isRealDirectory(url) else { continue }
             let name = (item.value(forAttribute: NSMetadataItemDisplayNameKey) as? String)
                 ?? url.deletingPathExtension().lastPathComponent
-            raw.append(ApplicationDiscoveryCandidate(path: url.path, displayName: name))
+            let launchServicesLastOpenedAt = item.attributes.contains(Self.launchServicesLastOpenedAttribute)
+                ? item.value(forAttribute: Self.launchServicesLastOpenedAttribute) as? Date
+                : nil
+            raw.append(ApplicationDiscoveryCandidate(
+                path: url.path,
+                displayName: name,
+                launchServicesLastOpenedAt: launchServicesLastOpenedAt
+            ))
         }
         let scoped = ApplicationBundleIndex.scopedCandidateSample(
             raw, within: scopePaths, limit: maximumDisplayedResults

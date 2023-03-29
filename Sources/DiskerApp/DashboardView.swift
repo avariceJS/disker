@@ -2705,6 +2705,10 @@ struct DashboardView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            Text("When Spotlight provides it, Disker shows the last date Launch Services opened a bundle. Missing dates mean unknown; launches outside Launch Services may not appear.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             if !applicationDiscovery.userSelectedScopePaths.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Additional Spotlight folders")
@@ -2842,6 +2846,11 @@ struct DashboardView: View {
                                 Text("First seen by Disker · \(record.firstSeenAt.formatted(date: .abbreviated, time: .shortened))")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
+                                if let lastOpened = record.launchServicesLastOpenedAt {
+                                    Text("Launch Services last-open date · \(lastOpened.formatted(date: .abbreviated, time: .shortened))")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                             if let measurement {
                                 HStack(spacing: 6) {

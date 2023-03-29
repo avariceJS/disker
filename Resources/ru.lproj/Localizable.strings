@@ -46,6 +46,8 @@
 "Showing the five most recent complete candidate inventories. Other selected roots remain available in Folders." = "Показаны пять последних полных инвентаризаций кандидатов. Остальные выбранные папки доступны в разделе «Папки».";
 "Choose an Application Bundle…" = "Выбрать пакет приложения…";
 "Discovered applications" = "Найденные приложения";
+"When Spotlight provides it, Disker shows the last date Launch Services opened a bundle. Missing dates mean unknown; launches outside Launch Services may not appear." = "Если Spotlight предоставляет эти сведения, Disker показывает дату последнего открытия пакета через Launch Services. Если даты нет, она неизвестна; запуски в обход Launch Services могут не отображаться.";
+"Launch Services last-open date · %@" = "Последнее открытие через Launch Services · %@";
 "Add Discovery Folder…" = "Добавить папку поиска…";
 "Additional Spotlight folders" = "Дополнительные папки Spotlight";
 "Remove" = "Удалить";
