@@ -6,26 +6,34 @@ public struct ApplicationDiscoveryRecord: Codable, Equatable, Identifiable, Send
     public let displayName: String
     public let firstSeenAt: Date
     public let lastSeenAt: Date
+    /// Most recent Launch Services open date exposed by Spotlight, if available.
+    public let launchServicesLastOpenedAt: Date?
 
     public var id: String { path }
 
-    public init(path: String, displayName: String, firstSeenAt: Date, lastSeenAt: Date) {
+    public init(
+        path: String, displayName: String, firstSeenAt: Date, lastSeenAt: Date,
+        launchServicesLastOpenedAt: Date? = nil
+    ) {
         self.path = path
         self.displayName = displayName
         self.firstSeenAt = firstSeenAt
         self.lastSeenAt = lastSeenAt
+        self.launchServicesLastOpenedAt = launchServicesLastOpenedAt
     }
 }
 
 public struct ApplicationDiscoveryCandidate: Equatable, Identifiable, Sendable {
     public let path: String
     public let displayName: String
+    public let launchServicesLastOpenedAt: Date?
 
     public var id: String { path }
 
-    public init(path: String, displayName: String) {
+    public init(path: String, displayName: String, launchServicesLastOpenedAt: Date? = nil) {
         self.path = path
         self.displayName = displayName
+        self.launchServicesLastOpenedAt = launchServicesLastOpenedAt
     }
 }
 
@@ -67,17 +75,28 @@ public enum ApplicationBundleIndex {
     ) -> [ApplicationDiscoveryCandidate] {
         guard limit > 0 else { return [] }
         let normalizedScopes = Set(scopes.map { URL(fileURLWithPath: $0).standardizedFileURL.path })
-        var seen = Set<String>()
-        return candidates.compactMap { candidate in
+        var byPath: [String: ApplicationDiscoveryCandidate] = [:]
+        for candidate in candidates {
             let path = URL(fileURLWithPath: candidate.path).standardizedFileURL.path
             guard URL(fileURLWithPath: path).pathExtension.lowercased() == "app",
                   !URL(fileURLWithPath: path).pathComponents.dropLast().contains(where: { $0.lowercased().hasSuffix(".app") }),
-                  normalizedScopes.contains(where: { isDescendant(path, of: $0) }),
-                  seen.insert(path).inserted
-            else { return nil }
-            return ApplicationDiscoveryCandidate(path: path, displayName: candidate.displayName)
+                  normalizedScopes.contains(where: { isDescendant(path, of: $0) }) else { continue }
+            guard let previous = byPath[path] else {
+                byPath[path] = ApplicationDiscoveryCandidate(
+                    path: path, displayName: candidate.displayName,
+                    launchServicesLastOpenedAt: candidate.launchServicesLastOpenedAt
+                )
+                continue
+            }
+            if let newDate = candidate.launchServicesLastOpenedAt,
+               previous.launchServicesLastOpenedAt.map({ newDate > $0 }) ?? true {
+                byPath[path] = ApplicationDiscoveryCandidate(
+                    path: path, displayName: previous.displayName,
+                    launchServicesLastOpenedAt: newDate
+                )
+            }
         }
-        .sorted {
+        return byPath.values.sorted {
             let order = $0.displayName.localizedStandardCompare($1.displayName)
             return order == .orderedSame ? $0.path < $1.path : order == .orderedAscending
         }
@@ -132,9 +151,17 @@ public enum ApplicationBundleIndex {
                   !URL(fileURLWithPath: normalizedPath).pathComponents.dropLast().contains(where: { $0.lowercased().hasSuffix(".app") })
             else { continue }
             let old = byPath[normalizedPath]
+            let launchServicesLastOpenedAt: Date?
+            switch (candidate.launchServicesLastOpenedAt, old?.launchServicesLastOpenedAt) {
+            case let (observed?, previous?): launchServicesLastOpenedAt = max(observed, previous)
+            case let (observed?, nil): launchServicesLastOpenedAt = observed
+            case let (nil, previous?): launchServicesLastOpenedAt = previous
+            case (nil, nil): launchServicesLastOpenedAt = nil
+            }
             byPath[normalizedPath] = ApplicationDiscoveryRecord(
                 path: normalizedPath, displayName: candidate.displayName,
-                firstSeenAt: old?.firstSeenAt ?? date, lastSeenAt: date
+                firstSeenAt: old?.firstSeenAt ?? date, lastSeenAt: date,
+                launchServicesLastOpenedAt: launchServicesLastOpenedAt
             )
         }
         return byPath.values.sorted {

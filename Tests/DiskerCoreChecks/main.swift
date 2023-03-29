@@ -567,6 +567,22 @@ private struct DiskerCoreChecks {
         try expect(filtered.map(\.path) == [
             "/Applications/Alpha.app", "/Applications/Folder/Deep.app", "/Users/example/Applications/User.app",
         ], "discovery must keep only deduplicated .app results lexically within explicit scopes")
+        let olderLaunch = Date(timeIntervalSince1970: 25)
+        let newerLaunch = Date(timeIntervalSince1970: 35)
+        let mergedLaunchMetadata = ApplicationBundleIndex.scopedCandidates([
+            ApplicationDiscoveryCandidate(path: "/Applications/Alpha.app", displayName: "Alpha"),
+            ApplicationDiscoveryCandidate(
+                path: "/Applications/Alpha.app", displayName: "Alpha index copy",
+                launchServicesLastOpenedAt: olderLaunch
+            ),
+            ApplicationDiscoveryCandidate(
+                path: "/Applications/Alpha.app", displayName: "Alpha latest index copy",
+                launchServicesLastOpenedAt: newerLaunch
+            )
+        ], within: ["/Applications"])
+        try expect(mergedLaunchMetadata.count == 1
+                   && mergedLaunchMetadata[0].launchServicesLastOpenedAt == newerLaunch,
+                   "duplicate scoped results should keep the most recent available Launch Services date")
         try expect(ApplicationBundleIndex.scopedCandidates(candidates, within: scopes, limit: 2).count == 2,
                    "discovery results must honor the requested display bound")
         let overLimit = (0...2).map { index in
@@ -637,6 +653,53 @@ private struct DiskerCoreChecks {
                    "discovery history must remain bounded and keep the most recently observed paths")
         try expect(ApplicationBundleIndex.updatingDiscoveryHistory(initial, with: [], at: later, limit: 0).isEmpty,
                    "a zero retention bound must retain no discovery records")
+
+        let launchServicesOpen = Date(timeIntervalSince1970: 15)
+        let withUsageEvidence = ApplicationBundleIndex.updatingDiscoveryHistory(
+            [],
+            with: [ApplicationDiscoveryCandidate(
+                path: filtered[0].path, displayName: filtered[0].displayName,
+                launchServicesLastOpenedAt: launchServicesOpen
+            )],
+            at: later
+        )
+        let missingUsageEvidence = ApplicationBundleIndex.updatingDiscoveryHistory(
+            withUsageEvidence, with: [filtered[0]], at: later.addingTimeInterval(10)
+        )
+        try expect(withUsageEvidence.first?.launchServicesLastOpenedAt == launchServicesOpen
+                   && missingUsageEvidence.first?.launchServicesLastOpenedAt == launchServicesOpen,
+                   "a missing Spotlight usage date must remain unknown for new apps and must not erase the last known date")
+        let refreshedLaunch = Date(timeIntervalSince1970: 30)
+        let refreshedUsageEvidence = ApplicationBundleIndex.updatingDiscoveryHistory(
+            missingUsageEvidence,
+            with: [ApplicationDiscoveryCandidate(
+                path: filtered[0].path, displayName: filtered[0].displayName,
+                launchServicesLastOpenedAt: refreshedLaunch
+            )],
+            at: later.addingTimeInterval(20)
+        )
+        try expect(refreshedUsageEvidence.first?.launchServicesLastOpenedAt == refreshedLaunch,
+                   "a newer Launch Services date from Spotlight should refresh the last known usage evidence")
+        let staleUsageEvidence = ApplicationBundleIndex.updatingDiscoveryHistory(
+            refreshedUsageEvidence,
+            with: [ApplicationDiscoveryCandidate(
+                path: filtered[0].path, displayName: filtered[0].displayName,
+                launchServicesLastOpenedAt: launchServicesOpen
+            )],
+            at: later.addingTimeInterval(30)
+        )
+        try expect(staleUsageEvidence.first?.launchServicesLastOpenedAt == refreshedLaunch,
+                   "an older Spotlight usage date must not replace a newer last-known open date")
+        let encodedEvidence = try JSONEncoder().encode(refreshedUsageEvidence[0])
+        let decodedEvidence = try JSONDecoder().decode(ApplicationDiscoveryRecord.self, from: encodedEvidence)
+        try expect(decodedEvidence.launchServicesLastOpenedAt == refreshedLaunch,
+                   "Launch Services usage evidence should survive local history encoding")
+        let legacyDiscoveryRecord = #"{"path":"/Applications/Legacy.app","displayName":"Legacy","firstSeenAt":10,"lastSeenAt":20}"#
+        let decodedLegacyDiscovery = try JSONDecoder().decode(
+            ApplicationDiscoveryRecord.self, from: Data(legacyDiscoveryRecord.utf8)
+        )
+        try expect(decodedLegacyDiscovery.launchServicesLastOpenedAt == nil,
+                   "older discovery history without usage evidence must remain readable and unknown")
     }
 
     private static func testApplicationPathAttribution() throws {
