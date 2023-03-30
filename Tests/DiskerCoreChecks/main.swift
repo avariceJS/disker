@@ -44,6 +44,8 @@ private struct DiskerCoreChecks {
             ("measured selected-scope subtotal safety", testApplicationFootprintSubtotal),
             ("read-only application-removal review planner", testApplicationRemovalReviewPlanner),
             ("explicit app-folder associations", testApplicationFolderAssociations),
+            ("bounded explicit project-resource associations", testProjectResourceAssociations),
+            ("project resource review preserves scope and coverage evidence", testProjectResourceReview),
             ("bounded read-only selected-scope bookmarks", testSelectedScopeBookmarks),
             ("bounded persisted selected-root monitoring choices", testStorageMonitoringPreferences),
             ("typed no-follow selected-scope path probe", testSelectedScopePathProbeStatuses),
@@ -1547,6 +1549,143 @@ private struct DiskerCoreChecks {
                        "one app association should retain no more than 50 selected folder paths")
             try expect(bounded.adding(["/synthetic/overflow"]) == nil,
                        "adding a 51st unique folder should fail instead of silently dropping a saved link")
+        }
+    }
+
+    private static func testProjectResourceAssociations() throws {
+        try withTemporaryDirectory { root in
+            let selectedProject = root.appendingPathComponent("selected-project", isDirectory: true)
+            let resources = root.appendingPathComponent("external-resources", isDirectory: true)
+            try FileManager.default.createDirectory(at: selectedProject, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+            let sentinel = resources.appendingPathComponent("unique.sqlite")
+            let sentinelContents = Data("synthetic project state".utf8)
+            try sentinelContents.write(to: sentinel)
+            let fileURL = root.appendingPathComponent("Disker/observations.json")
+
+            do {
+                try ObservationStore.associateProjectFolders(
+                    ["/synthetic/resource"], with: "relative/project", to: fileURL
+                )
+                throw CheckFailure.assertion("the project link store should reject relative root identities")
+            } catch ProjectResourceAssociationError.invalidPath {
+                // Expected: links are keyed only by exact absolute filesystem paths.
+            }
+
+            try ObservationStore.associateProjectFolders(
+                [resources.path, resources.path, selectedProject.path + "/./nested"],
+                with: selectedProject.path,
+                to: fileURL
+            )
+            try ObservationStore.associateProjectFolders(
+                ["/synthetic/second-resource"], with: selectedProject.path, to: fileURL
+            )
+            var history = try ObservationStore.load(from: fileURL)
+            try expect(history.projectResourceAssociations.count == 1,
+                       "explicitly linked resources should be grouped under the exact selected project root")
+            try expect(history.projectResourceAssociations[0].projectRootPath == selectedProject.path,
+                       "project identity should use the standardized selected path")
+            let linkedPaths = history.projectResourceAssociations[0].relatedFolderPaths
+            try expect(linkedPaths.count == 3
+                       && Set(linkedPaths) == Set([
+                        selectedProject.path + "/nested", resources.path, "/synthetic/second-resource"
+                       ])
+                       && linkedPaths == linkedPaths.sorted(),
+                       "project resource paths should be standardized, deduplicated, and deterministically ordered")
+
+            history = try ObservationStore.removeProjectFolderAssociation(
+                resources.path, from: selectedProject.path, at: fileURL
+            )
+            try expect(Set(history.projectResourceAssociations[0].relatedFolderPaths) == Set([
+                selectedProject.path + "/nested", "/synthetic/second-resource"
+            ]), "unlinking should remove only the selected relationship")
+            let fileAfterAssociation = try Data(contentsOf: sentinel)
+            try expect(fileAfterAssociation == sentinelContents,
+                       "creating or removing a relationship must leave linked-folder contents unchanged")
+
+            let bounded = try ProjectResourceAssociation(
+                projectRootPath: "/synthetic/project",
+                relatedFolderPaths: (0..<ProjectResourceAssociation.maximumRelatedFolderCount)
+                    .map { "/synthetic/resources/\($0)" }
+            )
+            do {
+                _ = try bounded.adding(["/synthetic/resources/overflow"])
+                throw CheckFailure.assertion("adding a 51st unique project resource path should fail")
+            } catch ProjectResourceAssociationError.tooManyRelatedFolders {
+                // Expected: existing path relationships must not be silently dropped.
+            }
+            do {
+                _ = try ProjectResourceAssociation(projectRootPath: "relative/project", relatedFolderPaths: [])
+                throw CheckFailure.assertion("relative project roots should be rejected")
+            } catch ProjectResourceAssociationError.invalidPath {
+                // Expected: stored identities must be exact absolute filesystem paths.
+            }
+
+            let boundedStoreURL = root.appendingPathComponent("bounded-projects/observations.json")
+            for index in 0..<ObservationStore.maximumProjectResourceAssociationCount {
+                try ObservationStore.associateProjectFolders(
+                    ["/synthetic/resource"],
+                    with: "/synthetic/projects/\(index)",
+                    to: boundedStoreURL
+                )
+            }
+            do {
+                try ObservationStore.associateProjectFolders(
+                    ["/synthetic/resource"],
+                    with: "/synthetic/projects/overflow",
+                    to: boundedStoreURL
+                )
+                throw CheckFailure.assertion("the project resource store should enforce its root-count bound")
+            } catch ProjectResourceAssociationError.tooManyProjectRoots {
+                // Expected: persisted project relationships must remain bounded.
+            }
+        }
+    }
+
+    private static func testProjectResourceReview() throws {
+        try withTemporaryDirectory { base in
+            let project = base.appendingPathComponent("project", isDirectory: true)
+            let shared = base.appendingPathComponent("shared-data", isDirectory: true)
+            let partial = base.appendingPathComponent("partial-data", isDirectory: true)
+            let nested = project.appendingPathComponent("nested-resource", isDirectory: true)
+            for directory in [project, shared, partial, nested] {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try Data("synthetic".utf8).write(to: directory.appendingPathComponent("sample.bin"))
+            }
+            let fileURL = base.appendingPathComponent("Disker/observations.json")
+            let completeScan = FolderScanner.scan(roots: [project, shared, partial])
+            try ObservationStore.append(completeScan, to: fileURL)
+            let excludedTarget = base.appendingPathComponent("outside-target", isDirectory: true)
+            try FileManager.default.createDirectory(at: excludedTarget, withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(
+                at: partial.appendingPathComponent("excluded-link"), withDestinationURL: excludedTarget
+            )
+            let newerPartialScan = FolderScanner.scan(roots: [partial])
+            try ObservationStore.append(newerPartialScan, to: fileURL)
+            try ObservationStore.associateProjectFolders(
+                [shared.path, partial.path, base.appendingPathComponent("not-measured").path, nested.path],
+                with: project.path, to: fileURL
+            )
+            try ObservationStore.associateProjectFolders(
+                [shared.path], with: base.appendingPathComponent("other-project").path, to: fileURL
+            )
+
+            let history = try ObservationStore.load(from: fileURL)
+            let review = ProjectResourceReview.make(for: project.path, in: history)
+            try expect(review.entries.count == 5, "review should include the selected root and every explicitly linked path")
+            let byPath = Dictionary(uniqueKeysWithValues: review.entries.map { ($0.path, $0) })
+            try expect(byPath[project.path]?.observation?.complete == true,
+                       "the selected project root should show its exact measured coverage")
+            try expect(byPath[shared.path]?.isSharedLink == true,
+                       "a path linked from another project should be visibly identified as shared association context")
+            try expect(byPath[partial.path]?.observation?.complete == false,
+                       "partial selected resources must remain partial in the project view")
+            try expect(byPath[base.appendingPathComponent("not-measured").path]?.observation == nil,
+                       "a linked path with no observation must remain unmeasured rather than zero")
+            try expect(byPath[nested.path]?.overlappingPaths == [project.path],
+                       "nested project resources should disclose lexical overlap with the selected root")
+            try expect(review.entries.allSatisfy { $0.observation?.logicalBytes ?? 0 >= 0 },
+                       "the review should expose measurements only per path and must not fabricate an aggregate")
         }
     }
 
@@ -4186,6 +4325,8 @@ private struct DiskerCoreChecks {
                    "old history should preserve application associations when decoding the added optional bundle identifier")
         try expect(history.applicationAssociations.first?.bundleIdentifier == nil,
                    "legacy app-folder associations without an identifier must remain unverified")
+        try expect(history.projectResourceAssociations.isEmpty,
+                   "history written before project resource links should decode without inventing associations")
         try expect(folder.subdirectorySummaries.count == 1, "old folder history should preserve existing directory summaries")
         try expect(folder.subdirectorySummaries[0].changedDuringScanCount == 0, "old directory summaries should default mutation count to zero")
         try expect(folder.subdirectorySummaries[0].excludedSpecialFileCount == 0, "old directory summaries should default special-file count to zero")

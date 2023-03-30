@@ -6,6 +6,7 @@ public struct LocalHistory: Codable, Sendable {
     public var memoryPressureObservations: [MemoryPressureObservation]
     public var capacityObservations: [CapacityObservation]
     public var applicationAssociations: [ApplicationFolderAssociation]
+    public var projectResourceAssociations: [ProjectResourceAssociation]
     public var discoveredApplications: [ApplicationDiscoveryRecord]
 
     public init(
@@ -13,6 +14,7 @@ public struct LocalHistory: Codable, Sendable {
         memoryPressureObservations: [MemoryPressureObservation] = [],
         capacityObservations: [CapacityObservation] = [],
         applicationAssociations: [ApplicationFolderAssociation] = [],
+        projectResourceAssociations: [ProjectResourceAssociation] = [],
         discoveredApplications: [ApplicationDiscoveryRecord] = []
     ) {
         self.observations = observations
@@ -20,12 +22,13 @@ public struct LocalHistory: Codable, Sendable {
         self.memoryPressureObservations = memoryPressureObservations
         self.capacityObservations = capacityObservations
         self.applicationAssociations = applicationAssociations
+        self.projectResourceAssociations = projectResourceAssociations
         self.discoveredApplications = discoveredApplications
     }
 
     private enum CodingKeys: String, CodingKey {
         case observations, ramObservations, memoryPressureObservations
-        case capacityObservations, applicationAssociations, discoveredApplications
+        case capacityObservations, applicationAssociations, projectResourceAssociations, discoveredApplications
     }
 
     public init(from decoder: Decoder) throws {
@@ -37,6 +40,9 @@ public struct LocalHistory: Codable, Sendable {
         ) ?? []
         capacityObservations = try values.decodeIfPresent([CapacityObservation].self, forKey: .capacityObservations) ?? []
         applicationAssociations = try values.decodeIfPresent([ApplicationFolderAssociation].self, forKey: .applicationAssociations) ?? []
+        projectResourceAssociations = try values.decodeIfPresent(
+            [ProjectResourceAssociation].self, forKey: .projectResourceAssociations
+        ) ?? []
         discoveredApplications = try values.decodeIfPresent([ApplicationDiscoveryRecord].self, forKey: .discoveredApplications) ?? []
     }
 
@@ -47,6 +53,7 @@ public struct LocalHistory: Codable, Sendable {
         try values.encode(memoryPressureObservations, forKey: .memoryPressureObservations)
         try values.encode(capacityObservations, forKey: .capacityObservations)
         try values.encode(applicationAssociations, forKey: .applicationAssociations)
+        try values.encode(projectResourceAssociations, forKey: .projectResourceAssociations)
         try values.encode(discoveredApplications, forKey: .discoveredApplications)
     }
 }
@@ -54,6 +61,7 @@ public struct LocalHistory: Codable, Sendable {
 public enum ObservationStore {
     private static let fileName = "observations.json"
     private static let maximumObservationCount = 180
+    public static let maximumProjectResourceAssociationCount = 100
     private static let maximumHistoryFileSize = 256 * 1024 * 1024
     private static let maximumApplicationDiscoveryRecords = ApplicationBundleIndex.maximumPersistedDiscoveryRecords
 
@@ -72,6 +80,9 @@ public enum ObservationStore {
             history.capacityObservations = Array(history.capacityObservations.suffix(maximumObservationCount))
             history.applicationAssociations = Array(
                 history.applicationAssociations.suffix(maximumObservationCount)
+            )
+            history.projectResourceAssociations = Array(
+                history.projectResourceAssociations.suffix(maximumProjectResourceAssociationCount)
             )
             history.discoveredApplications = Array(
                 history.discoveredApplications.sorted {
@@ -168,6 +179,56 @@ public enum ObservationStore {
             history.applicationAssociations[index] = remaining
         } else {
             history.applicationAssociations.remove(at: index)
+        }
+        try save(history, fileURL: fileURL)
+        return history
+    }
+
+    @discardableResult
+    public static func associateProjectFolders(
+        _ paths: [String], with projectRootPath: String, to fileURL: URL? = nil
+    ) throws -> LocalHistory {
+        var history = try load(from: fileURL)
+        guard !paths.isEmpty else { return history }
+        let standardizedRoot = try ProjectResourceAssociation(
+            projectRootPath: projectRootPath,
+            relatedFolderPaths: []
+        ).projectRootPath
+        if let index = history.projectResourceAssociations.firstIndex(where: {
+            URL(fileURLWithPath: $0.projectRootPath, isDirectory: true).standardizedFileURL.path == standardizedRoot
+        }) {
+            history.projectResourceAssociations[index] = try history.projectResourceAssociations[index].adding(paths)
+        } else {
+            guard history.projectResourceAssociations.count < maximumProjectResourceAssociationCount else {
+                throw ProjectResourceAssociationError.tooManyProjectRoots
+            }
+            history.projectResourceAssociations.append(try ProjectResourceAssociation(
+                projectRootPath: standardizedRoot,
+                relatedFolderPaths: paths
+            ))
+        }
+        try save(history, fileURL: fileURL)
+        return history
+    }
+
+    @discardableResult
+    public static func removeProjectFolderAssociation(
+        _ path: String, from projectRootPath: String, at fileURL: URL? = nil
+    ) throws -> LocalHistory {
+        var history = try load(from: fileURL)
+        let standardizedRoot = try ProjectResourceAssociation(
+            projectRootPath: projectRootPath,
+            relatedFolderPaths: []
+        ).projectRootPath
+        guard let index = history.projectResourceAssociations.firstIndex(where: {
+            URL(fileURLWithPath: $0.projectRootPath, isDirectory: true).standardizedFileURL.path == standardizedRoot
+        }) else { return history }
+        if let remaining = history.projectResourceAssociations[index].removing(path) {
+            if remaining.relatedFolderPaths.isEmpty {
+                history.projectResourceAssociations.remove(at: index)
+            } else {
+                history.projectResourceAssociations[index] = remaining
+            }
         }
         try save(history, fileURL: fileURL)
         return history
