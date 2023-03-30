@@ -219,6 +219,9 @@ final class DashboardModel {
     var applicationAssociatedPathStatuses: [String: SelectedScopePathProbe.Status] = [:]
     var checkingApplicationAssociatedPaths = Set<String>()
     private var applicationAssociatedPathCheckIDs: [String: UUID] = [:]
+    var projectResourcePathStatuses: [String: SelectedScopePathProbe.Status] = [:]
+    var checkingProjectResourcePaths = Set<String>()
+    private var projectResourcePathCheckIDs: [String: UUID] = [:]
     var errorMessage: String?
     var currentPath = ""
     var countedFileObjects = 0
@@ -640,8 +643,32 @@ final class DashboardModel {
     func removeProjectResourceFolder(_ path: String, from projectRootPath: String) {
         do {
             history = try ObservationStore.removeProjectFolderAssociation(path, from: projectRootPath)
+            projectResourcePathCheckIDs.removeValue(forKey: path)
+            checkingProjectResourcePaths.remove(path)
+            projectResourcePathStatuses.removeValue(forKey: path)
         } catch {
             errorMessage = "The project resource link could not be removed: \(error.localizedDescription)"
+        }
+    }
+
+    func checkProjectResourcePath(_ path: String) {
+        let expectedPath = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path
+        guard checkingProjectResourcePaths.insert(expectedPath).inserted else { return }
+        let requestID = UUID()
+        projectResourcePathCheckIDs[expectedPath] = requestID
+        projectResourcePathStatuses.removeValue(forKey: expectedPath)
+        let generation = historyGeneration.token()
+        let bookmark = rememberedScopes.first(where: { $0.path == expectedPath })
+        let task = Task.detached(priority: .utility) {
+            SelectedScopePathProbe.probe(at: expectedPath, using: bookmark)
+        }
+        Task {
+            let status = await task.value
+            guard projectResourcePathCheckIDs[expectedPath] == requestID,
+                  historyGeneration.accepts(generation) else { return }
+            projectResourcePathCheckIDs.removeValue(forKey: expectedPath)
+            checkingProjectResourcePaths.remove(expectedPath)
+            projectResourcePathStatuses[expectedPath] = status
         }
     }
 
@@ -649,6 +676,11 @@ final class DashboardModel {
         do {
             rememberedScopes = try SelectedScopeBookmarkStore.remember(urls)
             let updatedPaths = Set(urls.map { $0.standardizedFileURL.path })
+            for path in updatedPaths {
+                projectResourcePathCheckIDs.removeValue(forKey: path)
+                checkingProjectResourcePaths.remove(path)
+                projectResourcePathStatuses.removeValue(forKey: path)
+            }
             let affectedBundles = history.applicationAssociations.filter { association in
                 association.relatedFolderPaths.contains(where: {
                     updatedPaths.contains(URL(fileURLWithPath: $0).standardizedFileURL.path)
@@ -744,6 +776,9 @@ final class DashboardModel {
         do {
             rememberedScopes = try SelectedScopeBookmarkStore.remove(path: path)
             removeStorageMonitoringState(for: path)
+            projectResourcePathCheckIDs.removeValue(forKey: path)
+            checkingProjectResourcePaths.remove(path)
+            projectResourcePathStatuses.removeValue(forKey: path)
         } catch {
             errorMessage = "The saved folder could not be forgotten: \(error.localizedDescription)"
         }
@@ -1283,6 +1318,9 @@ final class DashboardModel {
         applicationAssociatedPathStatuses = [:]
         checkingApplicationAssociatedPaths = []
         applicationAssociatedPathCheckIDs = [:]
+        projectResourcePathStatuses = [:]
+        checkingProjectResourcePaths = []
+        projectResourcePathCheckIDs = [:]
         scanTask?.cancel()
         ownFootprintRequestID = UUID()
         ownFootprintTask?.cancel()
@@ -2544,7 +2582,7 @@ struct DashboardView: View {
                                 .disabled(isCheckingPath || model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
                                 .help("Check only the exact app bundle path last measured; no folders are scanned")
                             }
-                            if let pathStatus, pathStatus != .availableDirectory, !relatedPaths.isEmpty {
+                            if let pathStatus, !pathStatus.isAvailableDirectory, !relatedPaths.isEmpty {
                                 VStack(alignment: .leading, spacing: 10) {
                                     Label {
                                         VStack(alignment: .leading, spacing: 4) {
@@ -2595,7 +2633,7 @@ struct DashboardView: View {
                                                             .font(.caption)
                                                             .foregroundStyle(associatedPathStatusColor(status))
                                                         HStack(spacing: 12) {
-                                                            if status == .availableDirectory {
+                                                            if status.isAvailableDirectory {
                                                                 Button("Reveal in Finder") {
                                                                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
                                                                 }
@@ -3697,7 +3735,7 @@ struct DashboardView: View {
                                             : candidateStatus == nil ? "Check exact path" : "Check again"
                                     )
                                     Button("Choose to measure…") {
-                                        let startingPath = candidateStatus == .availableDirectory
+                                        let startingPath = candidateStatus?.isAvailableDirectory == true
                                             ? suggestion.path
                                             : URL(fileURLWithPath: suggestion.path).deletingLastPathComponent().path
                                         model.chooseRelatedFolders(
@@ -3723,6 +3761,8 @@ struct DashboardView: View {
         switch status {
         case .availableDirectory:
             "Bundle directory exists · contents not checked"
+        case .availableDirectoryWithinBookmarkScope:
+            "Selected bundle directory is available · ancestor paths were not checked"
         case .missingOrUnreachable:
             "Bundle path not found or its volume is unavailable · absence is unconfirmed"
         case .permissionOrAccessUnknown:
@@ -3744,6 +3784,8 @@ struct DashboardView: View {
         switch status {
         case .availableDirectory:
             "Folder exists · contents not checked"
+        case .availableDirectoryWithinBookmarkScope:
+            "Selected folder is available · ancestor paths were not checked"
         case .missingOrUnreachable:
             "Path not found or its volume is unavailable · absence is unconfirmed"
         case .permissionOrAccessUnknown:
@@ -3761,12 +3803,42 @@ struct DashboardView: View {
         }
     }
 
+    private func projectResourcePathStatusText(_ status: SelectedScopePathProbe.Status) -> String {
+        let key: String
+        switch status {
+        case .availableDirectory:
+            key = "Project location is available as a directory · contents not checked"
+        case .availableDirectoryWithinBookmarkScope:
+            key = "Selected project folder is available · ancestor paths were not checked"
+        case .missingOrUnreachable:
+            key = "Project location not found or volume unavailable · absence unconfirmed"
+        case .permissionOrAccessUnknown:
+            key = "Project location access could not be confirmed · presence unknown"
+        case .notDirectory:
+            key = "The exact project location is not a directory"
+        case .symbolicLink:
+            key = "Project location is a symbolic link · not followed"
+        case .invalidBookmark:
+            key = "Saved project access could not be read · select the same folder again"
+        case .staleBookmark:
+            key = "Saved project access is stale · select the same folder again"
+        case .mismatchedBookmark:
+            key = "Saved project access resolves elsewhere · no check was performed"
+        }
+        return NSLocalizedString(key, comment: "Read-only status for the exact path of a linked project resource")
+    }
+
     private func applicationDataLocationStatusText(_ status: SelectedScopePathProbe.Status) -> String {
         switch status {
         case .availableDirectory:
             NSLocalizedString(
                 "Suggested folder exists · contents not checked",
                 comment: "Exact application data folder path exists; contents were not scanned"
+            )
+        case .availableDirectoryWithinBookmarkScope:
+            NSLocalizedString(
+                "Selected folder is available · ancestor paths were not checked",
+                comment: "The selected application data folder is available through its bookmark; sandbox hid ancestor paths"
             )
         case .missingOrUnreachable:
             NSLocalizedString(
@@ -3808,7 +3880,7 @@ struct DashboardView: View {
 
     private func associatedPathStatusSymbol(_ status: SelectedScopePathProbe.Status) -> String {
         switch status {
-        case .availableDirectory: "checkmark.circle"
+        case .availableDirectory, .availableDirectoryWithinBookmarkScope: "checkmark.circle"
         case .missingOrUnreachable: "questionmark.folder"
         case .permissionOrAccessUnknown, .invalidBookmark, .staleBookmark, .mismatchedBookmark:
             "exclamationmark.triangle"
@@ -3818,14 +3890,15 @@ struct DashboardView: View {
     }
 
     private func associatedPathStatusColor(_ status: SelectedScopePathProbe.Status) -> Color {
-        status == .availableDirectory ? .green : .orange
+        status.isAvailableDirectory ? .green : .orange
     }
 
     private func associatedPathNeedsReselection(_ status: SelectedScopePathProbe.Status) -> Bool {
         switch status {
         case .permissionOrAccessUnknown, .invalidBookmark, .staleBookmark, .mismatchedBookmark:
             true
-        case .availableDirectory, .missingOrUnreachable, .notDirectory, .symbolicLink:
+        case .availableDirectory, .availableDirectoryWithinBookmarkScope,
+             .missingOrUnreachable, .notDirectory, .symbolicLink:
             false
         }
     }
@@ -5152,8 +5225,43 @@ struct DashboardView: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
+                if model.checkingProjectResourcePaths.contains(entry.path) {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini)
+                        Text("Checking this exact location…")
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                } else if let status = model.projectResourcePathStatuses[entry.path] {
+                    Label(
+                        projectResourcePathStatusText(status),
+                        systemImage: associatedPathStatusSymbol(status)
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(associatedPathStatusColor(status))
+                    Text("Presence only · no contents or ownership checked")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if associatedPathNeedsReselection(status) {
+                        Button("Restore access…") {
+                            model.reselectRememberedFolder(entry.path)
+                        }
+                        .font(.caption2)
+                        .buttonStyle(.link)
+                        .help("Select this same folder to refresh its saved read-only access")
+                    }
+                }
             }
             Spacer(minLength: 4)
+            Button {
+                model.checkProjectResourcePath(entry.path)
+            } label: {
+                Image(systemName: "checkmark.magnifyingglass")
+            }
+            .buttonStyle(.borderless)
+            .disabled(model.checkingProjectResourcePaths.contains(entry.path))
+            .help("Check only this exact directory path. No folder contents are scanned.")
+            .accessibilityLabel("Check project location \(name)")
             if entry.kind == .userLinkedFolder {
                 Button {
                     model.rescanAssociatedFolder(entry.path)

@@ -1889,6 +1889,8 @@ private struct DiskerCoreChecks {
 
             try expect(SelectedScopePathProbe.probe(at: directory.path) == .availableDirectory,
                        "an existing selected directory should be reported as available")
+            try expect(SelectedScopePathProbe.Status.availableDirectoryWithinBookmarkScope.isAvailableDirectory,
+                       "a directory reached through its explicit bookmark remains available with its ancestor limitation kept distinct")
             try expect(SelectedScopePathProbe.probe(at: file.path) == .notDirectory,
                        "an existing regular file should be distinguished from a missing directory")
             try expect(SelectedScopePathProbe.probe(at: symlink.path) == .symbolicLink,
