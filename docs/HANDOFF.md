@@ -30,6 +30,8 @@ Applications now also has a read-only Spotlight discovery catalog, separate from
 
 ## Verified this checkpoint
 
+- Project intelligence now has an explicit resource-link workflow under selected roots with a direct `.git` marker. A user selects exact related paths; Disker saves the relationship and starts a metadata-only scan of only those paths. `ProjectResourceReview` shows newest per-path evidence, preserves newer partial observations over older complete ones, marks lexical overlaps and links shared by multiple selected roots, and never creates a project total. Synthetic tests cover bounded persistence, old-history decoding, standardized and invalid path identities, unchanged fixture contents, complete/partial/missing resources, overlap, and shared links. `scripts/check-core.sh` passed 89 checks; `scripts/check-event-watcher.sh` passed; standard and sandboxed Release packages built and passed strict deep signature verification. The isolated sandbox app's Overview was inspected in the native accessibility tree and screenshot. CUA closed its native input pipe on the attempt to open Folders, so the new disclosure and picker remain visually/runtime unverified; no owner paths were selected or scanned.
+
 - Spotlight discovery now carries the optional `kMDItemLastUsedDate` attribute into local application history and labels it as Launch Services evidence. If a later Spotlight result omits the field, Disker retains the last known date without turning missing evidence into an inactivity claim. Core checks cover deduplication, date refresh/preservation, JSON round-trip, and older records; live owner app usage was not queried.
 - After the usage-evidence model and UI integration, `scripts/check-core.sh` passed all 87 checks, `scripts/check-event-watcher.sh` passed, `plutil -lint Resources/ru.lproj/Localizable.strings` passed, and standard and sandboxed Release packages passed strict deep signature verification. This verifies the app compiles and packages; the new Launch Services row was not visually inspected or checked against a live Spotlight result.
 
@@ -115,6 +117,8 @@ open "$HOME/Applications/Disker.app"
 ```
 
 ## Next priorities
+
+Immediate next: use an isolated sandbox bundle and a synthetic `.git` project to visually exercise the new Project resources disclosure, exact picker selection, link-and-scan action, per-path coverage states, relaunch persistence, and unlink behavior. Keep the app bundle identifier unique so validation cannot load or alter the owner's existing Disker history. The present QA environment can read the isolated app's accessibility tree and screenshot, but native input closed before selecting Folders; this interaction needs a fresh CUA session or another supported GUI-test route.
 
 1. Verify pause/resume, window-close, foreground/background, and event/periodic scans in the sandboxed native UI using a small synthetic root. The native picker, opted-in state after relaunch, manual rescan through the restored app-scoped bookmark, exact inventory growth, and opt-out are now verified. The process-boundary FSEvents test still bypasses `DashboardModel` and the sandbox picker.
 2. Verify RAM chart light appearance, resizing, default Tab focus traversal, and longer observation intervals. Adjacent-snapshot buttons and ⌘←/⌘→ selection work in the rebuilt sandbox app; the sandbox process list remains unavailable and is disclosed by the UI.

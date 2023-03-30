@@ -606,6 +606,45 @@ final class DashboardModel {
         }
     }
 
+    func projectResourceReview(for projectRootPath: String) -> ProjectResourceReview {
+        ProjectResourceReview.make(for: projectRootPath, in: history)
+    }
+
+    func chooseProjectResourceFolders(for projectRootPath: String, startingAt directory: URL? = nil) {
+        guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Choose folders linked to this project"
+        panel.prompt = "Link and Scan"
+        panel.message = "Choose up to 50 exact folders. This records your project grouping and starts a metadata-only scan of only these folders. It does not establish ownership; measurements remain separate and may overlap."
+        panel.directoryURL = directory
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.canCreateDirectories = false
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        guard panel.urls.count <= ProjectResourceAssociation.maximumRelatedFolderCount else {
+            errorMessage = "A project root can have at most 50 linked folders. Reduce the selection and try again."
+            return
+        }
+        do {
+            history = try ObservationStore.associateProjectFolders(
+                panel.urls.map(\.path), with: projectRootPath
+            )
+            rememberFolders(panel.urls)
+            scan(panel.urls)
+        } catch {
+            errorMessage = "Folders were selected, but their project links could not be saved: \(error.localizedDescription)"
+        }
+    }
+
+    func removeProjectResourceFolder(_ path: String, from projectRootPath: String) {
+        do {
+            history = try ObservationStore.removeProjectFolderAssociation(path, from: projectRootPath)
+        } catch {
+            errorMessage = "The project resource link could not be removed: \(error.localizedDescription)"
+        }
+    }
+
     private func rememberFolders(_ urls: [URL]) {
         do {
             rememberedScopes = try SelectedScopeBookmarkStore.remember(urls)
@@ -4580,6 +4619,14 @@ struct DashboardView: View {
                     .background(.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
                 }
 
+                let projectHasSavedLinks = model.history.projectResourceAssociations.contains {
+                    URL(fileURLWithPath: $0.projectRootPath, isDirectory: true).standardizedFileURL.path
+                        == URL(fileURLWithPath: folder.path, isDirectory: true).standardizedFileURL.path
+                }
+                if includeDetails && (folder.gitMetadataEntryDetected || projectHasSavedLinks) {
+                    projectResourceSection(for: folder)
+                }
+
                 if includeDetails && (!folder.projectDirectorySummaries.isEmpty
                                       || folder.projectDirectorySummariesTruncated) {
                     projectDirectorySection(for: folder, scanCancelled: scanCancelled)
@@ -5015,6 +5062,120 @@ struct DashboardView: View {
             }
             .font(.caption2)
         }
+    }
+
+    private func projectResourceSection(for folder: FolderObservation) -> some View {
+        let review = model.projectResourceReview(for: folder.path)
+        return DisclosureGroup {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Paths are grouped here because you selected them. A link does not prove ownership or exclusive use. Measurements stay separate; shared storage, hard links, and overlapping paths can make totals misleading.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(review.entries) { entry in
+                    projectResourceRow(entry, projectRootPath: folder.path)
+                }
+                Button("Link folders and scan…") {
+                    model.chooseProjectResourceFolders(for: folder.path)
+                }
+                .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
+                .help("Choose exact folders to associate with this selected project root and scan only those folders")
+            }
+            .padding(.top, 8)
+        } label: {
+            Label("Project resources", systemImage: "point.3.connected.trianglepath.dotted")
+                .font(.subheadline.weight(.semibold))
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func projectResourceRow(
+        _ entry: ProjectResourceReview.Entry, projectRootPath: String
+    ) -> some View {
+        let name = URL(fileURLWithPath: entry.path, isDirectory: true).lastPathComponent
+        return HStack(alignment: .top, spacing: 9) {
+            Image(systemName: entry.kind == .selectedProjectRoot ? "chevron.left.forwardslash.chevron.right" : "folder")
+                .foregroundStyle(entry.kind == .selectedProjectRoot ? Color.blue : Color.secondary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(entry.path)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                Text(entry.kind == .selectedProjectRoot ? "Selected project root" : "User-linked location")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if entry.isSharedLink {
+                    Label("Also linked from another selected project", systemImage: "person.2")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+                if !entry.overlappingPaths.isEmpty {
+                    Label("Overlaps another selected path; keep measurements separate", systemImage: "arrow.triangle.branch")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+                if let observation = entry.observation {
+                    Text("\(folderMeasurementSummary(observation)) · measured \(observation.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if observation.complete && !entry.scanWasCancelled && !observation.byteAccountingOverflowed {
+                        if let previous = model.previousCompleteObservation(for: observation),
+                           let delta = ObservationComparison.allocatedByteDelta(
+                            current: observation, previous: previous
+                           ) {
+                            Text("\(changeDescription(delta)) since \(previous.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption2)
+                                .foregroundStyle(delta >= 0 ? .orange : .green)
+                        } else {
+                            Text("First complete measurement")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text(coverageSummary(
+                            inaccessible: observation.inaccessibleCount,
+                            excludedSymlinks: observation.excludedSymlinkCount,
+                            excludedSpecialFiles: observation.excludedSpecialFileCount,
+                            excludedVolumeBoundaries: observation.excludedVolumeBoundaryCount,
+                            changed: observation.changedDuringScanCount,
+                            wasCancelled: entry.scanWasCancelled,
+                            accountingOverflowed: observation.byteAccountingOverflowed
+                        ))
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                    }
+                } else {
+                    Text("No measurement saved · total unknown")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 4)
+            if entry.kind == .userLinkedFolder {
+                Button {
+                    model.rescanAssociatedFolder(entry.path)
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
+                .help("Select this exact folder before scanning it again")
+                .accessibilityLabel("Rescan linked folder \(name)")
+                Button {
+                    model.removeProjectResourceFolder(entry.path, from: projectRootPath)
+                } label: {
+                    Image(systemName: "link.badge.minus")
+                }
+                .buttonStyle(.borderless)
+                .help("Remove the project link; files and scan history remain")
+                .accessibilityLabel("Unlink \(name) from this project")
+            }
+        }
+        .padding(.vertical, 6)
+        .background(alignment: .bottom) { Divider() }
     }
 
     private func fileInventoryIncompleteness(for folder: FolderObservation) -> String {
