@@ -41,6 +41,7 @@ private struct DiskerCoreChecks {
             ("explicit application data path probes", testApplicationDataLocationProbe),
             ("selected app bundle file-growth history", testApplicationBundleFileGrowthHistory),
             ("read-only app footprint review", testApplicationFootprintReview),
+            ("cross-domain linked resource evidence", testCrossDomainResourceEvidence),
             ("measured selected-scope subtotal safety", testApplicationFootprintSubtotal),
             ("read-only application-removal review planner", testApplicationRemovalReviewPlanner),
             ("explicit app-folder associations", testApplicationFolderAssociations),
@@ -1032,6 +1033,121 @@ private struct DiskerCoreChecks {
                    "cache clues, user-only evidence, and links to another app must remain distinguishable")
         try expect(byPath[cachePath]?.observation == nil && review.reclaimableBytes == nil,
                    "unmeasured locations and reclaimable physical bytes must remain unknown")
+    }
+
+    private static func testCrossDomainResourceEvidence() throws {
+        let home = "/Users/synthetic"
+        let bundlePath = "/Applications/Sample.app"
+        let projectPath = "/Projects/Demo"
+        let groupPath = "\(home)/Library/Group Containers/TEAM.shared"
+        let exactPath = "/Volumes/Work/Exact"
+        let appParentPath = "/Volumes/Work/Container"
+        let projectChildPath = "\(appParentPath)/Data"
+        let partialPath = "/Volumes/Work/Partial"
+        let missingPath = "/Volumes/Work/Not Yet Measured"
+
+        let bundle = FolderObservation(
+            path: bundlePath, displayName: "Sample", logicalBytes: 100, allocatedBytes: 128,
+            fileCount: 1, inaccessibleCount: 0, complete: true,
+            applicationBundleIdentifier: "com.example.Sample",
+            applicationGroupIdentifiers: ["TEAM.shared"],
+            applicationSignatureValidated: true,
+            applicationSignedBundleIdentifier: "com.example.Sample",
+            selectedAsApplicationBundle: true
+        )
+        let project = FolderObservation(
+            path: projectPath, displayName: "Demo", logicalBytes: 200, allocatedBytes: 256,
+            fileCount: 2, inaccessibleCount: 0, complete: true,
+            gitMetadataEntryDetected: true
+        )
+        let exact = syntheticFolder(path: exactPath, bytes: 300, complete: true, volumeDeviceID: 8)
+        let appParent = syntheticFolder(path: appParentPath, bytes: 400, complete: true, volumeDeviceID: 9)
+        let projectChild = syntheticFolder(path: projectChildPath, bytes: 50, complete: true, volumeDeviceID: 10)
+        let group = syntheticFolder(path: groupPath, bytes: 600, complete: true, volumeDeviceID: 11)
+        let oldPartial = syntheticFolder(
+            path: partialPath, bytes: 700, complete: true, volumeDeviceID: 12,
+            finishedAt: Date(timeIntervalSince1970: 100)
+        )
+        let latestPartial = syntheticFolder(
+            path: partialPath, bytes: 750, complete: false, volumeDeviceID: 12,
+            finishedAt: Date(timeIntervalSince1970: 200)
+        )
+        let observations = [
+            ScanObservation(
+                startedAt: Date(timeIntervalSince1970: 90),
+                folders: [bundle, project, exact, appParent, projectChild, group, oldPartial],
+                cancelled: false
+            ),
+            ScanObservation(
+                startedAt: Date(timeIntervalSince1970: 190), folders: [latestPartial], cancelled: true
+            ),
+        ]
+        let appAssociation = ApplicationFolderAssociation(
+            bundlePath: bundlePath,
+            relatedFolderPaths: [groupPath, exactPath, appParentPath, partialPath, missingPath]
+        )
+        let projectAssociation = try ProjectResourceAssociation(
+            projectRootPath: projectPath,
+            relatedFolderPaths: [groupPath, exactPath, projectChildPath, partialPath, missingPath]
+        )
+        let otherProjectAssociation = try ProjectResourceAssociation(
+            projectRootPath: "/Projects/Not Selected", relatedFolderPaths: [exactPath]
+        )
+        let evidence = CrossDomainResourceEvidence.make(
+            forProjectRootPath: projectPath,
+            in: LocalHistory(
+                observations: observations,
+                applicationAssociations: [appAssociation],
+                projectResourceAssociations: [projectAssociation, otherProjectAssociation]
+            ),
+            homeDirectoryPath: home
+        )
+        let byPathAndDomain = Dictionary(grouping: evidence.links) {
+            "\($0.domain.rawValue)|\($0.path)"
+        }
+        func link(_ domain: CrossDomainResourceEvidence.Domain, _ path: String) -> CrossDomainResourceEvidence.Link? {
+            byPathAndDomain["\(domain.rawValue)|\(path)"]?.first
+        }
+
+        try expect(link(.project, projectPath)?.provenance == .gitMarkedSelectedProject,
+                   "the selected project root should retain its direct Git-marker evidence")
+        try expect(evidence.links.allSatisfy { $0.domain != .project || $0.rootPath == projectPath },
+                   "the projection should include only the project root selected by its caller")
+        try expect(evidence.links.contains(where: {
+            $0.domain == .application && $0.path == bundlePath
+                && $0.provenance == .selectedApplicationBundle
+        }), "the application bundle should retain selected-bundle provenance")
+
+        let exactApp = link(.application, exactPath)
+        let exactProject = link(.project, exactPath)
+        try expect(exactApp?.overlaps.contains(where: {
+            $0.otherLinkID == exactProject?.id && $0.pathRelation == .exact
+                && $0.volumeRelation == .same(8)
+        }) == true, "identical app/project links should be called out without combining their measurements")
+
+        let groupLinks = byPathAndDomain["application|\(groupPath)"] ?? []
+        try expect(groupLinks.contains(where: { $0.provenance == .userLinkedApplicationFolder })
+                   && groupLinks.contains(where: {
+                       $0.provenance == .signatureCoveredSharedGroupClaim(groupIdentifier: "TEAM.shared")
+                   }), "a signed shared-group claim should be preserved alongside the user link")
+
+        let nested = link(.application, appParentPath)?.overlaps.first(where: {
+            $0.otherLinkID == link(.project, projectChildPath)?.id
+        })
+        try expect(nested?.pathRelation == .leftContainsRight
+                   && nested?.volumeRelation == .different(left: 9, right: 10),
+                   "nested lexical paths should disclose distinct volume IDs instead of implying shared storage")
+
+        try expect(link(.project, partialPath)?.observation == latestPartial
+                   && link(.project, partialPath)?.scanWasCancelled == true
+                   && link(.project, partialPath)?.observation?.logicalBytes == 750,
+                   "the newest partial cancelled observation must be shown rather than an older complete scan")
+        try expect(link(.project, missingPath)?.observation == nil
+                   && link(.project, missingPath)?.overlaps.contains(where: {
+                       $0.otherDomain == .application && $0.pathRelation == .exact
+                           && $0.volumeRelation == .unknown
+                   }) == true,
+                   "an unmeasured exact cross-domain link should remain unknown and must not imply zero usage")
     }
 
     private static func testApplicationFootprintSubtotal() throws {
