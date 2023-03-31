@@ -613,6 +613,14 @@ final class DashboardModel {
         ProjectResourceReview.make(for: projectRootPath, in: history)
     }
 
+    func crossDomainResourceEvidence(for projectRootPath: String) -> CrossDomainResourceEvidence {
+        CrossDomainResourceEvidence.make(
+            forProjectRootPath: projectRootPath,
+            in: history,
+            homeDirectoryPath: NSHomeDirectory()
+        )
+    }
+
     func chooseProjectResourceFolders(for projectRootPath: String, startingAt directory: URL? = nil) {
         guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
         let panel = NSOpenPanel()
@@ -5176,12 +5184,39 @@ struct DashboardView: View {
 
     private func projectResourceSection(for folder: FolderObservation) -> some View {
         let review = model.projectResourceReview(for: folder.path)
+        let crossDomainEvidence = model.crossDomainResourceEvidence(for: folder.path)
+        let standardizedRoot = URL(fileURLWithPath: folder.path, isDirectory: true).standardizedFileURL.path
+        let projectLinkIDs = Set(crossDomainEvidence.links.filter {
+            $0.domain == .project && $0.rootPath == standardizedRoot
+        }.flatMap { $0.overlaps.map(\.otherLinkID) })
+        let overlappingAppPaths = Array(Set(crossDomainEvidence.links.filter {
+            $0.domain == .application && projectLinkIDs.contains($0.id)
+        }.map(\.path))).sorted()
         return DisclosureGroup {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Paths are grouped here because you selected them. A link does not prove ownership or exclusive use. Measurements stay separate; shared storage, hard links, and overlapping paths can make totals misleading.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if !overlappingAppPaths.isEmpty {
+                    DisclosureGroup("App-linked paths also intersect this project") {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("These are exact or nested path relationships. They do not prove shared physical storage or ownership, and measurements are not combined.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            ForEach(overlappingAppPaths, id: \.self) { path in
+                                Text(path)
+                                    .font(.caption2.monospaced())
+                                    .textSelection(.enabled)
+                                    .lineLimit(2)
+                                    .truncationMode(.middle)
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
+                    .font(.caption)
+                }
                 ForEach(review.entries) { entry in
                     projectResourceRow(entry, projectRootPath: folder.path)
                 }
