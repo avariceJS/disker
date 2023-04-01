@@ -126,6 +126,9 @@
 "Project resources" = "Ресурсы проекта";
 "App-linked paths also intersect this project" = "Пути, связанные с приложениями, также пересекаются с этим проектом";
 "These are exact or nested path relationships. They do not prove shared physical storage or ownership, and measurements are not combined." = "Здесь показаны совпадающие или вложенные пути. Это не доказывает общее физическое хранилище или владение; размеры не объединяются.";
+"Also linked under selected project" = "Также связана с выбранным проектом";
+"Project grouping is user-selected. This path relationship does not confirm ownership or shared physical storage; keep measurements separate." = "Группировку проекта выбрал пользователь. Эта связь путей не подтверждает владение или общее физическое хранилище; измерения остаются раздельными.";
+"%lld disjoint paths in this app review" = "%lld отдельных путей в обзоре приложения";
 "Paths are grouped here because you selected them. A link does not prove ownership or exclusive use. Measurements stay separate; shared storage, hard links, and overlapping paths can make totals misleading." = "Папки сгруппированы здесь по вашему выбору. Связь не доказывает владение или исключительное использование. Измерения показаны отдельно: общие данные, жёсткие ссылки и пересекающиеся пути могут исказить сумму.";
 "Link folders and scan…" = "Связать папки и измерить…";
 "Choose folders linked to this project" = "Выберите папки, связанные с этим проектом";

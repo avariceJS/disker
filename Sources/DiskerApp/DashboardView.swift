@@ -621,6 +621,14 @@ final class DashboardModel {
         )
     }
 
+    func crossDomainResourceEvidence(forApplicationBundlePath bundlePath: String) -> CrossDomainResourceEvidence {
+        CrossDomainResourceEvidence.make(
+            forApplicationBundlePath: bundlePath,
+            in: history,
+            homeDirectoryPath: NSHomeDirectory()
+        )
+    }
+
     func chooseProjectResourceFolders(for projectRootPath: String, startingAt directory: URL? = nil) {
         guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
         let panel = NSOpenPanel()
@@ -1491,7 +1499,8 @@ struct DashboardView: View {
         .sheet(item: $applicationReviewBundle) { bundle in
             ApplicationFootprintReviewSheet(
                 bundleName: bundle.displayName,
-                review: model.applicationFootprintReview(for: bundle)
+                review: model.applicationFootprintReview(for: bundle),
+                crossDomainEvidence: model.crossDomainResourceEvidence(forApplicationBundlePath: bundle.path)
             )
             .frame(minWidth: 580, minHeight: 520)
         }
@@ -6069,9 +6078,22 @@ private struct DeveloperArtifactReviewSheet: View {
 private struct ApplicationFootprintReviewSheet: View {
     let bundleName: String
     let review: ApplicationFootprintReview
+    let crossDomainEvidence: CrossDomainResourceEvidence
 
     private var removalReviewPlan: ApplicationRemovalReviewPlan {
         ApplicationRemovalReviewPlanner.makePlan(from: review)
+    }
+
+    private var linkedProjectPaths: [String] {
+        let applicationLinkIDs = Set(crossDomainEvidence.links.filter {
+            $0.domain == .application && $0.rootPath == review.bundlePath
+        }.map(\.id))
+        let projectLinkIDs = Set(crossDomainEvidence.links.filter {
+            $0.domain == .application && applicationLinkIDs.contains($0.id)
+        }.flatMap { $0.overlaps.map(\.otherLinkID) })
+        return Array(Set(crossDomainEvidence.links.filter {
+            $0.domain == .project && projectLinkIDs.contains($0.id)
+        }.map(\.path))).sorted()
     }
 
     var body: some View {
@@ -6098,6 +6120,25 @@ private struct ApplicationFootprintReviewSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
 
+                if !linkedProjectPaths.isEmpty {
+                    DisclosureGroup("Paths also linked under a selected project") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Project grouping is user-selected. A path link does not prove ownership or shared physical storage. Cross-domain measurements stay separate and are not combined in this subtotal.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            ForEach(linkedProjectPaths, id: \.self) { path in
+                                Text(path)
+                                    .font(.caption2.monospaced())
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
+                    .font(.callout)
+                }
+
                 selectedScopeSubtotal
 
                 ForEach(review.entries) { entry in
@@ -6121,7 +6162,13 @@ private struct ApplicationFootprintReviewSheet: View {
                     .font(.subheadline.monospacedDigit())
                 Text("Allocated estimate: ~\(format(subtotal.allocatedBytesEstimate))")
                     .font(.subheadline.monospacedDigit())
-                Text("\(subtotal.includedPaths.count) disjoint, non-shared selected scopes")
+                Text(String.localizedStringWithFormat(
+                    NSLocalizedString(
+                        "%lld disjoint paths in this app review",
+                        comment: "Count of selected paths included in the app review subtotal"
+                    ),
+                    Int64(subtotal.includedPaths.count)
+                ))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
@@ -6177,6 +6224,15 @@ private struct ApplicationFootprintReviewSheet: View {
     @ViewBuilder
     private func entryCard(_ entry: ApplicationFootprintReview.Entry) -> some View {
         let planRow = removalReviewPlan.rows.first { $0.path == entry.path }
+        let appLinkIDs = Set(crossDomainEvidence.links.filter {
+            $0.domain == .application && $0.rootPath == review.bundlePath && $0.path == entry.path
+        }.map(\.id))
+        let projectLinkIDs = Set(crossDomainEvidence.links.filter {
+            $0.domain == .application && appLinkIDs.contains($0.id)
+        }.flatMap { $0.overlaps.map(\.otherLinkID) })
+        let overlappingProjectPaths = Array(Set(crossDomainEvidence.links.filter {
+            $0.domain == .project && projectLinkIDs.contains($0.id)
+        }.map(\.path))).sorted()
         VStack(alignment: .leading, spacing: 9) {
             HStack {
                 Label(
@@ -6276,6 +6332,24 @@ private struct ApplicationFootprintReviewSheet: View {
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                }
+                .foregroundStyle(.orange)
+            }
+
+            if !overlappingProjectPaths.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label("Also linked under selected project", systemImage: "point.3.connected.trianglepath.dotted")
+                        .font(.caption.weight(.medium))
+                    ForEach(overlappingProjectPaths, id: \.self) { path in
+                        Text(path)
+                            .font(.caption2.monospaced())
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text("Project grouping is user-selected. This path relationship does not confirm ownership or shared physical storage; keep measurements separate.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .foregroundStyle(.orange)
             }
