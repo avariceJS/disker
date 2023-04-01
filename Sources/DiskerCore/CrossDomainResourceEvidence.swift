@@ -4,12 +4,17 @@ import Foundation
 /// Path relationships are lexical evidence only and never establish ownership,
 /// shared physical storage, or bytes that may be summed or reclaimed.
 public struct CrossDomainResourceEvidence: Equatable, Sendable {
-    public enum Domain: String, Equatable, Sendable {
+    public enum Domain: String, Hashable, Sendable {
         case application
         case project
     }
 
-    public enum Provenance: Equatable, Sendable {
+    public enum Focus: Equatable, Sendable {
+        case applicationBundle(String)
+        case projectRoot(String)
+    }
+
+    public enum Provenance: Equatable, Hashable, Sendable {
         case selectedApplicationBundle
         case userLinkedApplicationFolder
         case declaredSharedGroupClaim(groupIdentifier: String)
@@ -32,7 +37,7 @@ public struct CrossDomainResourceEvidence: Equatable, Sendable {
     }
 
     public struct Overlap: Equatable, Sendable, Identifiable {
-        public var id: String { "\(otherLinkID)|\(String(describing: pathRelation))" }
+        public var id: String { stableIdentifier([otherLinkID, pathRelation.identifierComponent]) }
         public let otherLinkID: String
         public let otherDomain: Domain
         /// A lexical relationship between selected paths, not proof of shared
@@ -42,7 +47,9 @@ public struct CrossDomainResourceEvidence: Equatable, Sendable {
     }
 
     public struct Link: Equatable, Sendable, Identifiable {
-        public var id: String { "\(domain.rawValue)|\(rootPath)|\(path)|\(String(describing: provenance))" }
+        public var id: String {
+            stableIdentifier([domain.rawValue, rootPath, path, provenance.identifierComponent])
+        }
         public let domain: Domain
         public let rootPath: String
         public let path: String
@@ -55,21 +62,60 @@ public struct CrossDomainResourceEvidence: Equatable, Sendable {
     /// Links remain separate. Overlapping observations are never aggregated.
     public let links: [Link]
 
+    private struct RawLink: Hashable {
+        let domain: Domain
+        let rootPath: String
+        let path: String
+        let provenance: Provenance
+    }
+
     public static func make(
         forProjectRootPath projectRootPath: String,
         in history: LocalHistory,
         homeDirectoryPath: String
     ) -> Self {
-        let selectedProjectRoot = standardized(projectRootPath)
+        make(focusingOn: .projectRoot(projectRootPath), in: history, homeDirectoryPath: homeDirectoryPath)
+    }
+
+    public static func make(
+        forApplicationBundlePath bundlePath: String,
+        in history: LocalHistory,
+        homeDirectoryPath: String
+    ) -> Self {
+        make(focusingOn: .applicationBundle(bundlePath), in: history, homeDirectoryPath: homeDirectoryPath)
+    }
+
+    public static func make(
+        focusingOn focus: Focus,
+        in history: LocalHistory,
+        homeDirectoryPath: String
+    ) -> Self {
+        let selectedApplicationBundle: String?
+        let selectedProjectRoot: String?
+        switch focus {
+        case .applicationBundle(let path):
+            selectedApplicationBundle = standardized(path)
+            selectedProjectRoot = nil
+        case .projectRoot(let path):
+            selectedApplicationBundle = nil
+            selectedProjectRoot = standardized(path)
+        }
         let latestByPath = latestObservations(in: history)
-        var rawLinks: [(Domain, String, String, Provenance)] = []
+        var rawLinks: [RawLink] = []
 
         for association in history.applicationAssociations {
             let bundlePath = standardized(association.bundlePath)
-            rawLinks.append((.application, bundlePath, bundlePath, .selectedApplicationBundle))
+            guard selectedApplicationBundle == nil || bundlePath == selectedApplicationBundle else { continue }
+            rawLinks.append(RawLink(
+                domain: .application, rootPath: bundlePath, path: bundlePath,
+                provenance: .selectedApplicationBundle
+            ))
             for linkedPath in association.relatedFolderPaths {
                 let path = standardized(linkedPath)
-                rawLinks.append((.application, bundlePath, path, .userLinkedApplicationFolder))
+                rawLinks.append(RawLink(
+                    domain: .application, rootPath: bundlePath, path: path,
+                    provenance: .userLinkedApplicationFolder
+                ))
 
                 if let bundle = latestByPath[bundlePath],
                    let identifier = bundle.applicationBundleIdentifier {
@@ -84,16 +130,16 @@ public struct CrossDomainResourceEvidence: Equatable, Sendable {
                     switch attribution.evidence {
                     case .signatureCoveredSharedGroupClaim:
                         if let group = attribution.groupIdentifier {
-                            rawLinks.append((
-                                .application, bundlePath, path,
-                                .signatureCoveredSharedGroupClaim(groupIdentifier: group)
+                            rawLinks.append(RawLink(
+                                domain: .application, rootPath: bundlePath, path: path,
+                                provenance: .signatureCoveredSharedGroupClaim(groupIdentifier: group)
                             ))
                         }
                     case .declaredSharedGroupContainerClaim:
                         if let group = attribution.groupIdentifier {
-                            rawLinks.append((
-                                .application, bundlePath, path,
-                                .declaredSharedGroupClaim(groupIdentifier: group)
+                            rawLinks.append(RawLink(
+                                domain: .application, rootPath: bundlePath, path: path,
+                                provenance: .declaredSharedGroupClaim(groupIdentifier: group)
                             ))
                         }
                     default:
@@ -105,38 +151,102 @@ public struct CrossDomainResourceEvidence: Equatable, Sendable {
 
         for association in history.projectResourceAssociations {
             let root = standardized(association.projectRootPath)
-            guard root == selectedProjectRoot else { continue }
+            guard selectedProjectRoot == nil || root == selectedProjectRoot else { continue }
             let rootProvenance: Provenance = latestByPath[root]?.gitMetadataEntryDetected == true
                 ? .gitMarkedSelectedProject : .selectedProjectRoot
-            rawLinks.append((.project, root, root, rootProvenance))
+            rawLinks.append(RawLink(
+                domain: .project, rootPath: root, path: root, provenance: rootProvenance
+            ))
             for path in association.relatedFolderPaths {
-                rawLinks.append((.project, root, standardized(path), .userLinkedProjectFolder))
+                rawLinks.append(RawLink(
+                    domain: .project, rootPath: root, path: standardized(path),
+                    provenance: .userLinkedProjectFolder
+                ))
             }
         }
 
-        // Stable de-duplication protects the projection from legacy duplicate
-        // app links while retaining distinct provenance for the same path.
-        var seen = Set<String>()
-        let uniqueLinks = rawLinks.filter { domain, root, path, provenance in
-            seen.insert("\(domain.rawValue)|\(root)|\(path)|\(String(describing: provenance))").inserted
+        // Structured de-duplication protects the projection from legacy duplicate
+        // links and remains unambiguous for legal path characters such as '|'.
+        let uniqueLinks = Set(rawLinks).sorted {
+            stableIdentifier([$0.domain.rawValue, $0.rootPath, $0.path, $0.provenance.identifierComponent])
+                < stableIdentifier([$1.domain.rawValue, $1.rootPath, $1.path, $1.provenance.identifierComponent])
         }
         let unfinishedByObservationID = Dictionary(
             history.observations.flatMap { scan in scan.folders.map { ($0.id, scan.cancelled) } },
             uniquingKeysWith: { latest, _ in latest }
         )
-        let links = uniqueLinks.map { domain, root, path, provenance in
+        let links = uniqueLinks.map { raw in
             Link(
-                domain: domain,
-                rootPath: root,
-                path: path,
-                provenance: provenance,
-                observation: latestByPath[path],
-                scanWasCancelled: latestByPath[path].flatMap { unfinishedByObservationID[$0.id] } ?? false,
+                domain: raw.domain,
+                rootPath: raw.rootPath,
+                path: raw.path,
+                provenance: raw.provenance,
+                observation: latestByPath[raw.path],
+                scanWasCancelled: latestByPath[raw.path].flatMap { unfinishedByObservationID[$0.id] } ?? false,
                 overlaps: []
             )
-        }.sorted { $0.id < $1.id }
+        }
 
-        let linked = links.map { link in
+        let focusedDomain: Domain = selectedApplicationBundle == nil ? .project : .application
+        let focusedLinks = links.filter { $0.domain == focusedDomain }
+        let oppositeCandidates = links.filter { $0.domain != focusedDomain }
+        let candidatesByPath = Dictionary(grouping: oppositeCandidates, by: \.path)
+        let sortedCandidatePaths = Array(Set(oppositeCandidates.map(\.path))).sorted()
+        var overlapsByLinkID: [String: [Overlap]] = [:]
+        var relevantCandidateIDs = Set<String>()
+        for focused in focusedLinks {
+            var candidateIDs = Set<String>()
+            var matches: [Link] = []
+            for candidate in candidatesByPath[focused.path, default: []]
+            where candidateIDs.insert(candidate.id).inserted {
+                matches.append(candidate)
+            }
+
+            var ancestorPath = ""
+            for component in focused.path.split(separator: "/") {
+                ancestorPath += "/" + component
+                guard ancestorPath != focused.path else { continue }
+                for candidate in candidatesByPath[ancestorPath, default: []]
+                where candidateIDs.insert(candidate.id).inserted {
+                    matches.append(candidate)
+                }
+            }
+
+            let descendantPrefix = focused.path == "/" ? "/" : focused.path + "/"
+            var low = 0
+            var high = sortedCandidatePaths.count
+            while low < high {
+                let middle = (low + high) / 2
+                if sortedCandidatePaths[middle] < descendantPrefix { low = middle + 1 }
+                else { high = middle }
+            }
+            while low < sortedCandidatePaths.count,
+                  sortedCandidatePaths[low].hasPrefix(descendantPrefix) {
+                for candidate in candidatesByPath[sortedCandidatePaths[low], default: []]
+                where candidateIDs.insert(candidate.id).inserted {
+                    matches.append(candidate)
+                }
+                low += 1
+            }
+
+            for candidate in matches {
+                guard let relation = Self.pathRelation(focused.path, candidate.path) else { continue }
+                relevantCandidateIDs.insert(candidate.id)
+                let volume = Self.volumeRelation(
+                    focused.observation?.volumeDeviceID, candidate.observation?.volumeDeviceID
+                )
+                overlapsByLinkID[focused.id, default: []].append(Overlap(
+                    otherLinkID: candidate.id,
+                    otherDomain: candidate.domain,
+                    pathRelation: relation,
+                    volumeRelation: volume
+                ))
+            }
+        }
+        let relevantLinks = links.filter {
+            $0.domain == focusedDomain || relevantCandidateIDs.contains($0.id)
+        }
+        let linked = relevantLinks.map { link in
             Link(
                 domain: link.domain,
                 rootPath: link.rootPath,
@@ -144,19 +254,9 @@ public struct CrossDomainResourceEvidence: Equatable, Sendable {
                 provenance: link.provenance,
                 observation: link.observation,
                 scanWasCancelled: link.scanWasCancelled,
-                overlaps: links.compactMap { other -> Overlap? in
-                    guard link.domain != other.domain,
-                          let relation = pathRelation(link.path, other.path) else { return nil }
-                    return Overlap(
-                        otherLinkID: other.id,
-                        otherDomain: other.domain,
-                        pathRelation: relation,
-                        volumeRelation: volumeRelation(link.observation?.volumeDeviceID,
-                                                       other.observation?.volumeDeviceID)
-                    )
-                }.sorted { $0.id < $1.id }
+                overlaps: overlapsByLinkID[link.id, default: []].sorted { $0.id < $1.id }
             )
-        }
+        }.sorted { $0.id < $1.id }
         return Self(links: linked)
     }
 
@@ -190,4 +290,33 @@ public struct CrossDomainResourceEvidence: Equatable, Sendable {
         guard let left, let right else { return .unknown }
         return left == right ? .same(left) : .different(left: left, right: right)
     }
+}
+
+private extension CrossDomainResourceEvidence.Provenance {
+    var identifierComponent: String {
+        switch self {
+        case .selectedApplicationBundle: "selected-application"
+        case .userLinkedApplicationFolder: "user-linked-application-folder"
+        case .declaredSharedGroupClaim(let group): "declared-group:\(stableIdentifier([group]))"
+        case .signatureCoveredSharedGroupClaim(let group): "signed-group:\(stableIdentifier([group]))"
+        case .selectedProjectRoot: "selected-project"
+        case .gitMarkedSelectedProject: "git-marked-project"
+        case .userLinkedProjectFolder: "user-linked-project-folder"
+        }
+    }
+}
+
+private extension CrossDomainResourceEvidence.PathRelation {
+    var identifierComponent: String {
+        switch self {
+        case .exact: "exact"
+        case .leftContainsRight: "left-contains-right"
+        case .rightContainsLeft: "right-contains-left"
+        }
+    }
+
+}
+
+private func stableIdentifier(_ components: [String]) -> String {
+    components.map { "\($0.utf8.count):\($0)" }.joined()
 }

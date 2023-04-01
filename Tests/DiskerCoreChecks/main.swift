@@ -42,6 +42,7 @@ private struct DiskerCoreChecks {
             ("selected app bundle file-growth history", testApplicationBundleFileGrowthHistory),
             ("read-only app footprint review", testApplicationFootprintReview),
             ("cross-domain linked resource evidence", testCrossDomainResourceEvidence),
+            ("bounded cross-domain projection cost and collision-safe IDs", testCrossDomainProjectionBounds),
             ("measured selected-scope subtotal safety", testApplicationFootprintSubtotal),
             ("read-only application-removal review planner", testApplicationRemovalReviewPlanner),
             ("explicit app-folder associations", testApplicationFolderAssociations),
@@ -1113,15 +1114,11 @@ private struct DiskerCoreChecks {
                    "the selected project root should retain its direct Git-marker evidence")
         try expect(evidence.links.allSatisfy { $0.domain != .project || $0.rootPath == projectPath },
                    "the projection should include only the project root selected by its caller")
-        try expect(evidence.links.contains(where: {
-            $0.domain == .application && $0.path == bundlePath
-                && $0.provenance == .selectedApplicationBundle
-        }), "the application bundle should retain selected-bundle provenance")
 
         let exactApp = link(.application, exactPath)
         let exactProject = link(.project, exactPath)
-        try expect(exactApp?.overlaps.contains(where: {
-            $0.otherLinkID == exactProject?.id && $0.pathRelation == .exact
+        try expect(exactProject?.overlaps.contains(where: {
+            $0.otherLinkID == exactApp?.id && $0.pathRelation == .exact
                 && $0.volumeRelation == .same(8)
         }) == true, "identical app/project links should be called out without combining their measurements")
 
@@ -1131,11 +1128,11 @@ private struct DiskerCoreChecks {
                        $0.provenance == .signatureCoveredSharedGroupClaim(groupIdentifier: "TEAM.shared")
                    }), "a signed shared-group claim should be preserved alongside the user link")
 
-        let nested = link(.application, appParentPath)?.overlaps.first(where: {
-            $0.otherLinkID == link(.project, projectChildPath)?.id
+        let nested = link(.project, projectChildPath)?.overlaps.first(where: {
+            $0.otherLinkID == link(.application, appParentPath)?.id
         })
-        try expect(nested?.pathRelation == .leftContainsRight
-                   && nested?.volumeRelation == .different(left: 9, right: 10),
+        try expect(nested?.pathRelation == .rightContainsLeft
+                   && nested?.volumeRelation == .different(left: 10, right: 9),
                    "nested lexical paths should disclose distinct volume IDs instead of implying shared storage")
 
         try expect(link(.project, partialPath)?.observation == latestPartial
@@ -1148,6 +1145,75 @@ private struct DiskerCoreChecks {
                            && $0.volumeRelation == .unknown
                    }) == true,
                    "an unmeasured exact cross-domain link should remain unknown and must not imply zero usage")
+
+        let appFocused = CrossDomainResourceEvidence.make(
+            forApplicationBundlePath: bundlePath,
+            in: LocalHistory(
+                observations: observations,
+                applicationAssociations: [
+                    appAssociation,
+                    ApplicationFolderAssociation(bundlePath: "/Applications/Other.app", relatedFolderPaths: [exactPath]),
+                ],
+                projectResourceAssociations: [projectAssociation, otherProjectAssociation]
+            ),
+            homeDirectoryPath: home
+        )
+        try expect(appFocused.links.contains(where: {
+            $0.domain == .application && $0.path == bundlePath
+                && $0.provenance == .selectedApplicationBundle
+        }) && appFocused.links.allSatisfy {
+            $0.domain != .application || $0.rootPath == bundlePath
+        } && appFocused.links.contains(where: {
+            $0.domain == .project && $0.rootPath == projectPath && $0.path == exactPath
+        }), "application-focused evidence should show linked project paths without mixing in other app records")
+
+        let delimiterCollision = CrossDomainResourceEvidence.make(
+            forProjectRootPath: "/",
+            in: LocalHistory(
+                applicationAssociations: [
+                    ApplicationFolderAssociation(bundlePath: "/Applications/Root|/B", relatedFolderPaths: ["/c"]),
+                    ApplicationFolderAssociation(bundlePath: "/Applications/Root", relatedFolderPaths: ["/B|/c"]),
+                ],
+                projectResourceAssociations: [try ProjectResourceAssociation(
+                    projectRootPath: "/", relatedFolderPaths: []
+                )]
+            ),
+            homeDirectoryPath: home
+        )
+        let pipeLinks = delimiterCollision.links.filter { $0.domain == .application && $0.path != $0.rootPath }
+        try expect(pipeLinks.count == 2 && Set(pipeLinks.map(\.id)).count == 2,
+                   "valid path delimiters must not collide in link identity")
+    }
+
+    private static func testCrossDomainProjectionBounds() throws {
+        let projectPaths = (0..<ProjectResourceAssociation.maximumRelatedFolderCount).map {
+            "/Projects/Resource-\($0)"
+        }
+        let applications = (0..<180).map { appIndex in
+            ApplicationFolderAssociation(
+                bundlePath: "/Applications/Synthetic\(appIndex).app",
+                relatedFolderPaths: (0..<ApplicationFolderAssociation.maximumRelatedFolderCount).map {
+                    "\(projectPaths[$0])/app-\(appIndex)/resource-\($0)"
+                }
+            )
+        }
+        let project = try ProjectResourceAssociation(
+            projectRootPath: "/Projects/Workspace", relatedFolderPaths: projectPaths
+        )
+        let startedAt = Date()
+        let evidence = CrossDomainResourceEvidence.make(
+            forProjectRootPath: "/Projects/Workspace",
+            in: LocalHistory(
+                applicationAssociations: applications,
+                projectResourceAssociations: [project]
+            ),
+            homeDirectoryPath: "/Users/synthetic"
+        )
+        let elapsed = Date().timeIntervalSince(startedAt)
+        try expect(evidence.links.count == 180 * 50 + 51,
+                   "the focused projection should retain selected links and only their cross-domain matches (\(evidence.links.count))")
+        try expect(elapsed < 5,
+                   "maximum persisted cross-domain evidence should be projected in under five seconds (\(elapsed)s)")
     }
 
     private static func testApplicationFootprintSubtotal() throws {
