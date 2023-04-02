@@ -1439,6 +1439,8 @@ struct DashboardView: View {
     @State private var historyChartRange: ObservationTimeRange = .week
     @State private var selectedCapacityDate: Date?
     @State private var selectedRAMDate: Date?
+    @State private var selectedFolderHistoryPath: String?
+    @State private var selectedFolderHistoryDate: Date?
     @State private var isConfirmingHistoryClear = false
     @State private var isAutomaticRAMSamplingEnabled = false
     @State private var applicationReviewBundle: FolderObservation?
@@ -5655,6 +5657,23 @@ struct DashboardView: View {
             let minimum = values.min() ?? 0
             let maximum = values.max() ?? minimum
             let padding = max((maximum - minimum) * 0.15, 0.25)
+            let selection = Binding<Date?>(
+                get: { selectedFolderHistoryPath == folder.path ? selectedFolderHistoryDate : nil },
+                set: {
+                    selectedFolderHistoryPath = folder.path
+                    selectedFolderHistoryDate = $0
+                }
+            )
+            let selectedSample: FolderObservation? = selection.wrappedValue.flatMap { selectedDate in
+                guard let first = visibleSamples.first,
+                      let last = visibleSamples.last,
+                      selectedDate >= first.finishedAt,
+                      selectedDate <= last.finishedAt else { return nil }
+                return visibleSamples.min {
+                    abs($0.finishedAt.timeIntervalSince(selectedDate))
+                        < abs($1.finishedAt.timeIntervalSince(selectedDate))
+                }
+            }
             Chart(visibleSamples, id: \.id) { sample in
                 LineMark(
                     x: .value("Observed", sample.finishedAt),
@@ -5666,12 +5685,38 @@ struct DashboardView: View {
                     y: .value("Allocated GiB", Double(sample.allocatedBytes) / 1_073_741_824)
                 )
                 .foregroundStyle(.indigo)
+                if let selectedSample, selectedSample.id == sample.id {
+                    RuleMark(x: .value("Selected observation", selectedSample.finishedAt))
+                        .foregroundStyle(.secondary.opacity(0.55))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                }
             }
             .chartYScale(domain: max(0, minimum - padding)...(maximum + padding))
             .chartYAxisLabel("Allocated (GiB)")
+            .chartXSelection(value: selection)
             .frame(height: 112)
             .accessibilityLabel("Allocated-size history from \(visibleSamples.count) complete scans of \(folder.path)")
-            Text("\(visibleSamples.count) complete scans of this selected path · \(historyRangeCaption(endingAt: latestDate)) · focused vertical scale")
+            if let selectedSample {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(format(selectedSample.allocatedBytes))
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.indigo)
+                    Text("Selected measurement")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text(selectedSample.finishedAt.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Clear selection") {
+                        selection.wrappedValue = nil
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption2)
+                }
+                .accessibilityElement(children: .combine)
+            }
+            Text("\(visibleSamples.count) complete scans of this selected path · \(historyRangeCaption(endingAt: latestDate)) · drag across the chart to inspect a saved sample · focused vertical scale")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         } else if !fullSeries.isEmpty {

@@ -132,6 +132,9 @@
 "Path history · %ld complete observations" = "История пути · %ld полных измерений";
 "Path history is withheld until this exact location has a complete scan." = "История пути не показывается, пока для этого точного адреса нет полного измерения.";
 "A second complete scan of this exact path is needed for a history chart." = "Для графика истории нужно второе полное измерение этого точного пути.";
+"Selected measurement" = "Выбранное измерение";
+"Clear selection" = "Снять выбор";
+"drag across the chart to inspect a saved sample" = "перетащите указатель по графику, чтобы изучить сохранённый замер";
 "Paths are grouped here because you selected them. A link does not prove ownership or exclusive use. Measurements stay separate; shared storage, hard links, and overlapping paths can make totals misleading." = "Папки сгруппированы здесь по вашему выбору. Связь не доказывает владение или исключительное использование. Измерения показаны отдельно: общие данные, жёсткие ссылки и пересекающиеся пути могут исказить сумму.";
 "Link folders and scan…" = "Связать папки и измерить…";
 "Choose folders linked to this project" = "Выберите папки, связанные с этим проектом";
