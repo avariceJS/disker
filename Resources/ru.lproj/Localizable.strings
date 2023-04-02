@@ -135,6 +135,11 @@
 "Selected measurement" = "Выбранное измерение";
 "Clear selection" = "Снять выбор";
 "drag across the chart to inspect a saved sample" = "перетащите указатель по графику, чтобы изучить сохранённый замер";
+"Allocated (GiB)" = "Выделенное место (ГиБ)";
+"Allocated (MiB)" = "Выделенное место (МиБ)";
+"Allocated (KiB)" = "Выделенное место (КиБ)";
+"Allocated (bytes)" = "Выделенное место (байт)";
+"%ld complete scans of this selected path · %@ · drag across the chart to inspect a saved sample · focused vertical scale" = "%ld полных измерений выбранного пути · %@ · проведите по графику, чтобы изучить сохранённый замер · вертикальная шкала сфокусирована";
 "Paths are grouped here because you selected them. A link does not prove ownership or exclusive use. Measurements stay separate; shared storage, hard links, and overlapping paths can make totals misleading." = "Папки сгруппированы здесь по вашему выбору. Связь не доказывает владение или исключительное использование. Измерения показаны отдельно: общие данные, жёсткие ссылки и пересекающиеся пути могут исказить сумму.";
 "Link folders and scan…" = "Связать папки и измерить…";
 "Choose folders linked to this project" = "Выберите папки, связанные с этим проектом";

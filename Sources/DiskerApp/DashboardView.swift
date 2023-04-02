@@ -5644,6 +5644,18 @@ struct DashboardView: View {
         }
     }
 
+    private func allocatedHistoryUnit(for largestSample: Int64) -> (scale: Double, label: String) {
+        if largestSample >= 1_073_741_824 {
+            (1_073_741_824, "GiB")
+        } else if largestSample >= 1_048_576 {
+            (1_048_576, "MiB")
+        } else if largestSample >= 1_024 {
+            (1_024, "KiB")
+        } else {
+            (1, "bytes")
+        }
+    }
+
     @ViewBuilder
     private func folderHistoryChart(for folder: FolderObservation) -> some View {
         let fullSeries = ObservationComparison.completeFolderSeries(for: folder, in: model.history)
@@ -5653,10 +5665,14 @@ struct DashboardView: View {
         }.sorted { $0.finishedAt < $1.finishedAt }
         if samples.count > 1 {
             let visibleSamples = samples
-            let values = visibleSamples.map { Double($0.allocatedBytes) / 1_073_741_824 }
+            let largestSample = visibleSamples.map(\.allocatedBytes).max() ?? 0
+            let unit = allocatedHistoryUnit(for: largestSample)
+            let unitScale = unit.scale
+            let unitLabel = unit.label
+            let values = visibleSamples.map { Double($0.allocatedBytes) / unitScale }
             let minimum = values.min() ?? 0
             let maximum = values.max() ?? minimum
-            let padding = max((maximum - minimum) * 0.15, 0.25)
+            let padding = max((maximum - minimum) * 0.15, max(abs(maximum) * 0.03, 0.01))
             let selection = Binding<Date?>(
                 get: { selectedFolderHistoryPath == folder.path ? selectedFolderHistoryDate : nil },
                 set: {
@@ -5677,12 +5693,12 @@ struct DashboardView: View {
             Chart(visibleSamples, id: \.id) { sample in
                 LineMark(
                     x: .value("Observed", sample.finishedAt),
-                    y: .value("Allocated GiB", Double(sample.allocatedBytes) / 1_073_741_824)
+                    y: .value("Allocated \(unitLabel)", Double(sample.allocatedBytes) / unitScale)
                 )
                 .foregroundStyle(.indigo)
                 PointMark(
                     x: .value("Observed", sample.finishedAt),
-                    y: .value("Allocated GiB", Double(sample.allocatedBytes) / 1_073_741_824)
+                    y: .value("Allocated \(unitLabel)", Double(sample.allocatedBytes) / unitScale)
                 )
                 .foregroundStyle(.indigo)
                 if let selectedSample, selectedSample.id == sample.id {
@@ -5692,7 +5708,9 @@ struct DashboardView: View {
                 }
             }
             .chartYScale(domain: max(0, minimum - padding)...(maximum + padding))
-            .chartYAxisLabel("Allocated (GiB)")
+            .chartYAxisLabel(
+                NSLocalizedString("Allocated (\(unitLabel))", comment: "Allocated-size chart axis unit")
+            )
             .chartXSelection(value: selection)
             .frame(height: 112)
             .accessibilityLabel("Allocated-size history from \(visibleSamples.count) complete scans of \(folder.path)")
@@ -5716,7 +5734,14 @@ struct DashboardView: View {
                 }
                 .accessibilityElement(children: .combine)
             }
-            Text("\(visibleSamples.count) complete scans of this selected path · \(historyRangeCaption(endingAt: latestDate)) · drag across the chart to inspect a saved sample · focused vertical scale")
+            Text(String.localizedStringWithFormat(
+                NSLocalizedString(
+                    "%ld complete scans of this selected path · %@ · drag across the chart to inspect a saved sample · focused vertical scale",
+                    comment: "Path-history chart sample count, range, interaction, and scale disclosure"
+                ),
+                Int32(visibleSamples.count),
+                historyRangeCaption(endingAt: latestDate)
+            ))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         } else if !fullSeries.isEmpty {
