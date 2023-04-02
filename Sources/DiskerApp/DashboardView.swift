@@ -4018,6 +4018,12 @@ struct DashboardView: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
+                if let observation = model.latestFolderObservation(at: path) {
+                    selectedPathHistoryDisclosure(
+                        for: observation,
+                        wasCancelled: model.scanWasCancelled(for: observation)
+                    )
+                }
             }
             Spacer(minLength: 4)
             Button(hasSavedAccess ? "Rescan" : "Select to rescan…") {
@@ -5306,6 +5312,12 @@ struct DashboardView: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
+                if let observation = entry.observation {
+                    selectedPathHistoryDisclosure(
+                        for: observation,
+                        wasCancelled: entry.scanWasCancelled
+                    )
+                }
                 if model.checkingProjectResourcePaths.contains(entry.path) {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.mini)
@@ -5666,6 +5678,42 @@ struct DashboardView: View {
             Text("Fewer than two complete observations of this path in \(historyRangeCaption(endingAt: latestDate)).")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func selectedPathHistoryDisclosure(
+        for observation: FolderObservation,
+        wasCancelled: Bool
+    ) -> some View {
+        if !observation.complete || wasCancelled || observation.byteAccountingOverflowed {
+            Text("Path history is withheld until this exact location has a complete scan.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        } else {
+            let series = ObservationComparison.completeFolderSeries(for: observation, in: model.history)
+            if series.count > 1 {
+                DisclosureGroup {
+                    folderHistoryChart(for: observation)
+                        .padding(.top, 4)
+                } label: {
+                    Label(
+                        String.localizedStringWithFormat(
+                            NSLocalizedString(
+                                "Path history · %ld complete observations",
+                                comment: "Count of complete observations available for one selected path"
+                            ),
+                            Int32(series.count)
+                        ),
+                        systemImage: "chart.xyaxis.line"
+                    )
+                }
+                .font(.caption2)
+            } else {
+                Text("A second complete scan of this exact path is needed for a history chart.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
