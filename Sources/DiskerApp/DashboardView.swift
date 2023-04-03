@@ -4025,6 +4025,7 @@ struct DashboardView: View {
                         for: observation,
                         wasCancelled: model.scanWasCancelled(for: observation)
                     )
+                    linkedPathFileChangesDisclosure(for: observation)
                 }
             }
             Spacer(minLength: 4)
@@ -5129,7 +5130,7 @@ struct DashboardView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     } else {
-                        Text("\(report.changedPathCount) changed paths. Added, resized, and no-longer-present paths are evidence of inventory differences; they do not establish cause or deletion.")
+                        Text("\(fileChangeCountSummary(report.changedPathCount)). Added, resized, and no-longer-present paths are evidence of inventory differences; they do not establish cause or deletion.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -5319,6 +5320,7 @@ struct DashboardView: View {
                         for: observation,
                         wasCancelled: entry.scanWasCancelled
                     )
+                    linkedPathFileChangesDisclosure(for: observation)
                 }
                 if model.checkingProjectResourcePaths.contains(entry.path) {
                     HStack(spacing: 6) {
@@ -5785,6 +5787,40 @@ struct DashboardView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    @ViewBuilder
+    private func linkedPathFileChangesDisclosure(for folder: FolderObservation) -> some View {
+        if let report = model.fileInventoryReports[folder.path],
+           report.folderObservationID == folder.id {
+            DisclosureGroup {
+                fileInventoryChangeSection(for: folder, showHeading: false)
+                    .padding(.top, 4)
+            } label: {
+                Label(fileInventoryDisclosureTitle(for: report), systemImage: "doc.badge.arrow.up")
+            }
+            .font(.caption2)
+        }
+    }
+
+    private func fileInventoryDisclosureTitle(for report: FileInventoryChangeSet) -> String {
+        if !report.hasBaseline {
+            return NSLocalizedString("File inventory baseline", comment: "Disclosure for the first complete file inventory")
+        }
+        if report.changedPathCount == 0 {
+            return NSLocalizedString("File changes · no changes", comment: "Disclosure for a complete comparison with no changed paths")
+        }
+        return String.localizedStringWithFormat(
+            NSLocalizedString("Changed paths (%ld)", comment: "Count of changed file paths in one selected root"),
+            Int32(report.changedPathCount)
+        )
+    }
+
+    private func fileChangeCountSummary(_ count: Int) -> String {
+        String.localizedStringWithFormat(
+            NSLocalizedString("File change count: %ld", comment: "Count of file paths in a complete inventory comparison"),
+            Int32(count)
+        )
     }
 
     private var historyRangePicker: some View {
