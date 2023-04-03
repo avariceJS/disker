@@ -5717,6 +5717,7 @@ struct DashboardView: View {
             .frame(height: 112)
             .accessibilityLabel("Allocated-size history from \(visibleSamples.count) complete scans of \(folder.path)")
             if let selectedSample {
+                let selectedIndex = visibleSamples.firstIndex(where: { $0.id == selectedSample.id })
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(format(selectedSample.allocatedBytes))
                         .font(.caption.weight(.semibold).monospacedDigit())
@@ -5728,6 +5729,30 @@ struct DashboardView: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     Spacer()
+                    Button {
+                        guard let selectedIndex, selectedIndex > visibleSamples.startIndex else { return }
+                        selection.wrappedValue = visibleSamples[selectedIndex - 1].finishedAt
+                    } label: {
+                        Image(systemName: "chevron.left")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(selectedIndex == nil || selectedIndex == visibleSamples.startIndex)
+                    .help("Previous sample (⌘←)")
+                    .accessibilityLabel("Previous sample")
+                    .accessibilityHint("Moves selection to the previous complete measurement. Press Command–Left Arrow to activate.")
+                    .keyboardShortcut(.leftArrow, modifiers: .command)
+                    Button {
+                        guard let selectedIndex, selectedIndex + 1 < visibleSamples.endIndex else { return }
+                        selection.wrappedValue = visibleSamples[selectedIndex + 1].finishedAt
+                    } label: {
+                        Image(systemName: "chevron.right")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(selectedIndex.map { $0 + 1 >= visibleSamples.endIndex } ?? true)
+                    .help("Next sample (⌘→)")
+                    .accessibilityLabel("Next sample")
+                    .accessibilityHint("Moves selection to the next complete measurement. Press Command–Right Arrow to activate.")
+                    .keyboardShortcut(.rightArrow, modifiers: .command)
                     Button("Clear selection") {
                         selection.wrappedValue = nil
                     }
@@ -5738,7 +5763,7 @@ struct DashboardView: View {
             }
             Text(String.localizedStringWithFormat(
                 NSLocalizedString(
-                    "%ld complete scans of this selected path · %@ · drag across the chart to inspect a saved sample · focused vertical scale",
+                    "%ld complete scans of this selected path · %@ · drag across the chart or select the latest sample to inspect a saved measurement; then use ⌘←/⌘→ · focused vertical scale",
                     comment: "Path-history chart sample count, range, interaction, and scale disclosure"
                 ),
                 Int32(visibleSamples.count),
@@ -5746,6 +5771,13 @@ struct DashboardView: View {
             ))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+            if selectedSample == nil {
+                Button("Select latest sample") {
+                    selection.wrappedValue = visibleSamples.last?.finishedAt
+                }
+                .buttonStyle(.link)
+                .font(.caption2)
+            }
         } else if !fullSeries.isEmpty {
             Text("Fewer than two complete observations of this path in \(historyRangeCaption(endingAt: latestDate)).")
                 .font(.caption2)
