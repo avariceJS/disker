@@ -187,3 +187,123 @@ public struct ProjectResourceReview: Equatable, Sendable {
         return path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
     }
 }
+
+/// Independent growth evidence for the exact paths in a project resource review.
+/// No values are combined because linked and nested paths can overlap.
+public struct ProjectResourceGrowthReview: Equatable, Sendable {
+    public enum Status: Equatable, Sendable {
+        case compared
+        case unmeasured
+        case cancelled
+        case partial
+        case overflowed
+        case needsBaseline
+        case volumeChanged
+        case timeOrderInvalid
+        case previousOverflowed
+        case deltaOverflowed
+    }
+
+    public struct Entry: Equatable, Identifiable, Sendable {
+        public var id: String { path }
+        public let path: String
+        public let current: FolderObservation?
+        public let previous: FolderObservation?
+        public let logicalDelta: Int64?
+        public let allocatedDelta: Int64?
+        public let status: Status
+    }
+
+    public let entries: [Entry]
+
+    private struct RecordedFolder {
+        let scanIndex: Int
+        let scanWasCancelled: Bool
+        let folder: FolderObservation
+    }
+
+    public static func make(for review: ProjectResourceReview, in history: LocalHistory) -> Self {
+        var recordsByPath: [String: [RecordedFolder]] = [:]
+        var scanIndexByFolderID: [UUID: Int] = [:]
+        for (scanIndex, scan) in history.observations.enumerated() {
+            for folder in scan.folders {
+                scanIndexByFolderID[folder.id] = scanIndex
+                recordsByPath[folder.path, default: []].append(RecordedFolder(
+                    scanIndex: scanIndex,
+                    scanWasCancelled: scan.cancelled,
+                    folder: folder
+                ))
+            }
+        }
+
+        let entries = review.entries.map { resource -> Entry in
+            guard let current = resource.observation else {
+                return Entry(
+                    path: resource.path, current: nil, previous: nil,
+                    logicalDelta: nil, allocatedDelta: nil, status: .unmeasured
+                )
+            }
+            if resource.scanWasCancelled {
+                return unavailable(resource.path, current, .cancelled)
+            }
+            if !current.complete {
+                return unavailable(resource.path, current, .partial)
+            }
+            if current.byteAccountingOverflowed || current.logicalBytes < 0 || current.allocatedBytes < 0 {
+                return unavailable(resource.path, current, .overflowed)
+            }
+            guard let currentIndex = scanIndexByFolderID[current.id] else {
+                return unavailable(resource.path, current, .needsBaseline)
+            }
+
+            for record in (recordsByPath[current.path] ?? []).reversed()
+            where record.scanIndex < currentIndex {
+                let candidate = record.folder
+                guard candidate.complete else { continue }
+                if record.scanWasCancelled { continue }
+                guard sameVolume(candidate, current) else {
+                    return unavailable(resource.path, current, .volumeChanged)
+                }
+                guard candidate.finishedAt < current.finishedAt else {
+                    return unavailable(resource.path, current, .timeOrderInvalid)
+                }
+                guard !candidate.byteAccountingOverflowed,
+                      candidate.logicalBytes >= 0, candidate.allocatedBytes >= 0 else {
+                    return unavailable(resource.path, current, .previousOverflowed)
+                }
+                let (logicalDelta, logicalOverflow) = current.logicalBytes.subtractingReportingOverflow(
+                    candidate.logicalBytes
+                )
+                let (allocatedDelta, allocatedOverflow) = current.allocatedBytes.subtractingReportingOverflow(
+                    candidate.allocatedBytes
+                )
+                guard !logicalOverflow, !allocatedOverflow else {
+                    return unavailable(resource.path, current, .deltaOverflowed)
+                }
+                return Entry(
+                    path: resource.path, current: current, previous: candidate,
+                    logicalDelta: logicalDelta, allocatedDelta: allocatedDelta, status: .compared
+                )
+            }
+            return unavailable(resource.path, current, .needsBaseline)
+        }
+        return Self(entries: entries)
+    }
+
+    private static func unavailable(
+        _ path: String, _ current: FolderObservation, _ status: Status
+    ) -> Entry {
+        Entry(
+            path: path, current: current, previous: nil,
+            logicalDelta: nil, allocatedDelta: nil, status: status
+        )
+    }
+
+    private static func sameVolume(_ lhs: FolderObservation, _ rhs: FolderObservation) -> Bool {
+        switch (lhs.volumeDeviceID, rhs.volumeDeviceID) {
+        case let (left?, right?): left == right
+        case (nil, nil): true
+        default: false
+        }
+    }
+}

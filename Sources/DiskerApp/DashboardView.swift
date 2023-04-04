@@ -5202,6 +5202,7 @@ struct DashboardView: View {
 
     private func projectResourceSection(for folder: FolderObservation) -> some View {
         let review = model.projectResourceReview(for: folder.path)
+        let growthReview = ProjectResourceGrowthReview.make(for: review, in: model.history)
         let crossDomainEvidence = model.crossDomainResourceEvidence(for: folder.path)
         let standardizedRoot = URL(fileURLWithPath: folder.path, isDirectory: true).standardizedFileURL.path
         let projectLinkIDs = Set(crossDomainEvidence.links.filter {
@@ -5235,6 +5236,9 @@ struct DashboardView: View {
                     }
                     .font(.caption)
                 }
+                if review.entries.count > 1 {
+                    projectResourceGrowthSection(growthReview)
+                }
                 ForEach(review.entries) { entry in
                     projectResourceRow(entry, projectRootPath: folder.path)
                 }
@@ -5252,6 +5256,118 @@ struct DashboardView: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func projectResourceGrowthSection(_ review: ProjectResourceGrowthReview) -> some View {
+        let comparisons = review.entries.filter { $0.status == .compared }
+        let unavailable = review.entries.filter { $0.status != .compared }
+        return DisclosureGroup {
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Each row compares complete observations of one exact path and volume. Intervals differ; linked paths may overlap. Values are never added and do not establish cause or reclaimable space.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if comparisons.isEmpty {
+                    Text("No comparable complete interval is available yet.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(comparisons.prefix(8))) { entry in
+                        projectResourceGrowthRow(entry)
+                    }
+                    if comparisons.count > 8 {
+                        Text(String.localizedStringWithFormat(
+                            NSLocalizedString("%ld more individual comparisons are available in the path rows below.", comment: "Count of linked path comparisons omitted from the compact project summary"),
+                            Int32(comparisons.count - 8)
+                        ))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if !unavailable.isEmpty {
+                    DisclosureGroup(String.localizedStringWithFormat(
+                        NSLocalizedString("Paths without comparison · %ld", comment: "Count of project paths without a comparable complete interval"),
+                        Int32(unavailable.count)
+                    )) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            ForEach(unavailable) { entry in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(entry.path)
+                                        .font(.caption2.monospaced())
+                                        .textSelection(.enabled)
+                                        .lineLimit(2)
+                                        .truncationMode(.middle)
+                                    Text(projectResourceGrowthStatusText(entry.status))
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
+                    .font(.caption2)
+                }
+            }
+            .padding(.top, 5)
+        } label: {
+            Label(
+                String.localizedStringWithFormat(
+                    NSLocalizedString("Linked path comparisons · %ld", comment: "Count of independent path-to-path historical comparisons"),
+                    Int32(comparisons.count)
+                ),
+                systemImage: "arrow.left.arrow.right"
+            )
+        }
+        .font(.caption)
+    }
+
+    @ViewBuilder
+    private func projectResourceGrowthRow(_ entry: ProjectResourceGrowthReview.Entry) -> some View {
+        if let current = entry.current, let previous = entry.previous,
+           let logicalDelta = entry.logicalDelta, let allocatedDelta = entry.allocatedDelta {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.path)
+                    .font(.caption2.monospaced())
+                    .textSelection(.enabled)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                Text(String.localizedStringWithFormat(
+                    NSLocalizedString("Complete scans: %@ → %@", comment: "Time interval for a single exact project resource path comparison"),
+                    previous.finishedAt.formatted(date: .abbreviated, time: .shortened),
+                    current.finishedAt.formatted(date: .abbreviated, time: .shortened)
+                ))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(String.localizedStringWithFormat(
+                    NSLocalizedString("Logical %@ · allocated estimate %@", comment: "Separate logical and allocated estimate changes for one project resource path"),
+                    formattedDelta(logicalDelta), formattedDelta(allocatedDelta)
+                ))
+                    .font(.caption2.monospacedDigit().weight(.medium))
+                    .foregroundStyle(allocatedDelta > 0 ? .orange : allocatedDelta < 0 ? .green : .secondary)
+                Text("Complete coverage inside this selected path at both scans.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4)
+            .background(alignment: .bottom) { Divider() }
+        }
+    }
+
+    private func projectResourceGrowthStatusText(_ status: ProjectResourceGrowthReview.Status) -> String {
+        switch status {
+        case .compared: NSLocalizedString("Compared", comment: "A linked path has two comparable complete observations")
+        case .unmeasured: NSLocalizedString("No measurement saved", comment: "A linked path has never been measured")
+        case .cancelled: NSLocalizedString("Latest observation was cancelled", comment: "A cancelled scan suppresses linked path growth")
+        case .partial: NSLocalizedString("Latest observation is partial", comment: "A partial scan suppresses linked path growth")
+        case .overflowed: NSLocalizedString("Current accounting overflowed", comment: "An overflowed current scan cannot be compared")
+        case .needsBaseline: NSLocalizedString("A second complete scan is needed", comment: "A linked path has no prior complete observation")
+        case .volumeChanged: NSLocalizedString("Volume identity changed", comment: "A linked path moved to a different volume identity")
+        case .timeOrderInvalid: NSLocalizedString("Observation timestamps are not increasing", comment: "A non-monotonic interval is withheld")
+        case .previousOverflowed: NSLocalizedString("Prior accounting overflowed", comment: "An overflowed prior scan cannot be compared")
+        case .deltaOverflowed: NSLocalizedString("Byte delta exceeds the supported range", comment: "A byte difference overflowed")
+        }
     }
 
     private func projectResourceRow(

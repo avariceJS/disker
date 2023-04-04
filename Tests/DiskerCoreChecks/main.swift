@@ -48,6 +48,7 @@ private struct DiskerCoreChecks {
             ("explicit app-folder associations", testApplicationFolderAssociations),
             ("bounded explicit project-resource associations", testProjectResourceAssociations),
             ("project resource review preserves scope and coverage evidence", testProjectResourceReview),
+            ("project linked growth compares exact paths independently", testProjectResourceGrowthReview),
             ("bounded read-only selected-scope bookmarks", testSelectedScopeBookmarks),
             ("bounded persisted selected-root monitoring choices", testStorageMonitoringPreferences),
             ("typed no-follow selected-scope path probe", testSelectedScopePathProbeStatuses),
@@ -1869,6 +1870,144 @@ private struct DiskerCoreChecks {
             try expect(review.entries.allSatisfy { $0.observation?.logicalBytes ?? 0 >= 0 },
                        "the review should expose measurements only per path and must not fabricate an aggregate")
         }
+    }
+
+    private static func testProjectResourceGrowthReview() throws {
+        let root = "/synthetic/project-growth"
+        let nested = root + "/nested"
+        let shared = "/synthetic/shared-growth"
+        let partial = "/synthetic/partial-growth"
+        let cancelled = "/synthetic/cancelled-growth"
+        let baseline = "/synthetic/baseline-only-growth"
+        let changedVolume = "/synthetic/volume-change-growth"
+        let overflow = "/synthetic/overflow-growth"
+        let previousOverflow = "/synthetic/previous-overflow-growth"
+        let invalidTime = "/synthetic/invalid-time-growth"
+        let unmeasured = "/synthetic/unmeasured-growth"
+
+        func folder(
+            _ path: String, time: TimeInterval, logical: Int64, allocated: Int64,
+            volume: UInt64 = 7, complete: Bool = true, overflowed: Bool = false
+        ) -> FolderObservation {
+            FolderObservation(
+                path: path, volumeDeviceID: volume, displayName: URL(fileURLWithPath: path).lastPathComponent,
+                logicalBytes: logical, allocatedBytes: allocated, fileCount: 1,
+                inaccessibleCount: complete ? 0 : 1, finishedAt: Date(timeIntervalSince1970: time),
+                complete: complete, byteAccountingOverflowed: overflowed
+            )
+        }
+
+        let firstScan = ScanObservation(
+            startedAt: Date(timeIntervalSince1970: 10),
+            finishedAt: Date(timeIntervalSince1970: 50),
+            folders: [
+                folder(root, time: 10, logical: 10, allocated: 4_096),
+                folder(nested, time: 10, logical: 5, allocated: 4_096),
+                folder(shared, time: 40, logical: 20, allocated: 8_192),
+                folder(partial, time: 10, logical: 30, allocated: 4_096),
+                folder(cancelled, time: 10, logical: 40, allocated: 4_096),
+                folder(changedVolume, time: 10, logical: 50, allocated: 4_096, volume: 11),
+                folder(previousOverflow, time: 10, logical: 60, allocated: 4_096, overflowed: true),
+                folder(invalidTime, time: 200, logical: 70, allocated: 4_096),
+            ],
+            cancelled: false
+        )
+        let secondScan = ScanObservation(
+            startedAt: Date(timeIntervalSince1970: 100),
+            finishedAt: Date(timeIntervalSince1970: 180),
+            folders: [
+                folder(root, time: 100, logical: 32_778, allocated: 12_288),
+                folder(nested, time: 100, logical: 17, allocated: 8_192),
+                folder(shared, time: 150, logical: 15, allocated: 4_096),
+                folder(partial, time: 100, logical: 31, allocated: 4_096, complete: false),
+                folder(changedVolume, time: 100, logical: 55, allocated: 8_192, volume: 12),
+                folder(baseline, time: 100, logical: 80, allocated: 4_096),
+                folder(overflow, time: 100, logical: 90, allocated: 4_096, overflowed: true),
+                folder(previousOverflow, time: 100, logical: 61, allocated: 8_192),
+                folder(invalidTime, time: 100, logical: 75, allocated: 8_192),
+            ],
+            cancelled: false
+        )
+        let cancelledScan = ScanObservation(
+            startedAt: Date(timeIntervalSince1970: 200),
+            finishedAt: Date(timeIntervalSince1970: 200),
+            folders: [folder(cancelled, time: 200, logical: 41, allocated: 8_192)],
+            cancelled: true
+        )
+        let association = try ProjectResourceAssociation(
+            projectRootPath: root,
+            relatedFolderPaths: [nested, shared, partial, cancelled, baseline, changedVolume,
+                                 overflow, previousOverflow, invalidTime, unmeasured]
+        )
+        let history = LocalHistory(
+            observations: [firstScan, secondScan, cancelledScan],
+            projectResourceAssociations: [association]
+        )
+        let review = ProjectResourceReview.make(for: root, in: history)
+        let growth = ProjectResourceGrowthReview.make(for: review, in: history)
+        let byPath = Dictionary(uniqueKeysWithValues: growth.entries.map { ($0.path, $0) })
+
+        try expect(byPath[root]?.status == .compared
+                   && byPath[root]?.logicalDelta == 32_768
+                   && byPath[root]?.allocatedDelta == 8_192,
+                   "the selected project root should show its own exact complete-observation deltas")
+        try expect(byPath[shared]?.status == .compared
+                   && byPath[shared]?.logicalDelta == -5
+                   && byPath[shared]?.allocatedDelta == -4_096
+                   && byPath[shared]?.previous?.finishedAt == Date(timeIntervalSince1970: 40),
+                   "each linked path should retain its own direction, values, and interval")
+        try expect(byPath[nested]?.status == .compared && byPath[nested]?.allocatedDelta == 4_096,
+                   "nested linked paths remain separate comparisons and are never folded into the root")
+        try expect(byPath[partial]?.status == .partial && byPath[partial]?.allocatedDelta == nil,
+                   "a newer partial observation must suppress stale growth")
+        try expect(byPath[cancelled]?.status == .cancelled && byPath[cancelled]?.allocatedDelta == nil,
+                   "a folder observation from a cancelled scan must not be compared")
+        try expect(byPath[baseline]?.status == .needsBaseline,
+                   "a single complete observation should request a second baseline")
+        try expect(byPath[changedVolume]?.status == .volumeChanged,
+                   "the same path on a different volume must not be compared")
+        try expect(byPath[overflow]?.status == .overflowed,
+                   "current accounting overflow must withhold a growth delta")
+        try expect(byPath[previousOverflow]?.status == .previousOverflowed,
+                   "an overflowed prior measurement must not seed a comparison")
+        try expect(byPath[invalidTime]?.status == .timeOrderInvalid,
+                   "a non-monotonic measurement interval must be withheld")
+        try expect(byPath[unmeasured]?.status == .unmeasured,
+                   "a linked but unmeasured path must remain unknown")
+        try expect(growth.entries.count == 11
+                   && !String(describing: growth).contains("totalAllocatedDelta"),
+                   "the projection should preserve one row per linked path without an aggregate")
+
+        let benchmarkRoot = "/synthetic/project-growth-bound"
+        let benchmarkPaths = [benchmarkRoot] + (0..<ProjectResourceAssociation.maximumRelatedFolderCount).map {
+            "/synthetic/project-growth-bound/resource-\($0)"
+        }
+        let benchmarkAssociation = try ProjectResourceAssociation(
+            projectRootPath: benchmarkRoot, relatedFolderPaths: Array(benchmarkPaths.dropFirst())
+        )
+        let benchmarkScans = (0..<180).map { scanIndex in
+            let observedAt = Date(timeIntervalSince1970: TimeInterval(scanIndex + 1))
+            let folders = benchmarkPaths.map { path in
+                FolderObservation(
+                    path: path, volumeDeviceID: 9,
+                    displayName: URL(fileURLWithPath: path).lastPathComponent,
+                    logicalBytes: Int64(scanIndex), allocatedBytes: Int64(4_096 + scanIndex),
+                    fileCount: 1, inaccessibleCount: 0, finishedAt: observedAt, complete: true
+                )
+            }
+            return ScanObservation(startedAt: observedAt, folders: folders, cancelled: false)
+        }
+        let benchmarkHistory = LocalHistory(
+            observations: benchmarkScans, projectResourceAssociations: [benchmarkAssociation]
+        )
+        let benchmarkStartedAt = ProcessInfo.processInfo.systemUptime
+        let boundedReview = ProjectResourceReview.make(for: benchmarkRoot, in: benchmarkHistory)
+        let boundedGrowth = ProjectResourceGrowthReview.make(for: boundedReview, in: benchmarkHistory)
+        let elapsed = ProcessInfo.processInfo.systemUptime - benchmarkStartedAt
+        try expect(boundedGrowth.entries.count == 51
+                   && boundedGrowth.entries.allSatisfy({ $0.status == .compared }),
+                   "the maximum linked-resource set should compare all paths from bounded history")
+        print(String(format: "  maximum project growth review (51 paths × 180 scans): %.3f s", elapsed))
     }
 
     private static func testSelectedScopeBookmarks() throws {
