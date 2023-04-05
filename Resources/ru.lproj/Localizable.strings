@@ -195,10 +195,10 @@
 "Saved project access resolves elsewhere · no check was performed" = "Сохранённый доступ ведёт в другое место · проверка не выполнена";
 "Selected folder is available · ancestor paths were not checked" = "Выбранная папка доступна · родительские пути не проверялись";
 "Selected bundle directory is available · ancestor paths were not checked" = "Выбранный пакет приложения доступен · родительские пути не проверялись";
-"Confirm Git-Marked Project Folder" = "Подтвердите папку с Git-маркером";
-"Measure Project" = "Измерить проект";
-"Choose this exact Git-marked folder to record a separate metadata-only project measurement. Its size remains separate from the selected parent folder." = "Выберите именно эту папку с Git-маркером, чтобы отдельно измерить метаданные проекта. Её размер будет показан отдельно от выбранной родительской папки.";
-"Choose the same Git-marked project folder to measure its exact path. No scan was started." = "Выберите ту же папку проекта с Git-маркером, чтобы измерить точный путь. Сканирование не запускалось.";
-"Measure exact project folder…" = "Отдельно измерить папку проекта…";
-"Confirm this exact Git-marked folder before a separate metadata-only measurement" = "Подтвердить точную папку с Git-маркером перед отдельным измерением метаданных";
-"Measure project folder %@" = "Измерить папку проекта %@";
+"Confirm Candidate Folder" = "Подтвердите папку-кандидат";
+"Measure Folder" = "Измерить папку";
+"Choose this exact candidate folder to record a separate metadata-only measurement. Its size remains separate from the selected parent folder." = "Выберите именно эту папку-кандидат для отдельного измерения метаданных. Её размер будет показан отдельно от выбранной родительской папки.";
+"Choose the same candidate folder to measure its exact path. No scan was started." = "Выберите ту же папку-кандидат, чтобы измерить точный путь. Сканирование не запускалось.";
+"Measure exact folder…" = "Отдельно измерить папку…";
+"Confirm this exact candidate folder before a separate metadata-only measurement" = "Подтвердить точную папку-кандидат перед отдельным измерением метаданных";
+"Measure candidate folder %@" = "Измерить папку-кандидат %@";
