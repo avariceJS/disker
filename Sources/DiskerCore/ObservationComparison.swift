@@ -36,6 +36,17 @@ public enum ObservationComparison {
         public let folderGrowth: [FolderGrowthSignal]
     }
 
+    /// One complete selected-root observation of the same relative directory.
+    /// Values stay attached to that exact subtree and are never aggregated.
+    public struct DirectoryHistoryPoint: Equatable, Identifiable, Sendable {
+        public var id: UUID { folderID }
+        public let folderID: UUID
+        public let finishedAt: Date
+        public let logicalBytes: Int64
+        public let allocatedBytes: Int64
+        public let fileCount: Int
+    }
+
     public struct FileExtensionGrowthSignal: Equatable, Identifiable, Sendable {
         public var id: String { extensionName }
         public let extensionName: String
@@ -557,6 +568,85 @@ public enum ObservationComparison {
         history: LocalHistory
     ) -> DirectoryUsage? {
         previousCompleteDirectoryObservation(for: current, in: folder, history: history)?.directory
+    }
+
+    /// Returns the trailing series for one exact relative directory inside the
+    /// same selected root and volume. A complete scan where the path is absent
+    /// ends the series; when the bounded directory summary is truncated, an
+    /// absent row is unknown and also ends the series. Partial and cancelled
+    /// observations never contribute points.
+    public static func completeDirectorySeries(
+        for current: DirectoryUsage,
+        in folder: FolderObservation,
+        history: LocalHistory
+    ) -> [DirectoryHistoryPoint] {
+        guard folder.complete, current.complete,
+              !folder.byteAccountingOverflowed,
+              current.logicalBytes >= 0, current.allocatedBytes >= 0, current.fileCount >= 0,
+              directorySummary(for: current.rootRelativePath, in: folder) == current,
+              let currentIndex = history.observations.firstIndex(where: { observation in
+                  observation.folders.contains(where: { $0.id == folder.id })
+              }), !history.observations[currentIndex].cancelled,
+              history.observations[(currentIndex + 1)...].allSatisfy({ observation in
+                  !observation.folders.contains(where: { $0.path == folder.path })
+              })
+        else { return [] }
+
+        var prior: [DirectoryHistoryPoint] = []
+        var laterFinishedAt = folder.finishedAt
+        for scan in history.observations[..<currentIndex].reversed() {
+            guard let candidateFolder = scan.folders.first(where: { $0.path == folder.path }) else {
+                continue
+            }
+            guard !scan.cancelled, candidateFolder.complete,
+                  !candidateFolder.byteAccountingOverflowed else { continue }
+            guard sameFolderVolume(candidateFolder, folder) else { break }
+            guard candidateFolder.finishedAt < laterFinishedAt else { break }
+            guard let candidateDirectory = directorySummary(
+                for: current.rootRelativePath, in: candidateFolder
+            ) else {
+                // The path may have been omitted by the bounded summary.
+                // Never bridge across missing or unknown directory evidence.
+                break
+            }
+            guard candidateDirectory.complete,
+                  candidateDirectory.logicalBytes >= 0,
+                  candidateDirectory.allocatedBytes >= 0,
+                  candidateDirectory.fileCount >= 0 else { break }
+            prior.append(DirectoryHistoryPoint(
+                folderID: candidateFolder.id,
+                finishedAt: candidateFolder.finishedAt,
+                logicalBytes: candidateDirectory.logicalBytes,
+                allocatedBytes: candidateDirectory.allocatedBytes,
+                fileCount: candidateDirectory.fileCount
+            ))
+            laterFinishedAt = candidateFolder.finishedAt
+        }
+
+        return prior.reversed() + [DirectoryHistoryPoint(
+            folderID: folder.id,
+            finishedAt: folder.finishedAt,
+            logicalBytes: current.logicalBytes,
+            allocatedBytes: current.allocatedBytes,
+            fileCount: current.fileCount
+        )]
+    }
+
+    private static func directorySummary(
+        for relativePath: String, in folder: FolderObservation
+    ) -> DirectoryUsage? {
+        if let gitMetadataUsage = folder.gitMetadataUsage,
+           gitMetadataUsage.rootRelativePath == relativePath {
+            return gitMetadataUsage
+        }
+        if let projectSummary = folder.projectDirectorySummaries.first(where: {
+            $0.rootRelativePath == relativePath
+        }) {
+            return projectSummary
+        }
+        return folder.subdirectorySummaries.first(where: {
+            $0.rootRelativePath == relativePath
+        })
     }
 
     /// Returns the prior complete observation and its directory summary for

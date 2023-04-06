@@ -118,6 +118,12 @@
 "Saved access points elsewhere · no check performed" = "Сохранённый доступ ведёт в другое место · проверка не выполнена";
 "No RAM sample selected" = "Снимок ОЗУ не выбран";
 "Select latest sample" = "Выбрать последний снимок";
+"Candidate history · %ld complete scans" = "История кандидата · %ld полных измерений";
+"One complete candidate observation is retained; another is needed for a history chart." = "Сохранено одно полное измерение кандидата; для графика нужно повторное измерение.";
+"Measured allocated-byte estimates for this exact directory. Nested candidates are shown separately; the line connects observations and does not represent measurements between scans." = "Оценки выделенного места для этой точной папки. Вложенные кандидаты показаны отдельно; линия соединяет измерения и не обозначает замеры между сканированиями.";
+"Allocated estimate (%@)" = "Оценка выделенного места (%@)";
+"Candidate history for %@ · %ld complete scans" = "История кандидата %@ · %ld полных измерений";
+"Logical %@ · allocated estimate ~%@" = "Логический размер %@ · оценка выделенного места ~%@";
 "Selects the newest recorded RAM snapshot." = "Выбирает последний сохранённый снимок ОЗУ.";
 "Previous sample" = "Предыдущий снимок";
 "Moves selection to the previous RAM sample." = "Перемещает выбор к предыдущему снимку ОЗУ.";

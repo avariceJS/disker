@@ -79,6 +79,7 @@ private struct DiskerCoreChecks {
             ("nested directory usage summaries", testNestedDirectorySummaries),
             ("cautious development storage hints", testStorageAreaHints),
             ("read-only developer artifact review", testDeveloperArtifactReview),
+            ("developer artifact review exposes exact candidate history", testDeveloperArtifactHistory),
             ("read-only developer artifact investigation recommendations", testDeveloperArtifactRecommendations),
             ("cautious file artifact hints", testFileArtifactHints),
             ("Git metadata marker detection", testGitMetadataMarkerDetection),
@@ -107,6 +108,7 @@ private struct DiskerCoreChecks {
             ("same-path complete history comparison", testSamePathCompleteHistoryComparison),
             ("selected-folder growth highlights", testFolderGrowthHighlights),
             ("same-root complete directory growth comparison", testDirectoryGrowthComparison),
+            ("bounded exact-path directory history series", testDirectoryHistorySeries),
             ("same-path complete largest-file growth", testLargestFileGrowthComparison),
             ("newly observed large-file review", testNewlyObservedLargeFileReview),
             ("selected file root mutation remains partial", testSelectedFileRootMutationCoverage),
@@ -3726,6 +3728,81 @@ private struct DiskerCoreChecks {
                    "dedicated direct Git metadata summaries should participate in exact-path history")
     }
 
+    private static func testDeveloperArtifactHistory() throws {
+        let root = "/synthetic/candidate-history"
+        let observedAt = [Date(timeIntervalSince1970: 10), Date(timeIntervalSince1970: 20)]
+
+        func summary(_ path: String, allocated: Int64) -> DirectoryUsage {
+            DirectoryUsage(
+                rootRelativePath: path, logicalBytes: allocated * 2,
+                allocatedBytes: allocated, fileCount: 1,
+                incompleteCount: 0, excludedSymlinkCount: 0, complete: true
+            )
+        }
+
+        func folder(at index: Int, model: Int64, nested: Int64) -> FolderObservation {
+            FolderObservation(
+                path: root, volumeDeviceID: 7, displayName: "candidate-history",
+                logicalBytes: (model + nested) * 2, allocatedBytes: model + nested,
+                fileCount: 2, inaccessibleCount: 0, finishedAt: observedAt[index],
+                complete: true,
+                projectDirectorySummaries: [
+                    summary("models", allocated: model),
+                    summary("models/checkpoints", allocated: nested),
+                ]
+            )
+        }
+
+        let previous = folder(at: 0, model: 100, nested: 50)
+        let current = folder(at: 1, model: 250, nested: 90)
+        let history = LocalHistory(observations: [
+            ScanObservation(startedAt: previous.finishedAt, folders: [previous], cancelled: false),
+            ScanObservation(startedAt: current.finishedAt, folders: [current], cancelled: false),
+        ])
+        let review = DeveloperArtifactReview.make(from: current, in: history)
+        let entries = Dictionary(uniqueKeysWithValues: review.entries.map { ($0.relativePath, $0) })
+
+        try expect(entries["models"]?.history.map(\.allocatedBytes) == [100, 250]
+                   && entries["models"]?.historicalChange?.allocatedBytesChange == 150,
+                   "the review should expose complete history for the exact parent candidate")
+        try expect(entries["models/checkpoints"]?.history.map(\.allocatedBytes) == [50, 90]
+                   && entries["models/checkpoints"]?.historicalChange?.allocatedBytesChange == 40,
+                   "nested artifact history should remain an independent series rather than joining its parent")
+
+        let boundedPaths = (0..<20).map { "group-\($0)/models" }
+        let boundedScans = (0..<180).map { scanIndex in
+            let finishedAt = Date(timeIntervalSince1970: TimeInterval(scanIndex + 1))
+            let summaries = boundedPaths.map { path in
+                DirectoryUsage(
+                    rootRelativePath: path,
+                    logicalBytes: Int64((scanIndex + 1) * 2),
+                    allocatedBytes: Int64(scanIndex + 1), fileCount: 1,
+                    incompleteCount: 0, excludedSymlinkCount: 0, complete: true
+                )
+            }
+            let observation = FolderObservation(
+                path: root, volumeDeviceID: 7, displayName: "candidate-history",
+                logicalBytes: Int64(summaries.count * (scanIndex + 1) * 2),
+                allocatedBytes: Int64(summaries.count * (scanIndex + 1)),
+                fileCount: summaries.count, inaccessibleCount: 0,
+                finishedAt: finishedAt, complete: true,
+                projectDirectorySummaries: summaries
+            )
+            return ScanObservation(startedAt: finishedAt, folders: [observation], cancelled: false)
+        }
+        let boundedHistory = LocalHistory(observations: boundedScans)
+        guard let latestFolder = boundedScans.last?.folders.first else {
+            throw CheckFailure.assertion("the maximum candidate-history fixture should retain its latest root")
+        }
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        let boundedReview = DeveloperArtifactReview.make(from: latestFolder, in: boundedHistory)
+        let elapsed = ProcessInfo.processInfo.systemUptime - startedAt
+        try expect(boundedReview.entries.count == 20
+                   && boundedReview.entries.allSatisfy({ $0.history.count == 180 }),
+                   "the maximum retained candidate set should expose only the bounded exact-path history")
+        print(String(format: "  maximum candidate history review (20 paths × 180 scans): %.3f s", elapsed))
+    }
+
     private static func testDeveloperArtifactRecommendations() throws {
         let start = Date(timeIntervalSince1970: 1_810_000_000)
         let root = "/selected/recommendations"
@@ -5780,6 +5857,108 @@ private struct DiskerCoreChecks {
             history: directoryVolumeHistory
         ) == nil && ObservationComparison.growingDirectories(in: directoryVolumeHistory).isEmpty,
                    "a clock-future root on a replacement volume must prevent bridging directory history")
+    }
+
+    private static func testDirectoryHistorySeries() throws {
+        let selectedRoot = "/synthetic/history-root"
+        let relativePath = "research/checkpoints"
+
+        func candidate(_ bytes: Int64, complete: Bool = true) -> DirectoryUsage {
+            DirectoryUsage(
+                rootRelativePath: relativePath, logicalBytes: bytes * 2,
+                allocatedBytes: bytes, fileCount: 2,
+                incompleteCount: complete ? 0 : 1, excludedSymlinkCount: 0,
+                complete: complete
+            )
+        }
+
+        func rootObservation(
+            at time: TimeInterval, bytes: Int64, complete: Bool = true,
+            candidateComplete: Bool = true, includeCandidate: Bool = true,
+            summariesTruncated: Bool = false, volume: UInt64 = 7
+        ) -> FolderObservation {
+            FolderObservation(
+                path: selectedRoot, volumeDeviceID: volume,
+                displayName: "history-root", logicalBytes: bytes * 2,
+                allocatedBytes: bytes, fileCount: 3,
+                inaccessibleCount: complete ? 0 : 1,
+                finishedAt: Date(timeIntervalSince1970: time), complete: complete,
+                projectDirectorySummaries: includeCandidate
+                    ? [candidate(bytes, complete: candidateComplete)] : [],
+                projectDirectorySummariesTruncated: summariesTruncated
+            )
+        }
+
+        let first = rootObservation(at: 10, bytes: 1_024)
+        let partial = rootObservation(at: 20, bytes: 9_999, complete: false, candidateComplete: false)
+        let current = rootObservation(at: 30, bytes: 4_096)
+        let history = LocalHistory(observations: [
+            ScanObservation(startedAt: first.finishedAt, folders: [first], cancelled: false),
+            ScanObservation(startedAt: partial.finishedAt, folders: [partial], cancelled: true),
+            ScanObservation(startedAt: current.finishedAt, folders: [current], cancelled: false),
+        ])
+        let currentCandidate = candidate(4_096)
+        let series = ObservationComparison.completeDirectorySeries(
+            for: currentCandidate, in: current, history: history
+        )
+        try expect(series.map(\.allocatedBytes) == [1_024, 4_096]
+                   && series.map(\.logicalBytes) == [2_048, 8_192]
+                   && series.map(\.finishedAt) == [first.finishedAt, current.finishedAt],
+                   "the candidate history should preserve exact observations and skip incomplete scans")
+
+        let absent = rootObservation(at: 20, bytes: 2_000, includeCandidate: false)
+        let afterAbsence = rootObservation(at: 30, bytes: 4_096)
+        let absentHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: first.finishedAt, folders: [first], cancelled: false),
+            ScanObservation(startedAt: absent.finishedAt, folders: [absent], cancelled: false),
+            ScanObservation(startedAt: afterAbsence.finishedAt, folders: [afterAbsence], cancelled: false),
+        ])
+        try expect(ObservationComparison.completeDirectorySeries(
+            for: currentCandidate, in: afterAbsence, history: absentHistory
+        ).map(\.allocatedBytes) == [4_096],
+                   "a complete selected-root observation without the candidate must end its prior series")
+
+        let truncatedAbsence = rootObservation(
+            at: 20, bytes: 2_000, includeCandidate: false, summariesTruncated: true
+        )
+        let truncatedHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: first.finishedAt, folders: [first], cancelled: false),
+            ScanObservation(startedAt: truncatedAbsence.finishedAt, folders: [truncatedAbsence], cancelled: false),
+            ScanObservation(startedAt: afterAbsence.finishedAt, folders: [afterAbsence], cancelled: false),
+        ])
+        try expect(ObservationComparison.completeDirectorySeries(
+            for: currentCandidate, in: afterAbsence, history: truncatedHistory
+        ).map(\.allocatedBytes) == [4_096],
+                   "a missing row in a truncated candidate summary must not bridge older history")
+
+        let changedVolume = rootObservation(at: 20, bytes: 3_000, volume: 8)
+        let volumeHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: first.finishedAt, folders: [first], cancelled: false),
+            ScanObservation(startedAt: changedVolume.finishedAt, folders: [changedVolume], cancelled: false),
+            ScanObservation(startedAt: afterAbsence.finishedAt, folders: [afterAbsence], cancelled: false),
+        ])
+        try expect(ObservationComparison.completeDirectorySeries(
+            for: currentCandidate, in: afterAbsence, history: volumeHistory
+        ).map(\.allocatedBytes) == [4_096],
+                   "a volume identity change must stop the prior candidate series")
+
+        let cancelledCurrentHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: first.finishedAt, folders: [first], cancelled: false),
+            ScanObservation(startedAt: current.finishedAt, folders: [current], cancelled: true),
+        ])
+        try expect(ObservationComparison.completeDirectorySeries(
+            for: currentCandidate, in: current, history: cancelledCurrentHistory
+        ).isEmpty, "a cancelled current scan cannot produce candidate history")
+
+        let newerPartial = rootObservation(at: 40, bytes: 5_000, complete: false)
+        let staleHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: first.finishedAt, folders: [first], cancelled: false),
+            ScanObservation(startedAt: current.finishedAt, folders: [current], cancelled: false),
+            ScanObservation(startedAt: newerPartial.finishedAt, folders: [newerPartial], cancelled: true),
+        ])
+        try expect(ObservationComparison.completeDirectorySeries(
+            for: currentCandidate, in: current, history: staleHistory
+        ).isEmpty, "a newer observation of the selected root must suppress a stale candidate chart")
     }
 
     private static func testLargestFileGrowthComparison() throws {

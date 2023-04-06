@@ -6052,6 +6052,8 @@ struct DashboardView: View {
 
 private struct DeveloperArtifactReviewSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @State private var selectedHistoryPath: String?
+    @State private var selectedHistoryDate: Date?
 
     let folder: FolderObservation
     let history: LocalHistory
@@ -6297,6 +6299,8 @@ private struct DeveloperArtifactReviewSheet: View {
                     .foregroundStyle(.secondary)
             }
 
+            developerArtifactHistory(entry)
+
             if !entry.overlappingCandidatePaths.isEmpty {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Overlapping candidate measurements · do not add")
@@ -6331,6 +6335,130 @@ private struct DeveloperArtifactReviewSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.background, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
+    }
+
+    @ViewBuilder
+    private func developerArtifactHistory(_ entry: DeveloperArtifactReview.Entry) -> some View {
+        if entry.history.count > 1 {
+            DisclosureGroup {
+                developerArtifactHistoryChart(entry)
+                    .padding(.top, 4)
+            } label: {
+                Label(
+                    String.localizedStringWithFormat(
+                        NSLocalizedString("Candidate history · %ld complete scans", comment: "Count of complete observations for one exact development-data candidate"),
+                        Int32(entry.history.count)
+                    ),
+                    systemImage: "chart.xyaxis.line"
+                )
+            }
+            .font(.caption2)
+        } else if entry.history.count == 1 {
+            Text("One complete candidate observation is retained; another is needed for a history chart.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func developerArtifactHistoryChart(_ entry: DeveloperArtifactReview.Entry) -> some View {
+        let samples = entry.history
+        let first = samples[0]
+        let last = samples[samples.count - 1]
+        let largest = samples.map(\.allocatedBytes).max() ?? 0
+        let unit = artifactHistoryUnit(for: largest)
+        let values = samples.map { Double($0.allocatedBytes) / unit.scale }
+        let minimum = values.min() ?? 0
+        let maximum = values.max() ?? minimum
+        let padding = max((maximum - minimum) * 0.15, max(abs(maximum) * 0.03, 0.01))
+        let selection = Binding<Date?>(
+            get: { selectedHistoryPath == entry.path ? selectedHistoryDate : nil },
+            set: {
+                selectedHistoryPath = entry.path
+                selectedHistoryDate = $0
+            }
+        )
+        let selectedSample: ObservationComparison.DirectoryHistoryPoint? = selection.wrappedValue.flatMap {
+            selectedDate -> ObservationComparison.DirectoryHistoryPoint? in
+            guard selectedDate >= first.finishedAt, selectedDate <= last.finishedAt else { return nil }
+            return samples.min {
+                abs($0.finishedAt.timeIntervalSince(selectedDate))
+                    < abs($1.finishedAt.timeIntervalSince(selectedDate))
+            }
+        }
+
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("Measured allocated-byte estimates for this exact directory. Nested candidates are shown separately; the line connects observations and does not represent measurements between scans.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Chart(samples) { sample in
+                LineMark(
+                    x: .value("Observed", sample.finishedAt),
+                    y: .value("Allocated estimate (\(unit.label))", Double(sample.allocatedBytes) / unit.scale)
+                )
+                .foregroundStyle(.indigo)
+                .lineStyle(StrokeStyle(lineWidth: 2))
+                PointMark(
+                    x: .value("Observed", sample.finishedAt),
+                    y: .value("Allocated estimate (\(unit.label))", Double(sample.allocatedBytes) / unit.scale)
+                )
+                .foregroundStyle(.indigo)
+                .symbolSize(34)
+                if let selectedSample, selectedSample.id == sample.id {
+                    RuleMark(x: .value("Selected observation", selectedSample.finishedAt))
+                        .foregroundStyle(.secondary.opacity(0.55))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                }
+            }
+            .chartYScale(domain: max(0, minimum - padding)...(maximum + padding))
+            .chartYAxisLabel(
+                String.localizedStringWithFormat(
+                    NSLocalizedString("Allocated estimate (%@)", comment: "Unit label for exact development-candidate history chart"),
+                    unit.label
+                )
+            )
+            .chartXSelection(value: selection)
+            .frame(height: 116)
+            .accessibilityLabel(String.localizedStringWithFormat(
+                NSLocalizedString("Candidate history for %@ · %ld complete scans", comment: "Accessible name for a development-candidate size history chart"),
+                entry.path, Int32(samples.count)
+            ))
+
+            if let selectedSample {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(String.localizedStringWithFormat(
+                        NSLocalizedString("Logical %@ · allocated estimate ~%@", comment: "Separate logical and allocated estimates at one selected candidate observation"),
+                        format(selectedSample.logicalBytes), format(selectedSample.allocatedBytes)
+                    ))
+                        .font(.caption2.monospacedDigit().weight(.medium))
+                    Spacer(minLength: 4)
+                    Text(selectedSample.finishedAt.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+            } else {
+                Button("Select latest sample") {
+                    selection.wrappedValue = last.finishedAt
+                }
+                .buttonStyle(.link)
+                .font(.caption2)
+                .accessibilityHint("Selects the exact latest complete observation in this chart.")
+            }
+        }
+    }
+
+    private func artifactHistoryUnit(for largestSample: Int64) -> (scale: Double, label: String) {
+        if largestSample >= 1_073_741_824 {
+            (1_073_741_824, "GiB")
+        } else if largestSample >= 1_048_576 {
+            (1_048_576, "MiB")
+        } else if largestSample >= 1_024 {
+            (1_024, "KiB")
+        } else {
+            (1, "bytes")
+        }
     }
 
     private func symbol(for category: DeveloperArtifactReview.Category) -> String {

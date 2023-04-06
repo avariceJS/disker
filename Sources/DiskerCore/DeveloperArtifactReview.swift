@@ -35,6 +35,9 @@ public struct DeveloperArtifactReview: Equatable, Sendable {
         /// when this exact retained candidate appeared in two complete scans
         /// of this same selected root and volume.
         public let historicalChange: HistoricalChange?
+        /// Complete selected-root measurements of this exact relative path.
+        /// This contains no combined parent, child, or sibling totals.
+        public let history: [ObservationComparison.DirectoryHistoryPoint]
 
         public var id: String { path }
     }
@@ -151,7 +154,12 @@ public struct DeveloperArtifactReview: Equatable, Sendable {
                 possibleConsequence: consequence(for: category),
                 caution: caution + overlapNote,
                 overlappingCandidatePaths: overlaps.sorted(),
-                historicalChange: historyByPath[relativePath]
+                historicalChange: historyByPath[relativePath],
+                history: history.map {
+                    ObservationComparison.completeDirectorySeries(
+                        for: summary, in: folder, history: $0
+                    )
+                } ?? []
             )
         }
 
