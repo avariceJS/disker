@@ -6426,6 +6426,7 @@ private struct DeveloperArtifactReviewSheet: View {
             ))
 
             if let selectedSample {
+                let selectedIndex = samples.firstIndex(where: { $0.id == selectedSample.id })
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(String.localizedStringWithFormat(
                         NSLocalizedString("Logical %@ · allocated estimate ~%@", comment: "Separate logical and allocated estimates at one selected candidate observation"),
@@ -6438,6 +6439,39 @@ private struct DeveloperArtifactReviewSheet: View {
                         .foregroundStyle(.secondary)
                 }
                 .accessibilityElement(children: .combine)
+                HStack(spacing: 6) {
+                    Button {
+                        guard let selectedIndex, selectedIndex > samples.startIndex else { return }
+                        selection.wrappedValue = samples[selectedIndex - 1].finishedAt
+                    } label: {
+                        Image(systemName: "chevron.left")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(selectedIndex == nil || selectedIndex == samples.startIndex)
+                    .help("Previous sample (⌘←)")
+                    .accessibilityLabel("Previous sample")
+                    .accessibilityHint("Moves to the previous complete candidate measurement.")
+                    .keyboardShortcut(.leftArrow, modifiers: .command)
+
+                    Button {
+                        guard let selectedIndex, selectedIndex + 1 < samples.endIndex else { return }
+                        selection.wrappedValue = samples[selectedIndex + 1].finishedAt
+                    } label: {
+                        Image(systemName: "chevron.right")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(selectedIndex.map { $0 + 1 >= samples.endIndex } ?? true)
+                    .help("Next sample (⌘→)")
+                    .accessibilityLabel("Next sample")
+                    .accessibilityHint("Moves to the next complete candidate measurement.")
+                    .keyboardShortcut(.rightArrow, modifiers: .command)
+
+                    Button("Clear selection") {
+                        selection.wrappedValue = nil
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption2)
+                }
             } else {
                 Button("Select latest sample") {
                     selection.wrappedValue = last.finishedAt
