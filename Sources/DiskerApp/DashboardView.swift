@@ -98,6 +98,194 @@ private struct DiscoveryStatusBadge: View {
     }
 }
 
+/// ShipSwift's interactive donut pattern, adapted to selected-root byte
+/// evidence and Disker's native compact detail layout.
+private struct SWFileExtensionBreakdownChart: View {
+    let categories: [FileExtensionUsage]
+    let coverageComplete: Bool
+
+    @State private var selectedCategoryID: String?
+    @State private var selectedAngle: Int?
+    @State private var ignoresNextAngleReset = false
+
+    private let palette: [Color] = [.blue, .purple, .teal, .orange, .indigo, .pink]
+
+    private var chartCategories: [FileExtensionUsage] {
+        categories.filter { $0.allocatedBytes > 0 }
+    }
+
+    private var selectedCategory: FileExtensionUsage? {
+        categories.first { $0.extensionName == selectedCategoryID }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+        HStack(alignment: .center, spacing: 18) {
+            if chartCategories.isEmpty {
+                VStack(spacing: 6) {
+                    Image(systemName: "chart.pie")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                    Text("No positive allocated estimates are available for a chart.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(width: 176, height: 150)
+            } else {
+                Chart(chartCategories) { category in
+                    let isSelected = selectedCategoryID == category.extensionName
+                    SectorMark(
+                        angle: .value("Allocated estimate", Int(category.allocatedBytes)),
+                        innerRadius: .ratio(0.64),
+                        outerRadius: .ratio(isSelected ? 0.98 : 0.88),
+                        angularInset: isSelected ? 2 : 1
+                    )
+                    .cornerRadius(4)
+                    .foregroundStyle(by: .value("Filename category", categoryTitle(category)))
+                    .opacity(selectedCategoryID == nil || isSelected ? 1 : 0.34)
+                }
+                .chartLegend(.hidden)
+                .chartForegroundStyleScale(
+                    domain: chartCategories.map(categoryTitle),
+                    range: chartCategories.map { category in
+                        let index = categories.firstIndex(where: { $0.extensionName == category.extensionName }) ?? 0
+                        return palette[index % palette.count]
+                    }
+                )
+                .chartAngleSelection(value: $selectedAngle)
+                .chartBackground { proxy in
+                    GeometryReader { geometry in
+                        if let plotFrame = proxy.plotFrame {
+                            let frame = geometry[plotFrame]
+                            VStack(spacing: 2) {
+                                Text(selectedCategory.map { formatAllocated($0.allocatedBytes) }
+                                     ?? NSLocalizedString("Filename mix", comment: "Default center label for the file-extension chart"))
+                                    .font(.caption.weight(.semibold).monospacedDigit())
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.72)
+                                Text(selectedCategory.map(categoryTitle)
+                                     ?? NSLocalizedString("Select a category", comment: "Hint inside the file-extension chart"))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.center)
+                            }
+                            .frame(width: 96)
+                            .position(x: frame.midX, y: frame.midY)
+                        }
+                    }
+                }
+                .frame(width: 176, height: 150)
+                .accessibilityLabel("Interactive allocated-byte estimate by filename extension")
+                .onChange(of: selectedAngle) { _, angle in
+                    if angle == nil, ignoresNextAngleReset {
+                        ignoresNextAngleReset = false
+                        return
+                    }
+                    selectedCategoryID = angle.flatMap(categoryID(forCumulativeAngle:))
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(Array(categories.enumerated()), id: \.element.extensionName) { index, category in
+                    Button {
+                        let nextID = selectedCategoryID == category.extensionName
+                            ? nil : category.extensionName
+                        if selectedAngle != nil {
+                            ignoresNextAngleReset = true
+                            selectedAngle = nil
+                        }
+                        selectedCategoryID = nextID
+                    } label: {
+                        HStack(spacing: 7) {
+                            Circle()
+                                .fill(palette[index % palette.count])
+                                .frame(width: 7, height: 7)
+                            VStack(alignment: .leading, spacing: 1) {
+                                HStack(spacing: 5) {
+                                    Text(categoryTitle(category))
+                                        .font(.caption2.monospaced())
+                                        .lineLimit(1)
+                                    if category.extensionName != FileExtensionBreakdown.otherCategoryName,
+                                       FileArtifactHint.matching(extensionName: category.extensionName) != nil {
+                                        Image(systemName: "tag")
+                                            .font(.caption2)
+                                            .foregroundStyle(.blue)
+                                            .help("Filename-based clue only; file contents and purpose are not verified.")
+                                    }
+                                    Spacer(minLength: 3)
+                                    Text(formatAllocated(category.allocatedBytes))
+                                        .font(.caption2.monospacedDigit())
+                                }
+                                Text("\(category.fileCount) files")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 3)
+                        .background(
+                            selectedCategoryID == category.extensionName
+                                ? Color.accentColor.opacity(0.10) : .clear,
+                            in: RoundedRectangle(cornerRadius: 5)
+                        )
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(categoryAccessibilityLabel(for: category))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 3)
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Grouped by filename only; file contents and purpose are not verified.")
+            Text(coverageComplete
+                 ? "Allocated-byte estimates describe this selected scan; they do not measure reclaimable space."
+                 : "Partial scan: categories describe measured entries only; the selected folder total remains unknown.")
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func categoryID(forCumulativeAngle angle: Int) -> String? {
+        var cumulative: Int64 = 0
+        for category in chartCategories {
+            let (next, overflow) = cumulative.addingReportingOverflow(category.allocatedBytes)
+            guard !overflow else { return nil }
+            cumulative = next
+            if Int64(angle) <= cumulative { return category.extensionName }
+        }
+        return nil
+    }
+
+    private func categoryTitle(_ category: FileExtensionUsage) -> String {
+        switch category.extensionName {
+        case "no extension": NSLocalizedString("No extension", comment: "Files without a filename extension")
+        case FileExtensionBreakdown.otherCategoryName:
+            NSLocalizedString("Other filename extensions", comment: "Combined categories beyond the chart's leading extensions")
+        default: ".\(category.extensionName)"
+        }
+    }
+
+    private func categoryAccessibilityLabel(for category: FileExtensionUsage) -> String {
+        let format = NSLocalizedString(
+            "%@, %d files, allocated estimate %@",
+            comment: "Accessible label for a filename category in the storage chart"
+        )
+        return String.localizedStringWithFormat(
+            format, categoryTitle(category), category.fileCount, formatAllocated(category.allocatedBytes)
+        )
+    }
+
+    private func formatAllocated(_ bytes: Int64) -> String {
+        "~" + ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+}
+
 private extension ApplicationDiscoveryMeasurementFilter {
     var title: LocalizedStringKey {
         switch self {
@@ -5661,51 +5849,36 @@ struct DashboardView: View {
 
     private func fileExtensionSummary(for folder: FolderObservation) -> some View {
         let summaries = Array(folder.fileExtensionSummaries.prefix(5))
+        let categories = FileExtensionBreakdown.categories(for: folder)
         let growth = ObservationComparison.growingFileExtensions(for: folder, in: model.history)
         return VStack(alignment: .leading, spacing: 4) {
-            Text("Largest filename extensions · allocated estimate")
+            Text("Filename mix · allocated estimate")
                 .font(.caption2.weight(.semibold))
-            ForEach(summaries) { item in
-                HStack(spacing: 8) {
-                    Text(item.extensionName == "no extension" ? "No extension" : ".\(item.extensionName)")
-                        .font(.caption2.monospaced())
-                        .lineLimit(1)
-                    if let hint = FileArtifactHint.matching(extensionName: item.extensionName) {
-                        Label(hint.title, systemImage: "tag")
-                            .font(.caption2)
-                            .foregroundStyle(.blue)
+            if let categories {
+                SWFileExtensionBreakdownChart(categories: categories, coverageComplete: folder.complete)
+            } else {
+                ForEach(summaries) { item in
+                    HStack(spacing: 8) {
+                        Text(item.extensionName == "no extension" ? "No extension" : ".\(item.extensionName)")
+                            .font(.caption2.monospaced())
                             .lineLimit(1)
-                            .help("Filename-based clue only. Disker does not inspect this category's contents or determine whether it is safe to remove.")
+                        if FileArtifactHint.matching(extensionName: item.extensionName) != nil {
+                            Image(systemName: "tag")
+                                .font(.caption2)
+                                .foregroundStyle(.blue)
+                                .help("Filename-based clue only; file contents and purpose are not verified.")
+                        }
+                        Text("\(item.fileCount) files")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 4)
+                        Text(format(item.allocatedBytes))
+                            .font(.caption2.monospacedDigit())
                     }
-                    Text("\(item.fileCount) files")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 4)
-                    Text(format(item.allocatedBytes))
-                        .font(.caption2.monospacedDigit())
                 }
-            }
-            if folder.fileExtensionSummariesTruncated || folder.fileExtensionSummaries.count > summaries.count {
-                Text(folder.fileExtensionSummariesTruncated
-                     ? "Showing the five largest of the 30 retained filename categories."
-                     : "Showing the five largest filename categories.")
+                Text("A complete filename breakdown is unavailable for this saved observation.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-            }
-            if let other = folder.otherFileExtensionUsage,
-               folder.otherFileExtensionCategoryCount > 0 {
-                HStack(spacing: 8) {
-                    Text("Other \(folder.otherFileExtensionCategoryCount) extensions")
-                        .font(.caption2)
-                    Text("\(other.fileCount) files")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 4)
-                    Text(format(other.allocatedBytes))
-                        .font(.caption2.monospacedDigit())
-                }
-                .accessibilityElement(children: .combine)
-                .help("Combined allocated-byte estimate for filename categories beyond the 30-category retention limit.")
             }
             if let growth, !growth.isEmpty,
                let previous = model.previousCompleteObservation(for: folder) {

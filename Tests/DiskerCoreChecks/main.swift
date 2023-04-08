@@ -67,6 +67,7 @@ private struct DiskerCoreChecks {
             ("nested volume boundaries are skipped and partial", testNestedVolumeBoundary),
             ("special filesystem entries remain partial and uncounted", testSpecialFileExclusion),
             ("metadata-only filename extension summaries", testFileExtensionSummaries),
+            ("bounded file-extension chart breakdown preserves measured totals", testFileExtensionBreakdown),
             ("Disker own-footprint scan stays in app-owned scope", testDiskerFootprintScope),
             ("selected-scope duplicate verification", testDuplicateVerification),
             ("duplicate reads stay inside selected root volumes", testDuplicateVolumeBoundary),
@@ -3063,6 +3064,65 @@ private struct DiskerCoreChecks {
             try expect(cappedDecoded.otherFileExtensionUsage == capped.otherFileExtensionUsage
                        && cappedDecoded.otherFileExtensionCategoryCount == 5,
                        "omitted filename-category totals should persist as a bounded aggregate")
+        }
+    }
+
+    private static func testFileExtensionBreakdown() throws {
+        try withTemporaryDirectory { root in
+            let selected = root.appendingPathComponent("selected", isDirectory: true)
+            try FileManager.default.createDirectory(at: selected, withIntermediateDirectories: false)
+            for index in 0..<35 {
+                let ext = String(format: "e%02d", index)
+                try Data(repeating: UInt8(index), count: 100 + index)
+                    .write(to: selected.appendingPathComponent("sample.\(ext)"))
+            }
+            let folder = FolderScanner.scan(roots: [selected]).folders[0]
+            guard let categories = FileExtensionBreakdown.categories(for: folder) else {
+                throw CheckFailure.assertion("the complete extension summaries should produce chart categories")
+            }
+            try expect(categories.count == 6
+                       && categories.prefix(5).allSatisfy { $0.extensionName != FileExtensionBreakdown.otherCategoryName }
+                       && categories.last?.extensionName == FileExtensionBreakdown.otherCategoryName,
+                       "the chart should retain five largest categories and combine the remainder")
+            try expect(categories.reduce(Int64(0)) { $0 + $1.logicalBytes } == folder.logicalBytes
+                       && categories.reduce(Int64(0)) { $0 + $1.allocatedBytes } == folder.allocatedBytes
+                       && categories.reduce(0) { $0 + $1.fileCount } == folder.fileCount,
+                       "the bounded chart groups should reconcile exactly to this complete scan's file totals")
+
+            var oldRecord = try JSONSerialization.jsonObject(with: JSONEncoder().encode(folder)) as! [String: Any]
+            oldRecord.removeValue(forKey: "otherFileExtensionUsage")
+            let legacyFolder = try JSONDecoder().decode(
+                FolderObservation.self, from: JSONSerialization.data(withJSONObject: oldRecord)
+            )
+            try expect(FileExtensionBreakdown.categories(for: legacyFolder) == nil,
+                       "a legacy truncated record without its omitted-category aggregate must not produce a complete chart")
+
+            let overflowedFolder = FolderObservation(
+                path: folder.path, volumeDeviceID: folder.volumeDeviceID, displayName: folder.displayName,
+                logicalBytes: folder.logicalBytes, allocatedBytes: folder.allocatedBytes,
+                fileCount: folder.fileCount, fileExtensionSummaries: folder.fileExtensionSummaries,
+                fileExtensionSummariesTruncated: folder.fileExtensionSummariesTruncated,
+                otherFileExtensionUsage: folder.otherFileExtensionUsage,
+                otherFileExtensionCategoryCount: folder.otherFileExtensionCategoryCount,
+                inaccessibleCount: folder.inaccessibleCount, finishedAt: folder.finishedAt,
+                complete: folder.complete, byteAccountingOverflowed: true
+            )
+            try expect(FileExtensionBreakdown.categories(for: overflowedFolder) == nil,
+                       "overflowed byte accounting must suppress the chart breakdown")
+
+            let malformedFolder = FolderObservation(
+                path: folder.path, volumeDeviceID: folder.volumeDeviceID, displayName: folder.displayName,
+                logicalBytes: Int64.max, allocatedBytes: Int64.max, fileCount: 4,
+                fileExtensionSummaries: [
+                    FileExtensionUsage(extensionName: "largest", logicalBytes: 1, allocatedBytes: 10, fileCount: 1),
+                    FileExtensionUsage(extensionName: "overflow-a", logicalBytes: Int64.max, allocatedBytes: Int64.max, fileCount: 1),
+                    FileExtensionUsage(extensionName: "overflow-b", logicalBytes: 1, allocatedBytes: 1, fileCount: 1),
+                    FileExtensionUsage(extensionName: "overflow-c", logicalBytes: 1, allocatedBytes: 1, fileCount: 1),
+                ],
+                inaccessibleCount: 0, complete: true
+            )
+            try expect(FileExtensionBreakdown.categories(for: malformedFolder, visibleLimit: 1) == nil,
+                       "overflow while combining visible remainder categories must fail closed")
         }
     }
 
