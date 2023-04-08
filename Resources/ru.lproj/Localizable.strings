@@ -103,6 +103,7 @@
 "Measured so far · logical %@ · allocated estimate ~%@ · total unknown" = "Пока измерено · логический размер %@ · оценка выделенного места ~%@ · общий размер неизвестен";
 "Logical %@ · allocated estimate ~%@" = "Логический размер %@ · оценка выделенного места ~%@";
 "Filename mix · allocated estimate" = "Состав по расширениям · оценка выделенного места";
+"Measured bundle filename mix" = "Состав измеренного пакета по расширениям";
 "Filename mix" = "Состав по расширениям";
 "Select a category" = "Выберите категорию";
 "No extension" = "Без расширения";

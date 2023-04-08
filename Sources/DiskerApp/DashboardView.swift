@@ -2944,6 +2944,17 @@ struct DashboardView: View {
                                 .padding(12)
                                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
                             }
+                            if !bundle.fileExtensionSummaries.isEmpty {
+                                DisclosureGroup {
+                                    fileExtensionSummary(for: bundle)
+                                        .padding(.top, 6)
+                                } label: {
+                                    Label("Measured bundle filename mix", systemImage: "chart.pie")
+                                        .font(.subheadline.weight(.semibold))
+                                }
+                                .padding(12)
+                                .background(.blue.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+                            }
                             DisclosureGroup {
                                 fileInventoryChangeSection(for: bundle, showHeading: false)
                                     .padding(.top, 6)
