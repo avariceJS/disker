@@ -75,6 +75,7 @@
 "Complete" = "Полностью";
 "Last measured · %@" = "Последнее измерение · %@";
 "First seen by Disker · %@" = "Впервые найдено Disker · %@";
+"Last observed in Spotlight index · %@" = "Последний раз обнаружено в индексе Spotlight · %@";
 "View measurement" = "Показать измерение";
 "Measure again…" = "Измерить повторно…";
 "Measure…" = "Измерить…";

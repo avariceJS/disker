@@ -3229,6 +3229,9 @@ struct DashboardView: View {
                                 Text("First seen by Disker · \(record.firstSeenAt.formatted(date: .abbreviated, time: .shortened))")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
+                                Text("Last observed in Spotlight index · \(record.lastSeenAt.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
                                 if let lastOpened = record.launchServicesLastOpenedAt {
                                     Text("Launch Services last-open date · \(lastOpened.formatted(date: .abbreviated, time: .shortened))")
                                         .font(.caption2)
