@@ -63,6 +63,14 @@ public enum ApplicationDiscoveryMeasurementFilter: String, CaseIterable, Identif
     }
 }
 
+public enum ApplicationDiscoverySort: String, CaseIterable, Identifiable, Sendable {
+    case name
+    case largestCompleteMeasurement
+    case recentlyObserved
+
+    public var id: String { rawValue }
+}
+
 public enum ApplicationBundleIndex {
     public static let maximumDiscoveryRecords = 500
     public static let maximumSearchableDiscoveryResults = 5_000
@@ -168,6 +176,54 @@ public enum ApplicationBundleIndex {
             if $0.lastSeenAt != $1.lastSeenAt { return $0.lastSeenAt > $1.lastSeenAt }
             return $0.path < $1.path
         }.prefix(limit).map { $0 }
+    }
+
+    /// Orders the current bounded catalog without promoting partial measurements
+    /// into a size ranking. Missing and partial size evidence stays after complete
+    /// measurements and remains alphabetized within that unknown-size group.
+    public static func sortedCandidates(
+        _ candidates: [ApplicationDiscoveryCandidate],
+        by sort: ApplicationDiscoverySort,
+        measurementsByPath: [String: FolderObservation],
+        discoveryRecordsByPath: [String: ApplicationDiscoveryRecord]
+    ) -> [ApplicationDiscoveryCandidate] {
+        func namePrecedes(_ lhs: ApplicationDiscoveryCandidate, _ rhs: ApplicationDiscoveryCandidate) -> Bool {
+            let order = lhs.displayName.localizedStandardCompare(rhs.displayName)
+            return order == .orderedSame ? lhs.path < rhs.path : order == .orderedAscending
+        }
+
+        return candidates.sorted { lhs, rhs in
+            switch sort {
+            case .name:
+                return namePrecedes(lhs, rhs)
+            case .largestCompleteMeasurement:
+                let left = measurementsByPath[lhs.path].flatMap { measurement -> Int64? in
+                    guard measurement.complete, !measurement.byteAccountingOverflowed,
+                          measurement.allocatedBytes >= 0 else { return nil }
+                    return measurement.allocatedBytes
+                }
+                let right = measurementsByPath[rhs.path].flatMap { measurement -> Int64? in
+                    guard measurement.complete, !measurement.byteAccountingOverflowed,
+                          measurement.allocatedBytes >= 0 else { return nil }
+                    return measurement.allocatedBytes
+                }
+                switch (left, right) {
+                case let (left?, right?) where left != right: return left > right
+                case (_?, nil): return true
+                case (nil, _?): return false
+                default: return namePrecedes(lhs, rhs)
+                }
+            case .recentlyObserved:
+                let left = discoveryRecordsByPath[lhs.path]?.lastSeenAt
+                let right = discoveryRecordsByPath[rhs.path]?.lastSeenAt
+                switch (left, right) {
+                case let (left?, right?) where left != right: return left > right
+                case (_?, nil): return true
+                case (nil, _?): return false
+                default: return namePrecedes(lhs, rhs)
+                }
+            }
+        }
     }
 
     private static func isDescendant(_ path: String, of scope: String) -> Bool {

@@ -56,6 +56,11 @@
 "Filter by app name or path" = "Фильтр по имени приложения или пути";
 "Filter discovered applications" = "Фильтровать найденные приложения";
 "Filter applications by measurement" = "Фильтровать приложения по статусу измерения";
+"Sort discovered applications" = "Сортировать найденные приложения";
+"Name" = "По названию";
+"Largest complete measurement" = "По размеру полного измерения";
+"Recently observed in Spotlight" = "Недавно обнаруженные Spotlight";
+"Complete measurements sort by allocated-byte estimate. Partial, overflowed, and unmeasured bundles remain alphabetized with unknown size." = "Полные измерения сортируются по оценке выделенного места. Частичные измерения, переполнения и неизмеренные пакеты остаются в алфавитном порядке с неизвестным размером.";
 "Clear application filter" = "Очистить фильтр приложений";
 "All" = "Все";
 "Application discovery results · all" = "В выборке: %ld · полностью измерено: %ld";

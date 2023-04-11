@@ -36,6 +36,7 @@ private struct DiskerCoreChecks {
             ("bounded history chart ranges", testObservationTimeRanges),
             ("explicit application bundle history index", testApplicationBundleIndex),
             ("scoped application discovery filtering and bounded history", testApplicationDiscoveryIndex),
+            ("application discovery sorting preserves unknown measurement evidence", testApplicationDiscoverySorting),
             ("explicitly selected app bundle identity read", testApplicationBundleMetadata),
             ("evidence-scoped application container attribution", testApplicationPathAttribution),
             ("explicit application data path probes", testApplicationDataLocationProbe),
@@ -708,6 +709,60 @@ private struct DiskerCoreChecks {
         )
         try expect(decodedLegacyDiscovery.launchServicesLastOpenedAt == nil,
                    "older discovery history without usage evidence must remain readable and unknown")
+    }
+
+    private static func testApplicationDiscoverySorting() throws {
+        let candidates = [
+            ApplicationDiscoveryCandidate(path: "/Applications/Partial.app", displayName: "Partial"),
+            ApplicationDiscoveryCandidate(path: "/Applications/Small.app", displayName: "Small"),
+            ApplicationDiscoveryCandidate(path: "/Applications/Unknown.app", displayName: "Unknown"),
+            ApplicationDiscoveryCandidate(path: "/Applications/Large.app", displayName: "Large"),
+            ApplicationDiscoveryCandidate(path: "/Applications/Overflow.app", displayName: "Overflow"),
+            ApplicationDiscoveryCandidate(path: "/Applications/Negative.app", displayName: "Negative"),
+        ]
+        func measurement(_ path: String, bytes: Int64, complete: Bool = true, overflowed: Bool = false) -> FolderObservation {
+            FolderObservation(
+                path: path, displayName: URL(fileURLWithPath: path).lastPathComponent,
+                logicalBytes: bytes, allocatedBytes: bytes, fileCount: 1, inaccessibleCount: 0,
+                complete: complete, byteAccountingOverflowed: overflowed
+            )
+        }
+        let measurements = Dictionary([
+            measurement("/Applications/Partial.app", bytes: 5_000, complete: false),
+            measurement("/Applications/Small.app", bytes: 100),
+            measurement("/Applications/Large.app", bytes: 200),
+            measurement("/Applications/Overflow.app", bytes: 9_000, overflowed: true),
+            measurement("/Applications/Negative.app", bytes: -1),
+        ].map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+        let observedAt: [String: Date] = [
+            "/Applications/Partial.app": Date(timeIntervalSince1970: 10),
+            "/Applications/Small.app": Date(timeIntervalSince1970: 30),
+            "/Applications/Large.app": Date(timeIntervalSince1970: 20),
+            "/Applications/Overflow.app": Date(timeIntervalSince1970: 40),
+        ]
+        let records = Dictionary(observedAt.map { path, date in
+            (path, ApplicationDiscoveryRecord(path: path, displayName: URL(fileURLWithPath: path).lastPathComponent,
+                                               firstSeenAt: date, lastSeenAt: date))
+        }, uniquingKeysWith: { first, _ in first })
+        let byName = ApplicationBundleIndex.sortedCandidates(
+            candidates, by: .name, measurementsByPath: measurements, discoveryRecordsByPath: records
+        )
+        try expect(byName.map(\.displayName) == ["Large", "Negative", "Overflow", "Partial", "Small", "Unknown"],
+                   "name sorting should remain deterministic and alphabetical")
+
+        let byCompleteSize = ApplicationBundleIndex.sortedCandidates(
+            candidates, by: .largestCompleteMeasurement,
+            measurementsByPath: measurements, discoveryRecordsByPath: records
+        )
+        try expect(byCompleteSize.map(\.displayName) == ["Large", "Small", "Negative", "Overflow", "Partial", "Unknown"],
+                   "only valid complete measurements should rank by allocated estimate; unknown-size items stay alphabetized")
+
+        let byObservation = ApplicationBundleIndex.sortedCandidates(
+            candidates, by: .recentlyObserved,
+            measurementsByPath: measurements, discoveryRecordsByPath: records
+        )
+        try expect(byObservation.map(\.displayName) == ["Overflow", "Small", "Large", "Partial", "Negative", "Unknown"],
+                   "recently observed candidates should sort by Spotlight index observation, with missing history last")
     }
 
     private static func testApplicationPathAttribution() throws {

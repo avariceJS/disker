@@ -364,6 +364,16 @@ private extension ApplicationDiscoveryMeasurementFilter {
     }
 }
 
+private extension ApplicationDiscoverySort {
+    var title: LocalizedStringKey {
+        switch self {
+        case .name: "Name"
+        case .largestCompleteMeasurement: "Largest complete measurement"
+        case .recentlyObserved: "Recently observed in Spotlight"
+        }
+    }
+}
+
 private func measuredBytesSummary(logicalBytes: Int64, allocatedBytes: Int64, complete: Bool) -> String {
     let logical = ByteCountFormatter.string(fromByteCount: logicalBytes, countStyle: .file)
     let allocated = ByteCountFormatter.string(fromByteCount: allocatedBytes, countStyle: .file)
@@ -1701,6 +1711,7 @@ struct DashboardView: View {
     @State private var applicationReviewBundle: FolderObservation?
     @State private var applicationDiscoverySearchText = ""
     @State private var applicationDiscoveryMeasurementFilter: ApplicationDiscoveryMeasurementFilter = .all
+    @State private var applicationDiscoverySort: ApplicationDiscoverySort = .name
     @State private var developerArtifactReviewFolder: FolderObservation?
     @Environment(\.scenePhase) private var scenePhase
 
@@ -3067,7 +3078,11 @@ struct DashboardView: View {
             return matchesSearch
                 && applicationDiscoveryMeasurementFilter.includes(measurementsByPath[candidate.path])
         }
-        let candidates = Array(matchingCandidates.prefix(ApplicationBundleIndex.maximumDiscoveryRecords))
+        let sortedCandidates = ApplicationBundleIndex.sortedCandidates(
+            matchingCandidates, by: applicationDiscoverySort,
+            measurementsByPath: measurementsByPath, discoveryRecordsByPath: discoveryRecordsByPath
+        )
+        let candidates = Array(sortedCandidates.prefix(ApplicationBundleIndex.maximumDiscoveryRecords))
         let completeCount = matchingCandidates.reduce(into: 0) { count, candidate in
             if measurementsByPath[candidate.path]?.complete == true { count += 1 }
         }
@@ -3161,6 +3176,24 @@ struct DashboardView: View {
                 .pickerStyle(.segmented)
                 .controlSize(.small)
                 .accessibilityLabel("Filter applications by measurement")
+                HStack(spacing: 8) {
+                    Picker("Sort discovered applications", selection: $applicationDiscoverySort) {
+                        ForEach(ApplicationDiscoverySort.allCases) { sort in
+                            Text(sort.title).tag(sort)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .controlSize(.small)
+                    .fixedSize()
+                    .accessibilityLabel("Sort discovered applications")
+                    Spacer(minLength: 0)
+                }
+                if applicationDiscoverySort == .largestCompleteMeasurement {
+                    Text("Complete measurements sort by allocated-byte estimate. Partial, overflowed, and unmeasured bundles remain alphabetized with unknown size.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Text(applicationDiscoverySummary(
                     catalogCount: applicationDiscovery.candidates.count,
                     searchableCount: applicationDiscovery.searchableCandidates.count,
