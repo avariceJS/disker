@@ -576,6 +576,39 @@ private struct DiskerCoreChecks {
         try expect(filtered.map(\.path) == [
             "/Applications/Alpha.app", "/Applications/Folder/Deep.app", "/Users/example/Applications/User.app",
         ], "discovery must keep only deduplicated .app results lexically within explicit scopes")
+        let indexedIdentifier = ApplicationDiscoveryCandidate(
+            path: "/Applications/Indexed.app", displayName: "Indexed",
+            spotlightBundleIdentifier: "com.example.Indexed"
+        )
+        let invalidIndexedIdentifier = ApplicationDiscoveryCandidate(
+            path: "/Applications/Invalid.app", displayName: "Invalid",
+            spotlightBundleIdentifier: "../Library/Containers"
+        )
+        let overlongIndexedIdentifier = ApplicationDiscoveryCandidate(
+            path: "/Applications/Overlong.app", displayName: "Overlong",
+            spotlightBundleIdentifier: String(repeating: "a", count: 256)
+        )
+        try expect(indexedIdentifier.spotlightBundleIdentifier == "com.example.Indexed"
+                   && invalidIndexedIdentifier.spotlightBundleIdentifier == nil
+                   && overlongIndexedIdentifier.spotlightBundleIdentifier == nil,
+                   "Spotlight bundle IDs should be retained only as bounded, path-safe unverified hints")
+        let conflictedIdentifier = ApplicationBundleIndex.scopedCandidates([
+            ApplicationDiscoveryCandidate(
+                path: "/Applications/Conflict.app", displayName: "Conflict",
+                spotlightBundleIdentifier: "com.example.First"
+            ),
+            ApplicationDiscoveryCandidate(
+                path: "/Applications/Conflict.app", displayName: "Conflict duplicate",
+                spotlightBundleIdentifier: "com.example.Second"
+            ),
+            ApplicationDiscoveryCandidate(
+                path: "/Applications/Conflict.app", displayName: "Conflict third",
+                spotlightBundleIdentifier: "com.example.First"
+            ),
+        ], within: ["/Applications"])
+        try expect(conflictedIdentifier.count == 1
+                   && conflictedIdentifier[0].spotlightBundleIdentifier == nil,
+                   "conflicting Spotlight IDs for one path must stay unknown instead of choosing an identity")
         let olderLaunch = Date(timeIntervalSince1970: 25)
         let newerLaunch = Date(timeIntervalSince1970: 35)
         let mergedLaunchMetadata = ApplicationBundleIndex.scopedCandidates([

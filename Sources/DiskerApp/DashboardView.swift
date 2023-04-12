@@ -604,6 +604,12 @@ final class DashboardModel {
             signatureValidated: bundle.applicationSignatureValidated,
             signedBundleIdentifier: bundle.applicationSignedBundleIdentifier
         )
+        checkApplicationDataLocation(path, among: candidates)
+    }
+
+    private func checkApplicationDataLocation(
+        _ path: String, among candidates: [ApplicationDataLocationCandidate]
+    ) {
         let normalizedPath = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path
         guard candidates.contains(where: {
             URL(fileURLWithPath: $0.path, isDirectory: true).standardizedFileURL.path == normalizedPath
@@ -623,6 +629,48 @@ final class DashboardModel {
             applicationDataLocationCheckIDs.removeValue(forKey: normalizedPath)
             checkingApplicationDataLocationPaths.remove(normalizedPath)
             applicationDataLocationStatuses[normalizedPath] = status
+        }
+    }
+
+    func chooseDiscoveredApplicationDataLocation(
+        _ path: String, for candidate: ApplicationDiscoveryCandidate
+    ) {
+        guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates,
+              let spotlightBundleIdentifier = candidate.spotlightBundleIdentifier else { return }
+        let suggestions = ApplicationDataLocationCandidates.suggestions(
+            bundleIdentifier: spotlightBundleIdentifier,
+            homeDirectoryPath: NSHomeDirectory()
+        )
+        let expectedPath = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path
+        guard suggestions.contains(where: {
+            URL(fileURLWithPath: $0.path, isDirectory: true).standardizedFileURL.path == expectedPath
+        }) else { return }
+
+        let panel = NSOpenPanel()
+        panel.title = "Confirm Suggested App Data Folder"
+        panel.prompt = "Associate and Measure"
+        panel.message = "Spotlight's bundle ID is an unverified hint. Choose this exact folder to associate it with the discovered app and start a metadata-only scan. Disker will not follow symlinks or read file contents."
+        panel.directoryURL = URL(fileURLWithPath: expectedPath).deletingLastPathComponent()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        guard panel.runModal() == .OK, let selectedURL = panel.url else { return }
+        guard SelectedScopeBookmarkStore.isSameSelectedPath(selectedURL, as: expectedPath) else {
+            errorMessage = "Choose the same suggested folder to measure it. No scan was started."
+            return
+        }
+
+        do {
+            history = try ObservationStore.associateApplicationFolders(
+                [selectedURL.path], with: candidate.path,
+                bundleIdentifier: applicationBundleIdentifier(for: candidate.path)
+            )
+            invalidateAssociatedPathProbe(for: candidate.path, clearing: [selectedURL.path])
+            rememberFolders([selectedURL])
+            scan([selectedURL])
+        } catch {
+            errorMessage = "The folder was selected, but its app association could not be saved: \(error.localizedDescription)"
         }
     }
 
@@ -3271,6 +3319,9 @@ struct DashboardView: View {
                                         .foregroundStyle(.secondary)
                                 }
                             }
+                            if candidate.spotlightBundleIdentifier != nil {
+                                applicationDiscoveryDataLocationSuggestions(for: candidate)
+                            }
                             if let measurement {
                                 HStack(spacing: 6) {
                                     DiscoveryStatusBadge(
@@ -3294,6 +3345,7 @@ struct DashboardView: View {
                                     style: .unmeasured
                                 )
                             }
+                            applicationDiscoveryRelatedLocations(for: candidate)
                         }
                         Spacer(minLength: 8)
                         if measurement != nil {
@@ -4093,6 +4145,128 @@ struct DashboardView: View {
                         }
                     }
                     .padding(.top, 6)
+                }
+                .font(.caption.weight(.medium))
+            }
+        }
+    }
+
+    private func applicationDiscoveryDataLocationSuggestions(
+        for candidate: ApplicationDiscoveryCandidate
+    ) -> some View {
+        let suggestions = ApplicationDataLocationCandidates.suggestions(
+            bundleIdentifier: candidate.spotlightBundleIdentifier,
+            homeDirectoryPath: NSHomeDirectory()
+        )
+        return Group {
+            if let identifier = candidate.spotlightBundleIdentifier, !suggestions.isEmpty {
+                DisclosureGroup("Possible related data locations") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Spotlight returned bundle ID · \(identifier) · unverified")
+                            .font(.caption.weight(.medium))
+                            .textSelection(.enabled)
+                        Text("These conventional paths are hints only. The indexed bundle ID is not verified against the app signature or data ownership. Disker does not inspect these folders until you choose the exact suggested folder in the picker; only then does its metadata-only scan begin.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        ForEach(suggestions) { suggestion in
+                            HStack(alignment: .top, spacing: 10) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(suggestion.title)
+                                        .font(.caption.weight(.medium))
+                                    Text(suggestion.path)
+                                        .font(.caption2.monospaced())
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Text(suggestion.explanation)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer(minLength: 4)
+                                Button("Choose exact folder to measure…") {
+                                    model.chooseDiscoveredApplicationDataLocation(
+                                        suggestion.path, for: candidate
+                                    )
+                                }
+                                .controlSize(.small)
+                                .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
+                            }
+                            if suggestion.id != suggestions.last?.id { Divider() }
+                        }
+                    }
+                    .padding(.top, 6)
+                }
+                .font(.caption.weight(.medium))
+            }
+        }
+    }
+
+    private func applicationDiscoveryRelatedLocations(
+        for candidate: ApplicationDiscoveryCandidate
+    ) -> some View {
+        let paths = model.relatedFolders(for: candidate.path)
+        let titleFormat = NSLocalizedString(
+            "Measured related locations · %ld",
+            comment: "Count of separately measured folders linked to a discovered application"
+        )
+        let title = String.localizedStringWithFormat(titleFormat, paths.count)
+        return Group {
+            if !paths.isEmpty {
+                DisclosureGroup {
+                    VStack(alignment: .leading, spacing: 9) {
+                        Text("Each selected location keeps its own measurement. Paths may overlap, so Disker does not add these values or infer exclusive ownership.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        ForEach(paths, id: \.self) { path in
+                            if let observation = model.latestFolderObservation(at: path) {
+                                let cancelled = model.scanWasCancelled(for: observation)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack(spacing: 7) {
+                                        DiscoveryStatusBadge(
+                                            title: NSLocalizedString(
+                                                cancelled ? "Cancelled scan" : observation.complete ? "Complete measurement" : "Partial measurement",
+                                                comment: "Coverage state of a user-selected app-related folder"
+                                            ),
+                                            style: cancelled || !observation.complete ? .partial : .measured
+                                        )
+                                        Text(folderMeasurementSummary(observation))
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Text(path)
+                                        .font(.caption2.monospaced())
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Text("Last measured · \(observation.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                    if cancelled {
+                                        Text("The last scan was cancelled; this location remains incomplete.")
+                                            .font(.caption2)
+                                            .foregroundStyle(.orange)
+                                    }
+                                    Button("Rescan…") { model.rescanRememberedFolder(path) }
+                                        .controlSize(.small)
+                                        .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
+                                }
+                                if path != paths.last { Divider() }
+                            } else {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(path)
+                                        .font(.caption2.monospaced())
+                                        .textSelection(.enabled)
+                                    Text("No saved measurement for this location.")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.top, 6)
+                } label: {
+                    Text(title)
                 }
                 .font(.caption.weight(.medium))
             }

@@ -274,9 +274,11 @@ final class ApplicationDiscoveryModel {
             let launchServicesLastOpenedAt = item.attributes.contains(Self.launchServicesLastOpenedAttribute)
                 ? item.value(forAttribute: Self.launchServicesLastOpenedAttribute) as? Date
                 : nil
+            let spotlightBundleIdentifier = item.value(forAttribute: NSMetadataItemCFBundleIdentifierKey) as? String
             raw.append(ApplicationDiscoveryCandidate(
                 path: url.path,
                 displayName: name,
+                spotlightBundleIdentifier: spotlightBundleIdentifier,
                 launchServicesLastOpenedAt: launchServicesLastOpenedAt
             ))
         }

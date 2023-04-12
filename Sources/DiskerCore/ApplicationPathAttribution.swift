@@ -220,8 +220,8 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
         self.groupIdentifier = groupIdentifier
     }
 
-    fileprivate static func isValidBundleIdentifier(_ value: String) -> Bool {
-        guard !value.isEmpty,
+    public static func isValidBundleIdentifier(_ value: String) -> Bool {
+        guard !value.isEmpty, value.utf8.count <= 255,
               value.unicodeScalars.allSatisfy({
                   (48...57).contains($0.value)
                     || (65...90).contains($0.value)
@@ -265,11 +265,11 @@ public struct ApplicationDataLocationCandidate: Equatable, Sendable, Identifiabl
     public var explanation: String {
         switch evidence {
         case .probableAppContainer:
-            "This is the standard path pattern for the selected bundle ID. Its presence, use, and exclusive ownership have not been checked."
+            "This is the standard path pattern for the supplied bundle ID. Its presence, use, and exclusive ownership have not been checked."
         case .validatedAppContainerIdentifier:
             "The selected bundle's locally validated signature carries this identifier. This conventional path has not been checked for presence, origin, or exclusive use."
         case .probableNamedSupportDirectory:
-            "The candidate directory name exactly matches the selected bundle ID under Application Support or Caches. This is only a naming clue; presence, app ownership, and exclusive use have not been checked."
+            "The candidate directory name exactly matches the supplied bundle ID under Application Support or Caches. This is only a naming clue; presence, app ownership, and exclusive use have not been checked."
         case .declaredSharedGroupClaim:
             "The selected bundle declares this App Group. The path is shared by design; signature validity and OS-granted access are not established."
         case .signatureCoveredSharedGroupClaim:
@@ -279,8 +279,9 @@ public struct ApplicationDataLocationCandidate: Equatable, Sendable, Identifiabl
 }
 
 public enum ApplicationDataLocationCandidates {
-    /// Builds conventional path suggestions from the explicitly selected app's
-    /// stored identity. It performs no filesystem lookup and grants no access.
+    /// Builds conventional paths from a supplied bounded bundle-ID hint.
+    /// Signature and group evidence refine labels when available; this performs
+    /// no filesystem lookup and grants no access.
     public static func suggestions(
         bundleIdentifier: String?, homeDirectoryPath: String,
         claimedGroupIdentifiers: [String] = [],

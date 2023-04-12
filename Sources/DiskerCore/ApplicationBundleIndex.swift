@@ -26,13 +26,22 @@ public struct ApplicationDiscoveryRecord: Codable, Equatable, Identifiable, Send
 public struct ApplicationDiscoveryCandidate: Equatable, Identifiable, Sendable {
     public let path: String
     public let displayName: String
+    /// Bundle ID reported by Spotlight metadata; this is an unverified hint,
+    /// not the identity read from an explicitly selected bundle.
+    public let spotlightBundleIdentifier: String?
     public let launchServicesLastOpenedAt: Date?
 
     public var id: String { path }
 
-    public init(path: String, displayName: String, launchServicesLastOpenedAt: Date? = nil) {
+    public init(
+        path: String, displayName: String, spotlightBundleIdentifier: String? = nil,
+        launchServicesLastOpenedAt: Date? = nil
+    ) {
         self.path = path
         self.displayName = displayName
+        self.spotlightBundleIdentifier = spotlightBundleIdentifier.flatMap {
+            ApplicationPathAttribution.isValidBundleIdentifier($0) ? $0 : nil
+        }
         self.launchServicesLastOpenedAt = launchServicesLastOpenedAt
     }
 }
@@ -84,6 +93,7 @@ public enum ApplicationBundleIndex {
         guard limit > 0 else { return [] }
         let normalizedScopes = Set(scopes.map { URL(fileURLWithPath: $0).standardizedFileURL.path })
         var byPath: [String: ApplicationDiscoveryCandidate] = [:]
+        var conflictedBundleIdentifiers = Set<String>()
         for candidate in candidates {
             let path = URL(fileURLWithPath: candidate.path).standardizedFileURL.path
             guard URL(fileURLWithPath: path).pathExtension.lowercased() == "app",
@@ -92,15 +102,35 @@ public enum ApplicationBundleIndex {
             guard let previous = byPath[path] else {
                 byPath[path] = ApplicationDiscoveryCandidate(
                     path: path, displayName: candidate.displayName,
+                    spotlightBundleIdentifier: candidate.spotlightBundleIdentifier,
                     launchServicesLastOpenedAt: candidate.launchServicesLastOpenedAt
                 )
                 continue
+            }
+            let mergedBundleIdentifier: String?
+            if conflictedBundleIdentifiers.contains(path) {
+                mergedBundleIdentifier = nil
+            } else if let previousIdentifier = previous.spotlightBundleIdentifier,
+                      let newIdentifier = candidate.spotlightBundleIdentifier,
+                      previousIdentifier != newIdentifier {
+                conflictedBundleIdentifiers.insert(path)
+                mergedBundleIdentifier = nil
+            } else {
+                mergedBundleIdentifier = previous.spotlightBundleIdentifier
+                    ?? candidate.spotlightBundleIdentifier
             }
             if let newDate = candidate.launchServicesLastOpenedAt,
                previous.launchServicesLastOpenedAt.map({ newDate > $0 }) ?? true {
                 byPath[path] = ApplicationDiscoveryCandidate(
                     path: path, displayName: previous.displayName,
+                    spotlightBundleIdentifier: mergedBundleIdentifier,
                     launchServicesLastOpenedAt: newDate
+                )
+            } else if mergedBundleIdentifier != previous.spotlightBundleIdentifier {
+                byPath[path] = ApplicationDiscoveryCandidate(
+                    path: path, displayName: previous.displayName,
+                    spotlightBundleIdentifier: mergedBundleIdentifier,
+                    launchServicesLastOpenedAt: previous.launchServicesLastOpenedAt
                 )
             }
         }
