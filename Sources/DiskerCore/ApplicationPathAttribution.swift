@@ -325,4 +325,19 @@ public enum ApplicationDataLocationCandidates {
         }
         return candidates
     }
+
+    /// Returns only an exact normalized match for a generated suggestion. This
+    /// lets UI workflows reject arbitrary caller paths before opening a picker
+    /// or beginning a selected-root scan.
+    public static func suggestion(
+        matchingExactPath path: String,
+        bundleIdentifier: String?,
+        homeDirectoryPath: String
+    ) -> ApplicationDataLocationCandidate? {
+        let normalizedPath = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path
+        return suggestions(
+            bundleIdentifier: bundleIdentifier,
+            homeDirectoryPath: homeDirectoryPath
+        ).first(where: { $0.path == normalizedPath })
+    }
 }

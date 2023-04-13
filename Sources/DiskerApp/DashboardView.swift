@@ -637,14 +637,12 @@ final class DashboardModel {
     ) {
         guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates,
               let spotlightBundleIdentifier = candidate.spotlightBundleIdentifier else { return }
-        let suggestions = ApplicationDataLocationCandidates.suggestions(
+        let expectedPath = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path
+        guard ApplicationDataLocationCandidates.suggestion(
+            matchingExactPath: expectedPath,
             bundleIdentifier: spotlightBundleIdentifier,
             homeDirectoryPath: NSHomeDirectory()
-        )
-        let expectedPath = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path
-        guard suggestions.contains(where: {
-            URL(fileURLWithPath: $0.path, isDirectory: true).standardizedFileURL.path == expectedPath
-        }) else { return }
+        ) != nil else { return }
 
         let panel = NSOpenPanel()
         panel.title = "Confirm Suggested App Data Folder"
@@ -656,7 +654,13 @@ final class DashboardModel {
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
         guard panel.runModal() == .OK, let selectedURL = panel.url else { return }
-        guard SelectedScopeBookmarkStore.isSameSelectedPath(selectedURL, as: expectedPath) else {
+        let selectedSuggestion = ApplicationDataLocationCandidates.suggestion(
+            matchingExactPath: selectedURL.path,
+            bundleIdentifier: spotlightBundleIdentifier,
+            homeDirectoryPath: NSHomeDirectory()
+        )
+        guard SelectedScopeBookmarkStore.isSameSelectedPath(selectedURL, as: expectedPath),
+              selectedSuggestion?.path == expectedPath else {
             errorMessage = "Choose the same suggested folder to measure it. No scan was started."
             return
         }

@@ -39,6 +39,7 @@ private struct DiskerCoreChecks {
             ("application discovery sorting preserves unknown measurement evidence", testApplicationDiscoverySorting),
             ("explicitly selected app bundle identity read", testApplicationBundleMetadata),
             ("evidence-scoped application container attribution", testApplicationPathAttribution),
+            ("Spotlight app data hints require exact selected-root measurements", testSpotlightAppDataMeasurementWorkflow),
             ("explicit application data path probes", testApplicationDataLocationProbe),
             ("selected app bundle file-growth history", testApplicationBundleFileGrowthHistory),
             ("read-only app footprint review", testApplicationFootprintReview),
@@ -963,6 +964,19 @@ private struct DiskerCoreChecks {
         try expect(suggestions.allSatisfy({ $0.explanation.contains("not been checked")
                                            || $0.explanation.contains("shared by design") }),
                    "location suggestions should explicitly remain unmeasured and confidence-limited")
+        try expect(ApplicationDataLocationCandidates.suggestion(
+            matchingExactPath: appSupport, bundleIdentifier: identifier,
+            homeDirectoryPath: home
+        )?.evidence == .probableNamedSupportDirectory,
+        "an exact generated suggestion should be eligible for the explicit selection workflow")
+        try expect(ApplicationDataLocationCandidates.suggestion(
+            matchingExactPath: appSupport + "-other", bundleIdentifier: identifier,
+            homeDirectoryPath: home
+        ) == nil && ApplicationDataLocationCandidates.suggestion(
+            matchingExactPath: appSupport, bundleIdentifier: "../Other",
+            homeDirectoryPath: home
+        ) == nil,
+        "nearby paths and invalid Spotlight identifiers must not pass the exact-suggestion gate")
 
         let validatedSuggestions = ApplicationDataLocationCandidates.suggestions(
             bundleIdentifier: identifier, homeDirectoryPath: home,
@@ -986,6 +1000,63 @@ private struct DiskerCoreChecks {
             bundleIdentifier: "../Other", homeDirectoryPath: home,
             claimedGroupIdentifiers: [groupIdentifier]
         ).isEmpty, "invalid identifiers must not generate app-data paths")
+    }
+
+    private static func testSpotlightAppDataMeasurementWorkflow() throws {
+        try withTemporaryDirectory { root in
+            let home = root.appendingPathComponent("synthetic-home", isDirectory: true)
+            let bundleID = "com.synthetic.Discovered"
+            let container = home.appendingPathComponent(
+                "Library/Containers/\(bundleID)", isDirectory: true
+            )
+            try FileManager.default.createDirectory(at: container, withIntermediateDirectories: true)
+            let stateFile = container.appendingPathComponent("state.sqlite")
+            let stateContents = Data("synthetic app state".utf8)
+            try stateContents.write(to: stateFile)
+
+            let candidate = ApplicationDiscoveryCandidate(
+                path: "/Applications/Discovered.app", displayName: "Discovered",
+                spotlightBundleIdentifier: bundleID
+            )
+            guard let suggestion = ApplicationDataLocationCandidates.suggestion(
+                matchingExactPath: container.path,
+                bundleIdentifier: candidate.spotlightBundleIdentifier,
+                homeDirectoryPath: home.path
+            ) else {
+                throw CheckFailure.assertion("a generated per-app container path should match the Spotlight ID hint")
+            }
+            try expect(ApplicationDataLocationCandidates.suggestion(
+                matchingExactPath: container.path + "-neighbor",
+                bundleIdentifier: candidate.spotlightBundleIdentifier,
+                homeDirectoryPath: home.path
+            ) == nil, "a nearby path must not be eligible to start the app data measurement workflow")
+
+            let scan = FolderScanner.scan(roots: [URL(fileURLWithPath: suggestion.path, isDirectory: true)])
+            guard let measured = scan.folders.first else {
+                throw CheckFailure.assertion("the exact selected synthetic root should produce one observation")
+            }
+            try expect(scan.folders.count == 1 && measured.path == container.standardizedFileURL.path
+                       && measured.complete && measured.fileCount == 1
+                       && measured.logicalBytes == Int64(stateContents.count),
+                       "the selected suggestion should be measured as one separate complete root")
+            let unchangedContents = try Data(contentsOf: stateFile)
+            try expect(unchangedContents == stateContents,
+                       "metadata-only app data measurement must leave the synthetic file contents unchanged")
+
+            let storeURL = root.appendingPathComponent("Disker/observations.json")
+            _ = try ObservationStore.append(scan, to: storeURL)
+            _ = try ObservationStore.associateApplicationFolders(
+                [suggestion.path], with: candidate.path, to: storeURL
+            )
+            let saved = try ObservationStore.load(from: storeURL)
+            try expect(saved.observations.count == 1
+                       && saved.observations[0].folders.map(\.path) == [suggestion.path]
+                       && saved.applicationAssociations.count == 1
+                       && saved.applicationAssociations[0].bundlePath == candidate.path
+                       && saved.applicationAssociations[0].relatedFolderPaths == [suggestion.path]
+                       && saved.applicationAssociations[0].bundleIdentifier == nil,
+                       "the confirmed folder measurement should remain separate and the Spotlight hint should not become verified bundle identity")
+        }
     }
 
     private static func testApplicationDataLocationProbe() throws {
