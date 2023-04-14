@@ -645,9 +645,18 @@ final class DashboardModel {
         ) != nil else { return }
 
         let panel = NSOpenPanel()
-        panel.title = "Confirm Suggested App Data Folder"
-        panel.prompt = "Associate and Measure"
-        panel.message = "Spotlight's bundle ID is an unverified hint. Choose this exact folder to associate it with the discovered app and start a metadata-only scan. Disker will not follow symlinks or read file contents."
+        panel.title = NSLocalizedString(
+            "Confirm Suggested App Data Folder",
+            comment: "Native folder picker title for explicitly confirming a suggested app data path"
+        )
+        panel.prompt = NSLocalizedString(
+            "Associate and Measure",
+            comment: "Native folder picker action to associate and measure an exact suggested app data folder"
+        )
+        panel.message = NSLocalizedString(
+            "Spotlight's bundle ID is an unverified hint. Choose this exact folder to associate it with the discovered app and start a metadata-only scan. Disker will not follow symlinks or read file contents.",
+            comment: "Native folder picker explanation for the evidence limits and scope of an app data scan"
+        )
         panel.directoryURL = URL(fileURLWithPath: expectedPath).deletingLastPathComponent()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -661,7 +670,10 @@ final class DashboardModel {
         )
         guard SelectedScopeBookmarkStore.isSameSelectedPath(selectedURL, as: expectedPath),
               selectedSuggestion?.path == expectedPath else {
-            errorMessage = "Choose the same suggested folder to measure it. No scan was started."
+            errorMessage = NSLocalizedString(
+                "Choose the same suggested folder to measure it. No scan was started.",
+                comment: "Error shown when the user chooses a different path than the suggested app data folder"
+            )
             return
         }
 
