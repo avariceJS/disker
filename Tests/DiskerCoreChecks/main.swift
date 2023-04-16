@@ -1048,14 +1048,37 @@ private struct DiskerCoreChecks {
             _ = try ObservationStore.associateApplicationFolders(
                 [suggestion.path], with: candidate.path, to: storeURL
             )
+
+            let fifo = container.appendingPathComponent("synthetic-stream.sqlite")
+            let fifoResult = fifo.path.withCString {
+                mkfifo($0, mode_t(S_IRUSR | S_IWUSR))
+            }
+            try expect(fifoResult == 0, "a synthetic special entry should be created without opening or reading it")
+            let partialScan = FolderScanner.scan(
+                roots: [URL(fileURLWithPath: suggestion.path, isDirectory: true)]
+            )
+            guard let partial = partialScan.folders.first else {
+                throw CheckFailure.assertion("the exact selected synthetic root should preserve its partial observation")
+            }
+            try expect(partialScan.folders.count == 1 && partial.path == container.standardizedFileURL.path
+                       && !partial.complete && partial.excludedSpecialFileCount == 1
+                       && partial.fileCount == 1 && partial.logicalBytes == Int64(stateContents.count),
+                       "an excluded special entry should leave a nonzero subtotal explicitly partial, never a complete app-data total")
+            _ = try ObservationStore.append(partialScan, to: storeURL)
+
             let saved = try ObservationStore.load(from: storeURL)
-            try expect(saved.observations.count == 1
+            try expect(saved.observations.count == 2
                        && saved.observations[0].folders.map(\.path) == [suggestion.path]
+                       && saved.observations[0].folders[0].complete
+                       && saved.observations[1].folders.map(\.path) == [suggestion.path]
+                       && !saved.observations[1].folders[0].complete
+                       && saved.observations[1].folders[0].excludedSpecialFileCount == 1
+                       && saved.observations[1].folders[0].logicalBytes == Int64(stateContents.count)
                        && saved.applicationAssociations.count == 1
                        && saved.applicationAssociations[0].bundlePath == candidate.path
                        && saved.applicationAssociations[0].relatedFolderPaths == [suggestion.path]
                        && saved.applicationAssociations[0].bundleIdentifier == nil,
-                       "the confirmed folder measurement should remain separate and the Spotlight hint should not become verified bundle identity")
+                       "complete and partial app-data samples should remain separate, and the Spotlight hint should not become verified bundle identity")
         }
     }
 
