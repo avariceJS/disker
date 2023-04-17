@@ -4762,6 +4762,7 @@ struct DashboardView: View {
                 }
                 .toggleStyle(.switch)
                 .accessibilityHint("When enabled, Disker saves a RAM sample every five minutes and records system pressure transitions while this app is active. It pauses when the app is inactive and is off again next time Disker opens.")
+                memoryPressureSummary
                 if let ram = model.ram {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
@@ -5075,47 +5076,112 @@ struct DashboardView: View {
         }
     }
 
-    private var memoryPressureCard: some View {
-        let recentEvents = Array(model.history.memoryPressureObservations.suffix(12).reversed())
-        return VStack(alignment: .leading, spacing: 10) {
-            Label("System memory-pressure transitions", systemImage: "waveform.path.ecg")
-                .font(.title3.weight(.semibold))
-            Text("These are system-wide transitions macOS reported while Disker was active and monitoring was enabled. Gaps and periods before the first event are unknown; no event does not mean normal pressure.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if recentEvents.isEmpty {
-                Text(isAutomaticRAMSamplingEnabled
-                     ? "Waiting for a pressure transition. Current system pressure is unknown."
-                     : "Enable RAM monitoring to observe pressure transitions while Disker is active.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            } else {
-                if model.history.memoryPressureObservations.count > recentEvents.count {
-                    Text("Showing the latest \(recentEvents.count) of \(model.history.memoryPressureObservations.count) retained transitions.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(recentEvents) { event in
-                    HStack(spacing: 10) {
-                        Circle()
-                            .fill(event.level == .critical ? .red : event.level == .warning ? .orange : .green)
-                            .frame(width: 8, height: 8)
-                        Text(event.level.rawValue.capitalized)
-                            .font(.subheadline.weight(.medium))
-                        Spacer()
-                        Text(event.observedAt.formatted(date: .abbreviated, time: .shortened))
+    private var latestMemoryPressureTransition: MemoryPressureObservation? {
+        model.history.memoryPressureObservations.max(by: { $0.observedAt < $1.observedAt })
+    }
+
+    private func memoryPressureLevelTitle(_ level: MemoryPressureLevel) -> String {
+        NSLocalizedString(level.rawValue.capitalized, comment: "System-reported memory pressure transition level")
+    }
+
+    private var memoryPressureSummary: some View {
+        let latest = latestMemoryPressureTransition
+        let tint: Color = switch latest?.level {
+        case .critical: .red
+        case .warning: .orange
+        case .normal: .green
+        case nil: .secondary
+        }
+        return HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "waveform.path.ecg")
+                .font(.title3)
+                .foregroundStyle(tint)
+                .frame(width: 36, height: 36)
+                .background(tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 4) {
+                Text("System memory pressure")
+                    .font(.headline)
+                if let latest {
+                    HStack(spacing: 6) {
+                        Text("Last reported transition")
+                            .foregroundStyle(.secondary)
+                        Text(memoryPressureLevelTitle(latest.level))
+                            .fontWeight(.semibold)
+                            .foregroundStyle(tint)
+                        Text(latest.observedAt.formatted(date: .abbreviated, time: .shortened))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    .accessibilityElement(children: .combine)
-                    Divider()
+                    Text("This is a stored transition, not a live reading; current pressure between events is unknown.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("No transition has been recorded. Current system pressure is unknown.")
+                        .font(.subheadline.weight(.medium))
+                    Text(isAutomaticRAMSamplingEnabled
+                         ? "Disker records pressure only when macOS reports a transition while the app is active."
+                         : "Enable RAM monitoring to record macOS-reported transitions while Disker is active.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            Spacer(minLength: 0)
         }
-        .padding(20)
-        .background(.background, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.045), in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(tint.opacity(0.12)))
+        .accessibilityElement(children: .combine)
+    }
+
+    private var memoryPressureCard: some View {
+        let retained = model.history.memoryPressureObservations.sorted {
+            $0.observedAt > $1.observedAt
+        }
+        let recentEvents = Array(retained.prefix(12))
+        return DisclosureGroup {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("These are system-wide transitions macOS reported while Disker was active and monitoring was enabled. Gaps and periods before the first event are unknown; no event does not mean normal pressure.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if recentEvents.isEmpty {
+                    Text("No pressure transitions have been recorded yet.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else {
+                    if retained.count > recentEvents.count {
+                        Text("Showing the latest \(recentEvents.count) of \(retained.count) retained transitions.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(recentEvents) { event in
+                        HStack(spacing: 10) {
+                            Circle()
+                                .fill(event.level == .critical ? .red : event.level == .warning ? .orange : .green)
+                                .frame(width: 8, height: 8)
+                            Text(memoryPressureLevelTitle(event.level))
+                                .font(.subheadline.weight(.medium))
+                            Spacer()
+                            Text(event.observedAt.formatted(date: .abbreviated, time: .shortened))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .accessibilityElement(children: .combine)
+                        Divider()
+                    }
+                }
+            }
+            .padding(.top, 8)
+        } label: {
+            Label("Pressure transition history", systemImage: "waveform.path.ecg")
+                .font(.subheadline.weight(.medium))
+        }
+        .padding(14)
+        .background(.background, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.quaternary))
     }
 
     private func folderList(

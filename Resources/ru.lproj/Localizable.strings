@@ -265,3 +265,16 @@
 "Measure exact folder…" = "Отдельно измерить папку…";
 "Confirm this exact candidate folder before a separate metadata-only measurement" = "Подтвердить точную папку-кандидат перед отдельным измерением метаданных";
 "Measure candidate folder %@" = "Измерить папку-кандидат %@";
+"System memory pressure" = "Системное давление на память";
+"Last reported transition" = "Последний переход, сообщённый macOS";
+"This is a stored transition, not a live reading; current pressure between events is unknown." = "Это сохранённый переход, а не текущее измерение; давление на память между событиями неизвестно.";
+"No transition has been recorded. Current system pressure is unknown." = "Переходы не зарегистрированы. Текущее давление на память неизвестно.";
+"Disker records pressure only when macOS reports a transition while the app is active." = "Disker записывает давление, только когда macOS сообщает о переходе во время работы приложения.";
+"Enable RAM monitoring to record macOS-reported transitions while Disker is active." = "Включите мониторинг RAM, чтобы записывать сообщаемые macOS переходы, пока Disker активен.";
+"Pressure transition history" = "История переходов давления на память";
+"These are system-wide transitions macOS reported while Disker was active and monitoring was enabled. Gaps and periods before the first event are unknown; no event does not mean normal pressure." = "Это общесистемные переходы, о которых macOS сообщила при включённом мониторинге и активном Disker. Промежутки и время до первого события неизвестны; отсутствие событий не означает нормальное давление.";
+"No pressure transitions have been recorded yet." = "Переходы давления пока не зарегистрированы.";
+"Showing the latest %ld of %ld retained transitions." = "Показаны последние %ld из %ld сохранённых переходов.";
+"Normal" = "Норма";
+"Warning" = "Предупреждение";
+"Critical" = "Критический уровень";
