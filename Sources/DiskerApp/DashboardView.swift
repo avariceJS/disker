@@ -5816,11 +5816,11 @@ struct DashboardView: View {
     }
 
     private func projectResourceGrowthSection(_ review: ProjectResourceGrowthReview) -> some View {
-        let comparisons = review.entries.filter { $0.status == .compared }
+        let comparisons = review.rankedComparisonsByAllocatedDelta
         let unavailable = review.entries.filter { $0.status != .compared }
         return DisclosureGroup {
             VStack(alignment: .leading, spacing: 7) {
-                Text("Each row compares complete observations of one exact path and volume. Intervals differ; linked paths may overlap. Values are never added and do not establish cause or reclaimable space.")
+                Text("Complete comparisons are ordered by allocated-estimate change, with largest increases first. Each row shows its own interval; linked paths may overlap, so values are never added and do not establish cause or reclaimable space.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

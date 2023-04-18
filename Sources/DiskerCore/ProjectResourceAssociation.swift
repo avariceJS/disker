@@ -216,6 +216,17 @@ public struct ProjectResourceGrowthReview: Equatable, Sendable {
 
     public let entries: [Entry]
 
+    /// Complete comparisons ordered by allocated-byte estimate delta, largest
+    /// increases first. This ranks review attention without combining paths.
+    public var rankedComparisonsByAllocatedDelta: [Entry] {
+        entries.filter { $0.status == .compared }.sorted { lhs, rhs in
+            if let left = lhs.allocatedDelta, let right = rhs.allocatedDelta, left != right {
+                return left > right
+            }
+            return lhs.path.utf8.lexicographicallyPrecedes(rhs.path.utf8)
+        }
+    }
+
     private struct RecordedFolder {
         let scanIndex: Int
         let scanWasCancelled: Bool

@@ -2162,6 +2162,8 @@ private struct DiskerCoreChecks {
         try expect(growth.entries.count == 11
                    && !String(describing: growth).contains("totalAllocatedDelta"),
                    "the projection should preserve one row per linked path without an aggregate")
+        try expect(growth.rankedComparisonsByAllocatedDelta.map(\.path) == [root, nested, shared],
+                   "comparable project paths should rank largest allocated increases before decreases without combining them")
 
         let benchmarkRoot = "/synthetic/project-growth-bound"
         let benchmarkPaths = [benchmarkRoot] + (0..<ProjectResourceAssociation.maximumRelatedFolderCount).map {
@@ -2172,11 +2174,12 @@ private struct DiskerCoreChecks {
         )
         let benchmarkScans = (0..<180).map { scanIndex in
             let observedAt = Date(timeIntervalSince1970: TimeInterval(scanIndex + 1))
-            let folders = benchmarkPaths.map { path in
+            let folders = benchmarkPaths.enumerated().map { pathIndex, path in
                 FolderObservation(
                     path: path, volumeDeviceID: 9,
                     displayName: URL(fileURLWithPath: path).lastPathComponent,
-                    logicalBytes: Int64(scanIndex), allocatedBytes: Int64(4_096 + scanIndex),
+                    logicalBytes: Int64(scanIndex),
+                    allocatedBytes: Int64(4_096 + scanIndex * (pathIndex + 1)),
                     fileCount: 1, inaccessibleCount: 0, finishedAt: observedAt, complete: true
                 )
             }
@@ -2188,10 +2191,14 @@ private struct DiskerCoreChecks {
         let benchmarkStartedAt = ProcessInfo.processInfo.systemUptime
         let boundedReview = ProjectResourceReview.make(for: benchmarkRoot, in: benchmarkHistory)
         let boundedGrowth = ProjectResourceGrowthReview.make(for: boundedReview, in: benchmarkHistory)
+        let boundedRankedComparisons = boundedGrowth.rankedComparisonsByAllocatedDelta
         let elapsed = ProcessInfo.processInfo.systemUptime - benchmarkStartedAt
         try expect(boundedGrowth.entries.count == 51
                    && boundedGrowth.entries.allSatisfy({ $0.status == .compared }),
                    "the maximum linked-resource set should compare all paths from bounded history")
+        try expect(Array(boundedRankedComparisons.prefix(8).map(\.path))
+                   == Array(benchmarkPaths.suffix(8).reversed()),
+                   "the compact project review should expose the eight largest measured path increases first")
         print(String(format: "  maximum project growth review (51 paths × 180 scans): %.3f s", elapsed))
     }
 
