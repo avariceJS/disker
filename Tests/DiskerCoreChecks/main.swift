@@ -1066,19 +1066,51 @@ private struct DiskerCoreChecks {
                        "an excluded special entry should leave a nonzero subtotal explicitly partial, never a complete app-data total")
             _ = try ObservationStore.append(partialScan, to: storeURL)
 
+            try FileManager.default.removeItem(at: fifo)
+            let changedStateContents = Data("synthetic app state grows".utf8)
+            try changedStateContents.write(to: stateFile)
+            let finalScan = FolderScanner.scan(
+                roots: [URL(fileURLWithPath: suggestion.path, isDirectory: true)]
+            )
+            guard let finalMeasurement = finalScan.folders.first else {
+                throw CheckFailure.assertion("the restored exact synthetic root should produce a later complete observation")
+            }
+            try expect(finalMeasurement.complete && finalMeasurement.fileCount == 1
+                       && finalMeasurement.logicalBytes == Int64(changedStateContents.count),
+                       "after the special entry is removed, a new complete app-data observation should measure the changed fixture")
+            _ = try ObservationStore.append(finalScan, to: storeURL)
+
             let saved = try ObservationStore.load(from: storeURL)
-            try expect(saved.observations.count == 2
+            let firstComplete = saved.observations.first?.folders.first
+            let lastComplete = saved.observations.last?.folders.first
+            let previousComplete = lastComplete.flatMap {
+                ObservationComparison.previousCompleteFolder(for: $0, in: saved)
+            }
+            let logicalDelta = lastComplete.flatMap { current in
+                firstComplete.map { current.logicalBytes - $0.logicalBytes }
+            }
+            let allocatedDelta = lastComplete.flatMap { current in
+                previousComplete.flatMap {
+                    ObservationComparison.allocatedByteDelta(current: current, previous: $0)
+                }
+            }
+            try expect(saved.observations.count == 3
                        && saved.observations[0].folders.map(\.path) == [suggestion.path]
                        && saved.observations[0].folders[0].complete
                        && saved.observations[1].folders.map(\.path) == [suggestion.path]
                        && !saved.observations[1].folders[0].complete
                        && saved.observations[1].folders[0].excludedSpecialFileCount == 1
                        && saved.observations[1].folders[0].logicalBytes == Int64(stateContents.count)
+                       && saved.observations[2].folders.map(\.path) == [suggestion.path]
+                       && saved.observations[2].folders[0].complete
+                       && previousComplete == firstComplete
+                       && logicalDelta == Int64(changedStateContents.count - stateContents.count)
+                       && allocatedDelta != nil
                        && saved.applicationAssociations.count == 1
                        && saved.applicationAssociations[0].bundlePath == candidate.path
                        && saved.applicationAssociations[0].relatedFolderPaths == [suggestion.path]
                        && saved.applicationAssociations[0].bundleIdentifier == nil,
-                       "complete and partial app-data samples should remain separate, and the Spotlight hint should not become verified bundle identity")
+                       "complete-partial-complete app-data history should retain the last complete baseline and never turn the Spotlight hint into verified bundle identity")
         }
     }
 

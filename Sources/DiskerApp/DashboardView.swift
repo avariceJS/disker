@@ -4258,6 +4258,30 @@ struct DashboardView: View {
                                     Text("Last measured · \(observation.finishedAt.formatted(date: .abbreviated, time: .shortened))")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
+                                    if !cancelled, observation.complete,
+                                       let previous = model.previousCompleteObservation(for: observation),
+                                       let allocatedDelta = ObservationComparison.allocatedByteDelta(
+                                        current: observation, previous: previous
+                                       ) {
+                                        let (logicalDelta, overflow) = observation.logicalBytes
+                                            .subtractingReportingOverflow(previous.logicalBytes)
+                                        if !overflow {
+                                            Text(String.localizedStringWithFormat(
+                                                NSLocalizedString(
+                                                    "Change since %@ · logical %@ · allocated estimate %@",
+                                                    comment: "Separate logical and allocated changes for one app-associated folder, with its prior complete observation time"
+                                                ),
+                                                previous.finishedAt.formatted(date: .abbreviated, time: .shortened),
+                                                formattedDelta(logicalDelta),
+                                                formattedDelta(allocatedDelta)
+                                            ))
+                                            .font(.caption2.monospacedDigit())
+                                            .foregroundStyle(
+                                                allocatedDelta > 0 ? .orange
+                                                    : allocatedDelta < 0 ? .green : .secondary
+                                            )
+                                        }
+                                    }
                                     if cancelled {
                                         Text("The last scan was cancelled; this location remains incomplete.")
                                             .font(.caption2)
