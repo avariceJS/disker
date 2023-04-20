@@ -280,3 +280,4 @@
 "Critical" = "Критический уровень";
 "Complete comparisons are ordered by allocated-estimate change, with largest increases first. Each row shows its own interval; linked paths may overlap, so values are never added and do not establish cause or reclaimable space." = "Полные сравнения отсортированы по изменению оценки выделенного места, сначала — наибольший рост. В каждой строке указан собственный интервал; связанные пути могут пересекаться, поэтому значения не суммируются и не доказывают причину изменений или объём освобождаемого места.";
 "Change since %@ · logical %@ · allocated estimate %@" = "Изменение с %@ · логический размер %@ · оценка выделенного места %@";
+"Measured folder filename mix" = "Состав измеренной папки по расширениям";

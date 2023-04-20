@@ -4282,6 +4282,15 @@ struct DashboardView: View {
                                             )
                                         }
                                     }
+                                    if !observation.fileExtensionSummaries.isEmpty {
+                                        DisclosureGroup {
+                                            fileExtensionSummary(for: observation)
+                                                .padding(.top, 4)
+                                        } label: {
+                                            Label("Measured folder filename mix", systemImage: "chart.pie")
+                                                .font(.caption2.weight(.medium))
+                                        }
+                                    }
                                     if cancelled {
                                         Text("The last scan was cancelled; this location remains incomplete.")
                                             .font(.caption2)

@@ -1037,8 +1037,10 @@ private struct DiskerCoreChecks {
             }
             try expect(scan.folders.count == 1 && measured.path == container.standardizedFileURL.path
                        && measured.complete && measured.fileCount == 1
-                       && measured.logicalBytes == Int64(stateContents.count),
-                       "the selected suggestion should be measured as one separate complete root")
+                       && measured.logicalBytes == Int64(stateContents.count)
+                       && measured.fileExtensionSummaries.map(\.extensionName) == ["sqlite"]
+                       && FileExtensionBreakdown.categories(for: measured)?.count == 1,
+                       "the selected suggestion should be measured as one separate complete root with a usable filename-category breakdown")
             let unchangedContents = try Data(contentsOf: stateFile)
             try expect(unchangedContents == stateContents,
                        "metadata-only app data measurement must leave the synthetic file contents unchanged")
@@ -1062,8 +1064,10 @@ private struct DiskerCoreChecks {
             }
             try expect(partialScan.folders.count == 1 && partial.path == container.standardizedFileURL.path
                        && !partial.complete && partial.excludedSpecialFileCount == 1
-                       && partial.fileCount == 1 && partial.logicalBytes == Int64(stateContents.count),
-                       "an excluded special entry should leave a nonzero subtotal explicitly partial, never a complete app-data total")
+                       && partial.fileCount == 1 && partial.logicalBytes == Int64(stateContents.count)
+                       && partial.fileExtensionSummaries.map(\.extensionName) == ["sqlite"]
+                       && FileExtensionBreakdown.categories(for: partial)?.count == 1,
+                       "an excluded special entry should leave a nonzero partial subtotal and a partial filename breakdown, never a complete app-data total")
             _ = try ObservationStore.append(partialScan, to: storeURL)
 
             try FileManager.default.removeItem(at: fifo)
