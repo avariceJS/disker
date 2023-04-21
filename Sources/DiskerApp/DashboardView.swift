@@ -4282,6 +4282,7 @@ struct DashboardView: View {
                                             )
                                         }
                                     }
+                                    linkedPathFileChangesDisclosure(for: observation)
                                     if !observation.fileExtensionSummaries.isEmpty {
                                         DisclosureGroup {
                                             fileExtensionSummary(for: observation)

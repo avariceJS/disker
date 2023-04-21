@@ -1031,22 +1031,31 @@ private struct DiskerCoreChecks {
                 homeDirectoryPath: home.path
             ) == nil, "a nearby path must not be eligible to start the app data measurement workflow")
 
-            let scan = FolderScanner.scan(roots: [URL(fileURLWithPath: suggestion.path, isDirectory: true)])
-            guard let measured = scan.folders.first else {
+            let scan = FolderScanner.scanWithFileInventories(
+                roots: [URL(fileURLWithPath: suggestion.path, isDirectory: true)]
+            )
+            guard let measured = scan.observation.folders.first,
+                  let baselineInventory = scan.fileInventories.first else {
                 throw CheckFailure.assertion("the exact selected synthetic root should produce one observation")
             }
-            try expect(scan.folders.count == 1 && measured.path == container.standardizedFileURL.path
+            try expect(scan.observation.folders.count == 1 && measured.path == container.standardizedFileURL.path
                        && measured.complete && measured.fileCount == 1
                        && measured.logicalBytes == Int64(stateContents.count)
                        && measured.fileExtensionSummaries.map(\.extensionName) == ["sqlite"]
                        && FileExtensionBreakdown.categories(for: measured)?.count == 1,
                        "the selected suggestion should be measured as one separate complete root with a usable filename-category breakdown")
+            let fileInventoryURL = root.appendingPathComponent("Disker/file-inventory.plist")
+            let baselineReport = try FileInventoryStore.record(baselineInventory, at: fileInventoryURL)
+            try expect(baselineReport?.rootPath == suggestion.path
+                       && baselineReport?.folderObservationID == measured.id
+                       && baselineReport?.hasBaseline == false,
+                       "the confirmed app-data path should establish its own exact-root file inventory baseline")
             let unchangedContents = try Data(contentsOf: stateFile)
             try expect(unchangedContents == stateContents,
                        "metadata-only app data measurement must leave the synthetic file contents unchanged")
 
             let storeURL = root.appendingPathComponent("Disker/observations.json")
-            _ = try ObservationStore.append(scan, to: storeURL)
+            _ = try ObservationStore.append(scan.observation, to: storeURL)
             _ = try ObservationStore.associateApplicationFolders(
                 [suggestion.path], with: candidate.path, to: storeURL
             )
@@ -1056,33 +1065,47 @@ private struct DiskerCoreChecks {
                 mkfifo($0, mode_t(S_IRUSR | S_IWUSR))
             }
             try expect(fifoResult == 0, "a synthetic special entry should be created without opening or reading it")
-            let partialScan = FolderScanner.scan(
+            let partialScan = FolderScanner.scanWithFileInventories(
                 roots: [URL(fileURLWithPath: suggestion.path, isDirectory: true)]
             )
-            guard let partial = partialScan.folders.first else {
+            guard let partial = partialScan.observation.folders.first,
+                  let partialInventory = partialScan.fileInventories.first else {
                 throw CheckFailure.assertion("the exact selected synthetic root should preserve its partial observation")
             }
-            try expect(partialScan.folders.count == 1 && partial.path == container.standardizedFileURL.path
+            try expect(partialScan.observation.folders.count == 1 && partial.path == container.standardizedFileURL.path
                        && !partial.complete && partial.excludedSpecialFileCount == 1
                        && partial.fileCount == 1 && partial.logicalBytes == Int64(stateContents.count)
                        && partial.fileExtensionSummaries.map(\.extensionName) == ["sqlite"]
                        && FileExtensionBreakdown.categories(for: partial)?.count == 1,
                        "an excluded special entry should leave a nonzero partial subtotal and a partial filename breakdown, never a complete app-data total")
-            _ = try ObservationStore.append(partialScan, to: storeURL)
+            let rejectedPartialInventory = try FileInventoryStore.record(partialInventory, at: fileInventoryURL)
+            let retainedFileInventoryReport = try FileInventoryStore.loadReports(at: fileInventoryURL)[suggestion.path]
+            try expect(rejectedPartialInventory == nil
+                       && retainedFileInventoryReport == baselineReport,
+                       "a partial app-data scan should not replace the prior exact-path file inventory baseline")
+            _ = try ObservationStore.append(partialScan.observation, to: storeURL)
 
             try FileManager.default.removeItem(at: fifo)
             let changedStateContents = Data("synthetic app state grows".utf8)
             try changedStateContents.write(to: stateFile)
-            let finalScan = FolderScanner.scan(
+            let finalScan = FolderScanner.scanWithFileInventories(
                 roots: [URL(fileURLWithPath: suggestion.path, isDirectory: true)]
             )
-            guard let finalMeasurement = finalScan.folders.first else {
+            guard let finalMeasurement = finalScan.observation.folders.first,
+                  let finalInventory = finalScan.fileInventories.first else {
                 throw CheckFailure.assertion("the restored exact synthetic root should produce a later complete observation")
             }
             try expect(finalMeasurement.complete && finalMeasurement.fileCount == 1
                        && finalMeasurement.logicalBytes == Int64(changedStateContents.count),
                        "after the special entry is removed, a new complete app-data observation should measure the changed fixture")
-            _ = try ObservationStore.append(finalScan, to: storeURL)
+            let fileChangeReport = try FileInventoryStore.record(finalInventory, at: fileInventoryURL)
+            try expect(fileChangeReport?.hasBaseline == true
+                       && fileChangeReport?.folderObservationID == finalMeasurement.id
+                       && fileChangeReport?.changedPathCount == 1
+                       && fileChangeReport?.changes.first?.relativePath == "state.sqlite"
+                       && fileChangeReport?.changes.first?.kind == .resized,
+                       "a later complete app-data inventory should identify the exact resized file within the confirmed root")
+            _ = try ObservationStore.append(finalScan.observation, to: storeURL)
 
             let saved = try ObservationStore.load(from: storeURL)
             let firstComplete = saved.observations.first?.folders.first
