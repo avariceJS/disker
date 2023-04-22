@@ -4492,6 +4492,10 @@ struct DashboardView: View {
             attributionSymbol = "folder.badge.questionmark"
         case .probableNamedSupportPathMatch:
             attributionSymbol = "folder.badge.questionmark"
+        case .probableLogsPathMatch:
+            attributionSymbol = "folder.badge.questionmark"
+        case .probableSavedApplicationStatePathMatch:
+            attributionSymbol = "folder.badge.questionmark"
         case .userSelectedOnly:
             attributionSymbol = "person.crop.circle.badge.questionmark"
         }
