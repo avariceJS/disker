@@ -45,7 +45,7 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
         case .carthageDependencies: "Carthage dependencies · name match"
         case .simulatorData: "Simulator data · name match"
         case .dockerData: "Docker data · name match"
-        case .modelDataDirectory: "Model or checkpoint data · name match"
+        case .modelDataDirectory: "Model, weight, embedding, or checkpoint data · name pattern"
         case .datasetDirectory: "Dataset directory · name match"
         case .logDirectory: "Log directory · name match"
         case .xcodeArchives: "Xcode archives directory · name match"
@@ -94,7 +94,10 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
             case "Carthage": return .carthageDependencies
             case "CoreSimulator": return .simulatorData
             case "Docker": return .dockerData
-            case "models", "checkpoints", "checkpoint": return .modelDataDirectory
+            case "models", "checkpoints", "checkpoint", "weights", "model_weights", "model-weights",
+                 "embedding", "embeddings", "model-cache", "model_cache", "huggingface":
+                return .modelDataDirectory
+            case let component where component.hasPrefix("models--"): return .modelDataDirectory
             case "datasets", "dataset": return .datasetDirectory
             case "logs": return .logDirectory
             case "Archives": return .xcodeArchives

@@ -5526,7 +5526,7 @@ struct DashboardView: View {
         return VStack(alignment: .leading, spacing: 9) {
             Label("Project and development-data candidates", systemImage: "chevron.left.forwardslash.chevron.right")
                 .font(.subheadline.weight(.semibold))
-            Text("Entries have a direct `.git` marker or an exact development-data directory name. These are candidates, not verified project ownership or safe cleanup targets. Name matches do not inspect contents; nested folder totals overlap.")
+            Text("Entries have a direct `.git` marker or a recognized development-data directory-name pattern. These are candidates, not verified project ownership or safe cleanup targets. Name matches do not inspect contents; nested folder totals overlap.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -5559,7 +5559,7 @@ struct DashboardView: View {
                             }
                         }
                         if let hint = StorageAreaHint.matchingDirectory(relativePath: directory.rootRelativePath) {
-                            Label("\(hint.title) · exact directory-name match", systemImage: "tag")
+                            Label(hint.title, systemImage: "tag")
                                 .font(.caption2)
                                 .foregroundStyle(.blue)
                         }

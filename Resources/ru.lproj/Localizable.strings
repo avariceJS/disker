@@ -143,11 +143,13 @@
 "Possible related data locations" = "Возможные связанные данные";
 "Spotlight returned bundle ID · %@ · unverified" = "Spotlight сообщил идентификатор пакета · %@ · не проверен";
 "These conventional paths are hints only. The indexed bundle ID is not verified against the app signature or data ownership. Disker does not inspect these folders until you choose the exact suggested folder in the picker; only then does its metadata-only scan begin." = "Эти стандартные пути — только подсказки. Идентификатор из индекса не сверяется с подписью приложения и не доказывает принадлежность данных. Disker не проверяет эти папки, пока вы не выберете точный предложенный путь в диалоге. Только после этого начнётся сканирование метаданных.";
+"Entries have a direct `.git` marker or a recognized development-data directory-name pattern. These are candidates, not verified project ownership or safe cleanup targets. Name matches do not inspect contents; nested folder totals overlap." = "Каталоги с непосредственным маркером `.git` или распознанным именем данных разработки показываются лишь как кандидаты. Это не подтверждает принадлежность проекту или безопасность очистки. Содержимое по имени не проверяется; вложенные каталоги пересекаются по объёму.";
 "Probable per-app container path" = "Вероятный контейнер приложения";
 "Signed identifier · conventional per-app container path" = "Подписанный идентификатор · стандартный контейнер приложения";
 "Possible app support or cache · name match" = "Возможные данные или кэш приложения · совпадение имени";
 "Possible application logs · ID pattern" = "Возможные журналы приложения · шаблон идентификатора";
 "Possible saved state · ID pattern" = "Возможное сохранённое состояние · шаблон идентификатора";
+"Model, weight, embedding, or checkpoint data · name pattern" = "Модели, веса, эмбеддинги или контрольные точки · совпадение имени";
 "Possible app logs path · name match" = "Возможная папка журналов приложения · совпадение имени";
 "Possible saved app state · name match" = "Возможное сохранённое состояние приложения · совпадение имени";
 "This is the standard path pattern for the supplied bundle ID. Its presence, use, and exclusive ownership have not been checked." = "Это стандартный путь для указанного идентификатора пакета. Наличие, использование и исключительная принадлежность не проверялись.";

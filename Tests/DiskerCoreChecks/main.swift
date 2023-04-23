@@ -3881,6 +3881,10 @@ private struct DiskerCoreChecks {
             ("Library/Developer/CoreSimulator/Devices", .simulatorData),
             ("Library/Containers/Docker/Data", .dockerData),
             ("research/checkpoints", .modelDataDirectory),
+            ("training/weights", .modelDataDirectory),
+            ("training/embeddings", .modelDataDirectory),
+            (".cache/huggingface/hub/models--researcher/model/snapshots", .modelDataDirectory),
+            ("project/model-cache", .modelDataDirectory),
             ("training/datasets", .datasetDirectory),
             ("service/logs", .logDirectory),
             ("Library/Developer/Xcode/Archives", .xcodeArchives),
@@ -3904,6 +3908,13 @@ private struct DiskerCoreChecks {
                    "a directly named development folder should get an independent summary")
         try expect(StorageAreaHint.matchingDirectory(relativePath: "research/checkpoints") == .modelDataDirectory,
                    "a directly named model/checkpoint folder should become a separate candidate")
+        for path in ["training/weights", "training/embeddings", "models--researcher"] {
+            try expect(StorageAreaHint.matchingDirectory(relativePath: path) == .modelDataDirectory,
+                       "model weights, embeddings, and Hugging Face repository directories should become separate candidates")
+        }
+        try expect(StorageAreaHint.modelDataDirectory.title.contains("embedding")
+                   && StorageAreaHint.modelDataDirectory.title.contains("weight"),
+                   "the candidate label should describe the expanded model-data name evidence")
         try expect(StorageAreaHint.matchingDirectory(relativePath: "archive/App.xcarchive") == .xcodeArchiveBundle,
                    "an Xcode archive bundle should become a separate candidate")
         try expect(StorageAreaHint.matchingDirectory(relativePath: "web/dist") == .webBuildOutput,
