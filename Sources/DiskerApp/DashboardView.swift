@@ -1781,6 +1781,12 @@ struct DashboardView: View {
 
     private let sections = ["Overview", "Applications", "Folders", "Duplicates", "History", "RAM", "About"]
 
+    /// Keep stable English section identifiers for navigation state while
+    /// translating only the labels presented to the user.
+    private func sectionTitle(_ section: String) -> String {
+        NSLocalizedString(section, comment: "Disker sidebar section")
+    }
+
     private var hasApplicationHistoryChart: Bool {
         model.measuredApplicationBundles.contains {
             ObservationComparison.completeFolderSeries(for: $0, in: model.history).count > 1
@@ -1796,7 +1802,7 @@ struct DashboardView: View {
     var body: some View {
         NavigationSplitView {
             List(sections, id: \.self, selection: $selectedSection) { section in
-                Label(section, systemImage: icon(for: section))
+                Label(sectionTitle(section), systemImage: icon(for: section))
                     .tag(section)
             }
             .listStyle(.sidebar)
@@ -1985,7 +1991,10 @@ struct DashboardView: View {
                     icon: "internaldrive.fill",
                     tint: .blue
                 ) {
-                    Text("\(capacity.volumeName ?? "System volume") · reported by macOS")
+                    Text(String.localizedStringWithFormat(
+                        NSLocalizedString("%@ · reported by macOS", comment: "Volume name and capacity source"),
+                        capacity.volumeName ?? NSLocalizedString("System volume", comment: "Name fallback for the system volume")
+                    ))
                 }
                 SWKPICard(
                     title: "Volume capacity",
@@ -1993,7 +2002,10 @@ struct DashboardView: View {
                     icon: "externaldrive.fill",
                     tint: .indigo
                 ) {
-                    Text(capacity.volumeIsLocal.map { $0 ? "Local volume" : "Network volume" } ?? "Volume location unknown")
+                    Text(NSLocalizedString(
+                        capacity.volumeIsLocal.map { $0 ? "Local volume" : "Network volume" } ?? "Volume location unknown",
+                        comment: "Storage volume location"
+                    ))
                 }
                 SWKPICard(
                     title: "Selected-folder coverage",
@@ -2143,7 +2155,10 @@ struct DashboardView: View {
             reasons.append("\(folder.excludedSymlinkCount) symlinks not followed")
         }
         if folder.inaccessibleCount > 0 {
-            reasons.append("\(folder.inaccessibleCount) items inaccessible")
+            reasons.append(String.localizedStringWithFormat(
+                NSLocalizedString("%ld items inaccessible", comment: "Count of inaccessible selected-folder items"),
+                folder.inaccessibleCount
+            ))
         }
         if folder.changedDuringScanCount > 0 {
             reasons.append("\(folder.changedDuringScanCount) items changed during scan")
@@ -2181,10 +2196,20 @@ struct DashboardView: View {
                 HStack(spacing: 10) {
                     Image(systemName: "internaldrive.fill")
                         .foregroundStyle(.blue)
-                    Text("\(capacity.volumeName ?? "System volume") · \(capacity.volumeIsLocal.map { $0 ? "local volume" : "network volume" } ?? "volume location unknown")")
+                    Text(String.localizedStringWithFormat(
+                        NSLocalizedString("%@ · %@", comment: "Volume name and local or network location"),
+                        capacity.volumeName ?? NSLocalizedString("System volume", comment: "Name fallback for the system volume"),
+                        NSLocalizedString(
+                            capacity.volumeIsLocal.map { $0 ? "local volume" : "network volume" } ?? "volume location unknown",
+                            comment: "Storage volume location"
+                        )
+                    ))
                         .font(.subheadline.weight(.medium))
                     Spacer(minLength: 4)
-                    Text("\(Int((Double(capacity.availableBytes) / Double(max(1, capacity.totalBytes)) * 100).rounded()))% available")
+                    Text(String.localizedStringWithFormat(
+                        NSLocalizedString("%ld%% available", comment: "Percent of volume capacity available"),
+                        Int((Double(capacity.availableBytes) / Double(max(1, capacity.totalBytes)) * 100).rounded())
+                    ))
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
@@ -2329,7 +2354,11 @@ struct DashboardView: View {
                         }
                         .chartXSelection(value: $selectedCapacityDate)
                         .frame(height: 210)
-                        .accessibilityLabel("Available-space history for \(historyChartRange.title), \(capacitySeries.count) comparable observations")
+                        .accessibilityLabel(String.localizedStringWithFormat(
+                            NSLocalizedString("Available-space history for %@, %ld comparable observations", comment: "Accessible description of storage history chart"),
+                            NSLocalizedString(historyChartRange.title, comment: "Storage history chart time range"),
+                            capacitySeries.count
+                        ))
                         if let selectedCapacitySample {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 Text(format(selectedCapacitySample.availableBytes))
@@ -2351,7 +2380,10 @@ struct DashboardView: View {
                     }
                 } else if !fullCapacitySeries.isEmpty {
                     historyRangePicker
-                    Text("Fewer than two comparable capacity observations in \(historyRangeCaption(endingAt: latestCapacityDate)).")
+                    Text(String.localizedStringWithFormat(
+                        NSLocalizedString("Fewer than two comparable capacity observations in %@.", comment: "Insufficient observations in selected storage history range"),
+                        historyRangeCaption(endingAt: latestCapacityDate)
+                    ))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -2393,9 +2425,12 @@ struct DashboardView: View {
                     }
                     .font(.system(.title3, design: .rounded).weight(.medium))
                 }
-                    Text(capacity.availabilityBasis == .importantUsage
-                     ? "Available space uses macOS’s estimate for important usage. Capacity minus available is a difference between system-reported values, not a measurement of physical file usage."
-                     : "macOS’s standard available-capacity value is shown because its important-usage estimate was zero or unavailable. Capacity minus available is not a measurement of physical file usage.")
+                    Text(NSLocalizedString(
+                        capacity.availabilityBasis == .importantUsage
+                            ? "Available space uses macOS’s estimate for important usage. Capacity minus available is a difference between system-reported values, not a measurement of physical file usage."
+                            : "macOS’s standard available-capacity value is shown because its important-usage estimate was zero or unavailable. Capacity minus available is not a measurement of physical file usage.",
+                        comment: "Clarifies the system-reported capacity measurement basis"
+                    ))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } else {
@@ -6563,7 +6598,11 @@ struct DashboardView: View {
     }
 
     private func historyRangeCaption(endingAt date: Date) -> String {
-        "\(historyChartRange.title) ending \(date.formatted(date: .abbreviated, time: .shortened))"
+        String.localizedStringWithFormat(
+            NSLocalizedString("%@ ending %@", comment: "Selected history range and its end date"),
+            NSLocalizedString(historyChartRange.title, comment: "Storage history chart time range"),
+            date.formatted(date: .abbreviated, time: .shortened)
+        )
     }
 
     private func format(_ bytes: Int64) -> String {
