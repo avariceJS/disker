@@ -57,6 +57,16 @@
 "These are partial current-size estimates, not new bytes. Disker cannot reconstruct a before-scan it did not record; a complete baseline and later scan are needed to show future growth." = "Это неполные оценки текущего размера, а не объёма добавленных данных. Disker не может восстановить измерение «до», если оно не сохранялось. Чтобы показывать дальнейший рост, нужны полный исходный снимок и последующее сканирование.";
 "Unknown total" = "Общий размер неизвестен";
 "%ld items inaccessible" = "Недоступно элементов: %ld";
+"%ld unmeasured" = "Не измерено элементов: %ld";
+"%ld symlinks not followed" = "Символических ссылок не пройдено: %ld";
+"%ld special files excluded" = "Исключено специальных файлов: %ld";
+"%ld nested volume boundaries skipped" = "Пропущено границ вложенных томов: %ld";
+"%ld changed during scan" = "Изменилось при сканировании: элементов — %ld";
+"byte total exceeded the supported range and was capped" = "Сумма байтов превысила допустимый диапазон и была ограничена.";
+"scan cancelled" = "Сканирование отменено";
+"Coverage incomplete" = "Охват неполный";
+"Partial · %@" = "Частичный охват · %@";
+"some data may be unmeasured" = "Часть данных могла остаться неизмеренной";
 "Capacity minus available" = "Ёмкость минус свободное место";
 "Available (GiB)" = "Доступно (ГиБ)";
 "About these measurements" = "Об этих измерениях";

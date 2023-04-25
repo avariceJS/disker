@@ -2152,7 +2152,10 @@ struct DashboardView: View {
     private func partialFolderCoverageReason(_ folder: FolderObservation) -> String {
         var reasons: [String] = []
         if folder.excludedSymlinkCount > 0 {
-            reasons.append("\(folder.excludedSymlinkCount) symlinks not followed")
+            reasons.append(String.localizedStringWithFormat(
+                NSLocalizedString("%ld symlinks not followed", comment: "Count of symbolic links excluded from scan"),
+                folder.excludedSymlinkCount
+            ))
         }
         if folder.inaccessibleCount > 0 {
             reasons.append(String.localizedStringWithFormat(
@@ -2161,16 +2164,32 @@ struct DashboardView: View {
             ))
         }
         if folder.changedDuringScanCount > 0 {
-            reasons.append("\(folder.changedDuringScanCount) items changed during scan")
+            reasons.append(String.localizedStringWithFormat(
+                NSLocalizedString("%ld changed during scan", comment: "Count of items that changed during metadata measurement"),
+                folder.changedDuringScanCount
+            ))
         }
         if folder.excludedVolumeBoundaryCount > 0 {
-            reasons.append("\(folder.excludedVolumeBoundaryCount) volume boundaries excluded")
+            reasons.append(String.localizedStringWithFormat(
+                NSLocalizedString("%ld nested volume boundaries skipped", comment: "Count of nested volumes outside selected scan boundary"),
+                folder.excludedVolumeBoundaryCount
+            ))
         }
         if folder.excludedSpecialFileCount > 0 {
-            reasons.append("\(folder.excludedSpecialFileCount) special files excluded")
+            reasons.append(String.localizedStringWithFormat(
+                NSLocalizedString("%ld special files excluded", comment: "Count of unsupported special filesystem items"),
+                folder.excludedSpecialFileCount
+            ))
         }
-        if folder.byteAccountingOverflowed { reasons.append("byte total capped") }
-        return reasons.isEmpty ? "coverage incomplete" : reasons.joined(separator: " · ")
+        if folder.byteAccountingOverflowed {
+            reasons.append(NSLocalizedString(
+                "byte total exceeded the supported range and was capped",
+                comment: "Coverage limitation caused by byte-accounting overflow"
+            ))
+        }
+        return reasons.isEmpty
+            ? NSLocalizedString("Coverage incomplete", comment: "Selected-folder coverage is incomplete")
+            : reasons.joined(separator: " · ")
     }
 
     private var capacityCard: some View {
@@ -6647,14 +6666,52 @@ struct DashboardView: View {
         changed: Int, wasCancelled: Bool, accountingOverflowed: Bool = false
     ) -> String {
         var details: [String] = []
-        if accountingOverflowed { details.append("byte total exceeded the supported range and was capped") }
-        if inaccessible > 0 { details.append("\(inaccessible) unmeasured") }
-        if excludedSymlinks > 0 { details.append("\(excludedSymlinks) symlinks not followed") }
-        if excludedSpecialFiles > 0 { details.append("\(excludedSpecialFiles) special files excluded") }
-        if excludedVolumeBoundaries > 0 { details.append("\(excludedVolumeBoundaries) nested volume boundaries skipped") }
-        if changed > 0 { details.append("\(changed) changed during scan") }
-        if wasCancelled && details.isEmpty { details.append("scan cancelled") }
-        return details.isEmpty ? "Coverage incomplete" : "Partial · " + details.joined(separator: " · ")
+        if accountingOverflowed {
+            details.append(NSLocalizedString(
+                "byte total exceeded the supported range and was capped",
+                comment: "Coverage limitation caused by byte-accounting overflow"
+            ))
+        }
+        if inaccessible > 0 {
+            details.append(String.localizedStringWithFormat(
+                NSLocalizedString("%ld unmeasured", comment: "Count of inaccessible selected items"),
+                inaccessible
+            ))
+        }
+        if excludedSymlinks > 0 {
+            details.append(String.localizedStringWithFormat(
+                NSLocalizedString("%ld symlinks not followed", comment: "Count of symbolic links excluded from scan"),
+                excludedSymlinks
+            ))
+        }
+        if excludedSpecialFiles > 0 {
+            details.append(String.localizedStringWithFormat(
+                NSLocalizedString("%ld special files excluded", comment: "Count of unsupported special filesystem items"),
+                excludedSpecialFiles
+            ))
+        }
+        if excludedVolumeBoundaries > 0 {
+            details.append(String.localizedStringWithFormat(
+                NSLocalizedString("%ld nested volume boundaries skipped", comment: "Count of nested volumes outside selected scan boundary"),
+                excludedVolumeBoundaries
+            ))
+        }
+        if changed > 0 {
+            details.append(String.localizedStringWithFormat(
+                NSLocalizedString("%ld changed during scan", comment: "Count of items that changed during metadata measurement"),
+                changed
+            ))
+        }
+        if wasCancelled && details.isEmpty {
+            details.append(NSLocalizedString("scan cancelled", comment: "Reason selected-folder coverage is incomplete"))
+        }
+        guard !details.isEmpty else {
+            return NSLocalizedString("Coverage incomplete", comment: "Selected-folder coverage is incomplete")
+        }
+        return String.localizedStringWithFormat(
+            NSLocalizedString("Partial · %@", comment: "Selected-folder coverage status and reasons"),
+            details.joined(separator: " · ")
+        )
     }
 
     private func icon(for section: String) -> String {
@@ -7470,14 +7527,46 @@ private struct ApplicationFootprintReviewSheet: View {
 
     private func unmeasuredSummary(_ observation: FolderObservation, wasCancelled: Bool) -> String {
         var reasons: [String] = []
-        if observation.inaccessibleCount > 0 { reasons.append("\(observation.inaccessibleCount) inaccessible") }
-        if observation.excludedSymlinkCount > 0 { reasons.append("\(observation.excludedSymlinkCount) symlinks skipped") }
-        if observation.excludedSpecialFileCount > 0 { reasons.append("\(observation.excludedSpecialFileCount) special files skipped") }
-        if observation.excludedVolumeBoundaryCount > 0 { reasons.append("\(observation.excludedVolumeBoundaryCount) volume boundaries skipped") }
-        if observation.changedDuringScanCount > 0 { reasons.append("\(observation.changedDuringScanCount) changed during scan") }
-        if observation.byteAccountingOverflowed { reasons.append("byte totals capped") }
-        if wasCancelled { reasons.append("scan cancelled") }
-        return reasons.isEmpty ? "some data may be unmeasured" : reasons.joined(separator: " · ")
+        if observation.inaccessibleCount > 0 {
+            reasons.append(String.localizedStringWithFormat(
+                NSLocalizedString("%ld unmeasured", comment: "Count of inaccessible selected items"),
+                observation.inaccessibleCount
+            ))
+        }
+        if observation.excludedSymlinkCount > 0 {
+            reasons.append(String.localizedStringWithFormat(
+                NSLocalizedString("%ld symlinks not followed", comment: "Count of symbolic links excluded from scan"),
+                observation.excludedSymlinkCount
+            ))
+        }
+        if observation.excludedSpecialFileCount > 0 {
+            reasons.append(String.localizedStringWithFormat(
+                NSLocalizedString("%ld special files excluded", comment: "Count of unsupported special filesystem items"),
+                observation.excludedSpecialFileCount
+            ))
+        }
+        if observation.excludedVolumeBoundaryCount > 0 {
+            reasons.append(String.localizedStringWithFormat(
+                NSLocalizedString("%ld nested volume boundaries skipped", comment: "Count of nested volumes outside selected scan boundary"),
+                observation.excludedVolumeBoundaryCount
+            ))
+        }
+        if observation.changedDuringScanCount > 0 {
+            reasons.append(String.localizedStringWithFormat(
+                NSLocalizedString("%ld changed during scan", comment: "Count of items that changed during metadata measurement"),
+                observation.changedDuringScanCount
+            ))
+        }
+        if observation.byteAccountingOverflowed {
+            reasons.append(NSLocalizedString(
+                "byte total exceeded the supported range and was capped",
+                comment: "Coverage limitation caused by byte-accounting overflow"
+            ))
+        }
+        if wasCancelled { reasons.append(NSLocalizedString("scan cancelled", comment: "Reason selected-folder coverage is incomplete")) }
+        return reasons.isEmpty
+            ? NSLocalizedString("some data may be unmeasured", comment: "No precise partial-coverage reason is available")
+            : reasons.joined(separator: " · ")
     }
 
     private func format(_ bytes: Int64) -> String {
