@@ -115,6 +115,9 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
         /// Exact directory-name match under conventional support/cache roots.
         /// This weak clue does not establish ownership.
         case probableNamedSupportPathMatch
+        /// Exact conventional preferences filename for the selected app ID.
+        /// This filename clue does not establish authorship or ownership.
+        case probablePreferencesFilePathMatch
         /// Exact bundle-ID match under the user's conventional Logs directory.
         /// This weak clue does not establish origin or ownership.
         case probableLogsPathMatch
@@ -136,6 +139,7 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
         case .validatedBundleIdentifierPathMatch: "Signed ID + conventional container path · ownership unverified"
         case .probableContainerPathMatch: "Probable app container path"
         case .probableNamedSupportPathMatch: "Possible app data path · name match"
+        case .probablePreferencesFilePathMatch: "Possible app preferences file · name match"
         case .probableLogsPathMatch: "Possible app logs path · name match"
         case .probableSavedApplicationStatePathMatch: "Possible saved app state · name match"
         case .userSelectedOnly: "User-selected association"
@@ -154,6 +158,8 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
             "This path matches the selected app's CFBundleIdentifier under ~/Library/Containers. Disker has not verified the app's signing identity or exclusive use of the data."
         case .probableNamedSupportPathMatch:
             "This path's exact directory name matches the selected app's CFBundleIdentifier under Application Support or Caches. This is a name match only; app ownership, current use, and exclusive use are not established."
+        case .probablePreferencesFilePathMatch:
+            "This exact filename matches the selected app's CFBundleIdentifier under ~/Library/Preferences. This is a naming clue only; file contents, origin, app ownership, and current use have not been checked."
         case .probableLogsPathMatch:
             "This path's exact directory name matches the selected app's CFBundleIdentifier under ~/Library/Logs. This is a name match only; log origin, current use, and exclusive ownership are not established."
         case .probableSavedApplicationStatePathMatch:
@@ -217,6 +223,15 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
                     )
                 }
             }
+            let preferencesFile = libraryRoot.appendingPathComponent("Preferences", isDirectory: true)
+                .appendingPathComponent("\(bundleIdentifier).plist").standardizedFileURL.path
+            if candidate == preferencesFile {
+                return ApplicationPathAttribution(
+                    evidence: .probablePreferencesFilePathMatch,
+                    bundleIdentifier: bundleIdentifier,
+                    groupIdentifier: nil
+                )
+            }
             let logsRoot = libraryRoot.appendingPathComponent("Logs", isDirectory: true)
                 .appendingPathComponent(bundleIdentifier, isDirectory: true).standardizedFileURL.path
             if isWithin(candidate, root: logsRoot) {
@@ -273,6 +288,7 @@ public struct ApplicationDataLocationCandidate: Equatable, Sendable, Identifiabl
         case probableAppContainer
         case validatedAppContainerIdentifier
         case probableNamedSupportDirectory
+        case probablePreferencesFile
         case probableLogsDirectory
         case probableSavedApplicationState
         case declaredSharedGroupClaim
@@ -290,6 +306,7 @@ public struct ApplicationDataLocationCandidate: Equatable, Sendable, Identifiabl
         case .probableAppContainer: "Probable per-app container path"
         case .validatedAppContainerIdentifier: "Signed identifier · conventional per-app container path"
         case .probableNamedSupportDirectory: "Possible app support or cache · name match"
+        case .probablePreferencesFile: "Possible app preferences file · name match"
         case .probableLogsDirectory: "Possible application logs · ID pattern"
         case .probableSavedApplicationState: "Possible saved state · ID pattern"
         case .declaredSharedGroupClaim: "Declared App Group path · shared"
@@ -305,6 +322,8 @@ public struct ApplicationDataLocationCandidate: Equatable, Sendable, Identifiabl
             "The selected bundle's locally validated signature carries this identifier. This conventional path has not been checked for presence, origin, or exclusive use."
         case .probableNamedSupportDirectory:
             "The candidate directory name exactly matches the supplied bundle ID under Application Support or Caches. This is only a naming clue; presence, app ownership, and exclusive use have not been checked."
+        case .probablePreferencesFile:
+            "This conventional Preferences plist filename matches the supplied bundle ID. Its presence, origin, app ownership, current use, and contents have not been checked; it may contain private settings."
         case .probableLogsDirectory:
             "This conventional Logs directory path uses the supplied bundle ID as a hint. Its presence, origin, app ownership, and exclusive use have not been checked."
         case .probableSavedApplicationState:
@@ -350,6 +369,13 @@ public enum ApplicationDataLocationCandidates {
                 identifier: bundleIdentifier
             ))
         }
+
+        candidates.append(ApplicationDataLocationCandidate(
+            path: libraryRoot.appendingPathComponent("Preferences", isDirectory: true)
+                .appendingPathComponent("\(bundleIdentifier).plist").standardizedFileURL.path,
+            evidence: .probablePreferencesFile,
+            identifier: bundleIdentifier
+        ))
 
         candidates.append(ApplicationDataLocationCandidate(
             path: libraryRoot.appendingPathComponent("Logs", isDirectory: true)

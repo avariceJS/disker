@@ -805,6 +805,19 @@ private struct DiskerCoreChecks {
         let container = "\(home)/Library/Containers/\(identifier)"
         let appSupport = "\(home)/Library/Application Support/\(identifier)"
         let appCaches = "\(home)/Library/Caches/\(identifier)"
+        let preferencesFile = "\(home)/Library/Preferences/\(identifier).plist"
+        let preferences = ApplicationPathAttribution.classify(
+            bundleIdentifier: identifier, associatedFolderPath: preferencesFile,
+            homeDirectoryPath: home
+        )
+        let nearbyPreferencesFile = ApplicationPathAttribution.classify(
+            bundleIdentifier: identifier, associatedFolderPath: preferencesFile + ".backup",
+            homeDirectoryPath: home
+        )
+        try expect(preferences.evidence == .probablePreferencesFilePathMatch
+                   && preferences.explanation.contains("file contents")
+                   && nearbyPreferencesFile.evidence == .userSelectedOnly,
+                   "only the exact conventional preferences plist gets a weak name clue, without inspecting its contents")
         let exact = ApplicationPathAttribution.classify(
             bundleIdentifier: identifier, associatedFolderPath: container,
             homeDirectoryPath: home
@@ -979,15 +992,16 @@ private struct DiskerCoreChecks {
             claimedGroupIdentifiers: [groupIdentifier, groupIdentifier, "bad/group"]
         )
         try expect(suggestions.map(\.path) == [
-            container, appSupport, appCaches, logsDirectory, savedStateDirectory, groupContainer,
+            container, appSupport, appCaches, preferencesFile, logsDirectory, savedStateDirectory, groupContainer,
         ],
                    "app-data suggestions should be exact, deduplicated conventional paths")
         try expect(suggestions[0].evidence == .probableAppContainer
                    && suggestions[1].evidence == .probableNamedSupportDirectory
                    && suggestions[2].evidence == .probableNamedSupportDirectory
-                   && suggestions[3].evidence == .probableLogsDirectory
-                   && suggestions[4].evidence == .probableSavedApplicationState
-                   && suggestions[5].evidence == .declaredSharedGroupClaim,
+                   && suggestions[3].evidence == .probablePreferencesFile
+                   && suggestions[4].evidence == .probableLogsDirectory
+                   && suggestions[5].evidence == .probableSavedApplicationState
+                   && suggestions[6].evidence == .declaredSharedGroupClaim,
                    "suggested paths should retain probable and shared-claim evidence without overstating ownership")
         try expect(suggestions.allSatisfy({ $0.explanation.contains("not been checked")
                                            || $0.explanation.contains("shared by design") }),
@@ -1002,6 +1016,15 @@ private struct DiskerCoreChecks {
             homeDirectoryPath: home
         )?.evidence == .probableSavedApplicationState,
         "the exact conventional saved-state path should remain eligible only for explicit selection")
+        try expect(ApplicationDataLocationCandidates.suggestion(
+            matchingExactPath: preferencesFile, bundleIdentifier: identifier,
+            homeDirectoryPath: home
+        )?.evidence == .probablePreferencesFile
+                   && ApplicationDataLocationCandidates.suggestion(
+            matchingExactPath: preferencesFile + ".backup", bundleIdentifier: identifier,
+            homeDirectoryPath: home
+        ) == nil,
+        "only the exact conventional preference file should pass the generated-suggestion gate")
         try expect(ApplicationDataLocationCandidates.suggestion(
             matchingExactPath: appSupport + "-other", bundleIdentifier: identifier,
             homeDirectoryPath: home
@@ -1018,7 +1041,7 @@ private struct DiskerCoreChecks {
         )
         try expect(validatedSuggestions.map(\.evidence) == [
             .validatedAppContainerIdentifier, .probableNamedSupportDirectory,
-            .probableNamedSupportDirectory, .probableLogsDirectory,
+            .probableNamedSupportDirectory, .probablePreferencesFile, .probableLogsDirectory,
             .probableSavedApplicationState, .signatureCoveredSharedGroupClaim,
         ], "matching local signature evidence should refine only evidence it actually covers")
         let mismatchedSuggestions = ApplicationDataLocationCandidates.suggestions(
@@ -1028,7 +1051,7 @@ private struct DiskerCoreChecks {
         )
         try expect(mismatchedSuggestions.map(\.evidence) == [
             .probableAppContainer, .probableNamedSupportDirectory,
-            .probableNamedSupportDirectory, .probableLogsDirectory,
+            .probableNamedSupportDirectory, .probablePreferencesFile, .probableLogsDirectory,
             .probableSavedApplicationState, .declaredSharedGroupClaim,
         ], "a mismatched signed ID must not strengthen suggested path evidence")
         try expect(ApplicationDataLocationCandidates.suggestions(
@@ -1048,6 +1071,14 @@ private struct DiskerCoreChecks {
             let stateFile = container.appendingPathComponent("state.sqlite")
             let stateContents = Data("synthetic app state".utf8)
             try stateContents.write(to: stateFile)
+            let preferencesFile = home.appendingPathComponent(
+                "Library/Preferences/\(bundleID).plist"
+            )
+            let preferencesContents = Data("synthetic preferences plist fixture".utf8)
+            try FileManager.default.createDirectory(
+                at: preferencesFile.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
+            try preferencesContents.write(to: preferencesFile)
 
             let candidate = ApplicationDiscoveryCandidate(
                 path: "/Applications/Discovered.app", displayName: "Discovered",
@@ -1065,6 +1096,31 @@ private struct DiskerCoreChecks {
                 bundleIdentifier: candidate.spotlightBundleIdentifier,
                 homeDirectoryPath: home.path
             ) == nil, "a nearby path must not be eligible to start the app data measurement workflow")
+
+            guard let preferencesSuggestion = ApplicationDataLocationCandidates.suggestion(
+                matchingExactPath: preferencesFile.path,
+                bundleIdentifier: candidate.spotlightBundleIdentifier,
+                homeDirectoryPath: home.path
+            ) else {
+                throw CheckFailure.assertion("the exact generated preferences-file path should pass the selected-path gate")
+            }
+            let preferencesScan = FolderScanner.scanWithFileInventories(
+                roots: [URL(fileURLWithPath: preferencesSuggestion.path)]
+            )
+            guard let measuredPreferences = preferencesScan.observation.folders.first,
+                  let preferencesInventory = preferencesScan.fileInventories.first else {
+                throw CheckFailure.assertion("the exact selected preferences file should produce a metadata-only file-root observation")
+            }
+            try expect(preferencesScan.observation.folders.count == 1
+                       && measuredPreferences.path == preferencesFile.standardizedFileURL.path
+                       && measuredPreferences.complete && measuredPreferences.fileCount == 1
+                       && measuredPreferences.logicalBytes == Int64(preferencesContents.count)
+                       && measuredPreferences.fileExtensionSummaries.map(\.extensionName) == ["plist"]
+                       && preferencesInventory.complete && preferencesInventory.entries.count == 1,
+                       "an explicitly selected preferences file should be measured as one exact, complete file root")
+            let actualPreferencesContents = try Data(contentsOf: preferencesFile)
+            try expect(actualPreferencesContents == preferencesContents,
+                       "measuring a preferences-file candidate must not read or change its contents")
 
             let scan = FolderScanner.scanWithFileInventories(
                 roots: [URL(fileURLWithPath: suggestion.path, isDirectory: true)]
@@ -1184,13 +1240,14 @@ private struct DiskerCoreChecks {
                 homeDirectoryPath: home.path,
                 claimedGroupIdentifiers: ["TEAM.shared"]
             )
-            guard candidates.count == 6,
+            guard candidates.count == 7,
                   let support = candidates.first(where: {
                       $0.evidence == .probableNamedSupportDirectory && $0.path.contains("Application Support")
                   }),
                   let cache = candidates.first(where: {
                       $0.evidence == .probableNamedSupportDirectory && $0.path.contains("/Caches/")
                   }),
+                  let preferences = candidates.first(where: { $0.evidence == .probablePreferencesFile }),
                   let logs = candidates.first(where: { $0.evidence == .probableLogsDirectory }),
                   let savedState = candidates.first(where: { $0.evidence == .probableSavedApplicationState }),
                   let group = candidates.first(where: { $0.evidence == .declaredSharedGroupClaim })
@@ -1219,6 +1276,9 @@ private struct DiskerCoreChecks {
                        "newly generated app-data hints should remain path-only probes until the exact folder is selected")
             try expect(SelectedScopePathProbe.probe(at: group.path) == .missingOrUnreachable,
                        "a missing candidate path must remain distinct from an existing measured folder")
+            try expect(preferences.path.hasSuffix("com.example.Probe.plist")
+                       && preferences.evidence == .probablePreferencesFile,
+                       "the preferences candidate should identify only its exact conventional plist filename")
         }
     }
 

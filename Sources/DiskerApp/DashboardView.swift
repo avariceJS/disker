@@ -646,20 +646,20 @@ final class DashboardModel {
 
         let panel = NSOpenPanel()
         panel.title = NSLocalizedString(
-            "Confirm Suggested App Data Folder",
-            comment: "Native folder picker title for explicitly confirming a suggested app data path"
+            "Confirm Suggested App Data Location",
+            comment: "Native file or folder picker title for explicitly confirming a suggested app data path"
         )
         panel.prompt = NSLocalizedString(
             "Associate and Measure",
             comment: "Native folder picker action to associate and measure an exact suggested app data folder"
         )
         panel.message = NSLocalizedString(
-            "Spotlight's bundle ID is an unverified hint. Choose this exact folder to associate it with the discovered app and start a metadata-only scan. Disker will not follow symlinks or read file contents.",
+            "Spotlight's bundle ID is an unverified hint. Choose this exact file or folder to associate it with the discovered app and start a metadata-only scan. Disker will not follow symlinks or read file contents.",
             comment: "Native folder picker explanation for the evidence limits and scope of an app data scan"
         )
         panel.directoryURL = URL(fileURLWithPath: expectedPath).deletingLastPathComponent()
         panel.canChooseDirectories = true
-        panel.canChooseFiles = false
+        panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
         guard panel.runModal() == .OK, let selectedURL = panel.url else { return }
@@ -671,8 +671,8 @@ final class DashboardModel {
         guard SelectedScopeBookmarkStore.isSameSelectedPath(selectedURL, as: expectedPath),
               selectedSuggestion?.path == expectedPath else {
             errorMessage = NSLocalizedString(
-                "Choose the same suggested folder to measure it. No scan was started.",
-                comment: "Error shown when the user chooses a different path than the suggested app data folder"
+                "Choose the same suggested location to measure it. No scan was started.",
+                comment: "Error shown when the user chooses a different path than the suggested app data location"
             )
             return
         }
@@ -686,7 +686,7 @@ final class DashboardModel {
             rememberFolders([selectedURL])
             scan([selectedURL])
         } catch {
-            errorMessage = "The folder was selected, but its app association could not be saved: \(error.localizedDescription)"
+            errorMessage = "The location was selected, but its app association could not be saved: \(error.localizedDescription)"
         }
     }
 
@@ -906,12 +906,18 @@ final class DashboardModel {
     func chooseRelatedFolders(for bundlePath: String, startingAt directory: URL? = nil) {
         guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
         let panel = NSOpenPanel()
-        panel.title = "Choose folders associated with this app"
-        panel.prompt = "Associate and Scan"
-        panel.message = "Choose up to 50 folders to associate. Exact container paths may match the selected app's bundle ID or App Groups claim. Disker checks the app's local code signature but does not verify notarization, current use, or exclusive ownership; group data is shared and measurements stay separate."
+        panel.title = NSLocalizedString(
+            "Choose locations associated with this app",
+            comment: "Native picker title for selecting exact files or folders associated with an app"
+        )
+        panel.prompt = NSLocalizedString("Associate and Scan", comment: "Native picker action for app-related locations")
+        panel.message = NSLocalizedString(
+            "Choose up to 50 files or folders to associate. Exact container paths may match the selected app's bundle ID or App Groups claim. Disker checks the app's local code signature but does not verify notarization, current use, or exclusive ownership; group data is shared and measurements stay separate.",
+            comment: "Scope and attribution limits for selected app-related files or folders"
+        )
         panel.directoryURL = directory
         panel.canChooseDirectories = true
-        panel.canChooseFiles = false
+        panel.canChooseFiles = true
         panel.allowsMultipleSelection = true
         panel.canCreateDirectories = false
         guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
@@ -925,7 +931,7 @@ final class DashboardModel {
             rememberFolders(panel.urls)
             scan(panel.urls)
         } catch {
-            errorMessage = "Folders were selected, but their association could not be saved: \(error.localizedDescription)"
+            errorMessage = "Locations were selected, but their association could not be saved: \(error.localizedDescription)"
         }
     }
 
@@ -1121,17 +1127,23 @@ final class DashboardModel {
 
         let selectedURL = URL(fileURLWithPath: path, isDirectory: true)
         let panel = NSOpenPanel()
-        panel.title = "Re-select Associated Folder"
-        panel.prompt = "Rescan Folder"
-        panel.message = "Select this exact folder to measure it again and save read-only access for later scans."
+        panel.title = NSLocalizedString("Re-select Associated Location", comment: "Native picker title to restore access to an app-related path")
+        panel.prompt = NSLocalizedString("Rescan Location", comment: "Native picker action to rescan an app-related path")
+        panel.message = NSLocalizedString(
+            "Select this exact file or folder to measure it again and save read-only access for later scans.",
+            comment: "Exact-path reminder for restoring access to a previously measured app-related location"
+        )
         panel.directoryURL = selectedURL.deletingLastPathComponent()
         panel.canChooseDirectories = true
-        panel.canChooseFiles = false
+        panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
         guard panel.runModal() == .OK, let chosenURL = panel.urls.first else { return }
         guard SelectedScopeBookmarkStore.isSameSelectedPath(chosenURL, as: selectedURL.path) else {
-            errorMessage = "Choose the same associated folder to keep its history comparable. No scan was started."
+            errorMessage = NSLocalizedString(
+                "Choose the same associated location to keep its history comparable. No scan was started.",
+                comment: "Error when a different path is selected while restoring app-related location access"
+            )
             return
         }
         rememberFolders([chosenURL])
@@ -1156,7 +1168,7 @@ final class DashboardModel {
     ) {
         guard !urls.isEmpty, !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
         guard urls.count <= ApplicationFolderAssociation.maximumRelatedFolderCount else {
-            errorMessage = "A scan can include at most 50 selected folders. Reduce the selection and try again."
+            errorMessage = "A scan can include at most 50 selected locations. Reduce the selection and try again."
             return
         }
         isScanning = true
@@ -3010,9 +3022,9 @@ struct DashboardView: View {
                                 VStack(alignment: .leading, spacing: 10) {
                                     Label {
                                         VStack(alignment: .leading, spacing: 4) {
-                                            Text("Related folders · review suggested")
+                                            Text("Related locations · review suggested")
                                                 .font(.subheadline.weight(.semibold))
-                                            Text("The last exact-path check did not confirm the app bundle location. It may have moved, its volume may be disconnected, access may be restricted, or the path may have changed type. This does not establish that the app was removed. Saved folder associations were selected manually; their presence, ownership, and safety are unknown.")
+                                            Text("The last exact-path check did not confirm the app bundle location. It may have moved, its volume may be disconnected, access may be restricted, or the path may have changed type. This does not establish that the app was removed. Saved location associations were selected manually; their presence, ownership, and safety are unknown.")
                                                 .font(.caption)
                                                 .fixedSize(horizontal: false, vertical: true)
                                         }
@@ -3022,7 +3034,7 @@ struct DashboardView: View {
                                     }
                                     .foregroundStyle(.secondary)
 
-                                    Text("Check only the exact associated folder paths. Disker does not scan their contents in this check, follow symlinks, or decide whether anything can be removed.")
+                                    Text("Check only the exact associated paths. Disker does not scan file contents in this check, follow symlinks, or decide whether anything can be removed.")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                         .fixedSize(horizontal: false, vertical: true)
@@ -4145,7 +4157,7 @@ struct DashboardView: View {
             if !suggestions.isEmpty {
                 DisclosureGroup("Possible data locations · not measured") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("These conventional paths come from the selected app's bundle ID and embedded group claims. Disker checks only the exact path when asked; this does not scan its contents or establish ownership. Choose a path to open the folder picker, and only folders you explicitly select will be measured.")
+                        Text("These conventional paths come from the selected app's bundle ID and embedded group claims. Disker checks only the exact path when asked; this does not scan its contents or establish ownership. Choose a path to open the picker, and only the exact files or folders you select will be measured.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -4177,28 +4189,30 @@ struct DashboardView: View {
                                 }
                                 Spacer(minLength: 4)
                                 HStack(spacing: 8) {
-                                    Button {
-                                        model.checkApplicationDataLocation(suggestion.path, for: bundle)
-                                    } label: {
-                                        if model.checkingApplicationDataLocationPaths.contains(candidatePath) {
-                                            ProgressView()
-                                                .controlSize(.small)
-                                        } else {
-                                            Label(
-                                                candidateStatus == nil ? "Check exact path" : "Check again",
-                                                systemImage: "magnifyingglass"
-                                            )
+                                    if suggestion.evidence != .probablePreferencesFile {
+                                        Button {
+                                            model.checkApplicationDataLocation(suggestion.path, for: bundle)
+                                        } label: {
+                                            if model.checkingApplicationDataLocationPaths.contains(candidatePath) {
+                                                ProgressView()
+                                                    .controlSize(.small)
+                                            } else {
+                                                Label(
+                                                    candidateStatus == nil ? "Check exact path" : "Check again",
+                                                    systemImage: "magnifyingglass"
+                                                )
+                                            }
                                         }
+                                        .controlSize(.small)
+                                        .disabled(model.checkingApplicationDataLocationPaths.contains(candidatePath))
+                                        .help("Check only this exact folder path; no descendants or file contents are read")
+                                        .accessibilityLabel(
+                                            model.checkingApplicationDataLocationPaths.contains(candidatePath)
+                                                ? "Checking exact path…"
+                                                : candidateStatus == nil ? "Check exact path" : "Check again"
+                                        )
                                     }
-                                    .controlSize(.small)
-                                    .disabled(model.checkingApplicationDataLocationPaths.contains(candidatePath))
-                                    .help("Check only this exact folder path; no descendants or file contents are read")
-                                    .accessibilityLabel(
-                                        model.checkingApplicationDataLocationPaths.contains(candidatePath)
-                                            ? "Checking exact path…"
-                                            : candidateStatus == nil ? "Check exact path" : "Check again"
-                                    )
-                                    Button("Choose to measure…") {
+                                    Button("Choose location to measure…") {
                                         let startingPath = candidateStatus?.isAvailableDirectory == true
                                             ? suggestion.path
                                             : URL(fileURLWithPath: suggestion.path).deletingLastPathComponent().path
@@ -4235,7 +4249,7 @@ struct DashboardView: View {
                         Text("Spotlight returned bundle ID · \(identifier) · unverified")
                             .font(.caption.weight(.medium))
                             .textSelection(.enabled)
-                        Text("These conventional paths are hints only. The indexed bundle ID is not verified against the app signature or data ownership. Disker does not inspect these folders until you choose the exact suggested folder in the picker; only then does its metadata-only scan begin.")
+                        Text("These conventional paths are hints only. The indexed bundle ID is not verified against the app signature or data ownership. Disker does not inspect them until you choose the exact suggested file or folder in the picker; only then does its metadata-only scan begin.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -4254,7 +4268,7 @@ struct DashboardView: View {
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
                                 Spacer(minLength: 4)
-                                Button("Choose exact folder to measure…") {
+                                Button("Choose exact location to measure…") {
                                     model.chooseDiscoveredApplicationDataLocation(
                                         suggestion.path, for: candidate
                                     )
@@ -4342,7 +4356,7 @@ struct DashboardView: View {
                                             fileExtensionSummary(for: observation)
                                                 .padding(.top, 4)
                                         } label: {
-                                            Label("Measured folder filename mix", systemImage: "chart.pie")
+                                            Label("Measured location filename mix", systemImage: "chart.pie")
                                                 .font(.caption2.weight(.medium))
                                         }
                                     }
@@ -4411,7 +4425,7 @@ struct DashboardView: View {
         case .permissionOrAccessUnknown:
             "Access could not be confirmed · presence is unknown"
         case .notDirectory:
-            "The exact path is not a folder"
+            "The exact path is not a directory · file contents were not checked"
         case .symbolicLink:
             "The path is a symbolic link · not followed"
         case .invalidBookmark:
@@ -4546,6 +4560,8 @@ struct DashboardView: View {
             attributionSymbol = "folder.badge.questionmark"
         case .probableNamedSupportPathMatch:
             attributionSymbol = "folder.badge.questionmark"
+        case .probablePreferencesFilePathMatch:
+            attributionSymbol = "doc.text"
         case .probableLogsPathMatch:
             attributionSymbol = "folder.badge.questionmark"
         case .probableSavedApplicationStatePathMatch:
@@ -4618,14 +4634,14 @@ struct DashboardView: View {
             }
             .controlSize(.small)
             .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
-            .help(hasSavedAccess ? "Measure this selected app-associated folder again" : "Re-select this exact folder to measure it again")
+            .help(hasSavedAccess ? "Measure this selected app-associated location again" : "Re-select this exact file or folder to measure it again")
             Button {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
             } label: {
                 Image(systemName: "arrow.up.right.square")
             }
             .buttonStyle(.borderless)
-            .help("Reveal associated folder in Finder")
+            .help("Reveal associated location in Finder")
             .accessibilityLabel("Reveal \(folderName) in Finder")
             Button {
                 model.removeRelatedFolder(path, from: bundle.path)
