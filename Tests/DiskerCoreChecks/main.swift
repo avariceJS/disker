@@ -2476,6 +2476,29 @@ private struct DiskerCoreChecks {
             try expect(rescanned.folders.first?.logicalBytes == Int64(bytes.count),
                        "bookmark rescans should report fixture metadata without changing its size")
 
+            let selectedPreferences = base.appendingPathComponent("com.synthetic.Bookmarked.plist")
+            let selectedPreferencesBytes = Data("synthetic bookmarked preference".utf8)
+            try selectedPreferencesBytes.write(to: selectedPreferences)
+            let fileStoreURL = base.appendingPathComponent("selected-file-scopes.json")
+            let savedFileScope = try SelectedScopeBookmarkStore.remember([selectedPreferences], at: fileStoreURL)
+            let loadedFileScope = try SelectedScopeBookmarkStore.load(from: fileStoreURL)
+            guard let bookmarkedFile = loadedFileScope.first else {
+                throw CheckFailure.assertion("an explicitly selected regular file should receive a saved scope bookmark")
+            }
+            let resolvedFile = try SelectedScopeBookmarkStore.resolve(bookmarkedFile, at: fileStoreURL)
+            let fileRescan = FolderScanner.scan(roots: [resolvedFile])
+            let unchangedSelectedPreferences = try Data(contentsOf: selectedPreferences)
+            try expect(savedFileScope.count == 1
+                       && bookmarkedFile.path == selectedPreferences.standardizedFileURL.path
+                       && resolvedFile.standardizedFileURL.path == selectedPreferences.standardizedFileURL.path,
+                       "a selected regular file bookmark should persist and resolve to the same exact path")
+            try expect(fileRescan.folders.first?.complete == true
+                       && fileRescan.folders.first?.fileCount == 1
+                       && fileRescan.folders.first?.logicalBytes == Int64(selectedPreferencesBytes.count)
+                       && unchangedSelectedPreferences == selectedPreferencesBytes,
+                       "rescanning a resolved file bookmark should measure only metadata and preserve the file")
+            _ = try SelectedScopeBookmarkStore.remove(path: selectedPreferences.path, at: fileStoreURL)
+
             let repeated = try SelectedScopeBookmarkStore.remember([root], at: storeURL)
             try expect(repeated.count == 1, "selecting the same folder again should update rather than duplicate it")
             let forgotten = try SelectedScopeBookmarkStore.remove(path: root.path, at: storeURL)
