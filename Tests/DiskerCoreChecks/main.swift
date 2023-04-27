@@ -1292,6 +1292,7 @@ private struct DiskerCoreChecks {
         let groupPath = "\(home)/Library/Group Containers/\(groupIdentifier)"
         let supportPath = "\(home)/Library/Application Support/\(identifier)"
         let cachePath = "\(home)/Library/Caches/\(identifier)"
+        let preferencesPath = "\(home)/Library/Preferences/\(identifier).plist"
         let unknownPath = "/Volumes/External/Selected by owner"
         let bundle = FolderObservation(
             path: bundlePath, displayName: "Sample",
@@ -1317,9 +1318,10 @@ private struct DiskerCoreChecks {
         )
         let groupObservation = syntheticFolder(path: groupPath, bytes: 700, complete: true)
         let childObservation = syntheticFolder(path: containerChild, bytes: 200, complete: true)
+        let preferencesObservation = syntheticFolder(path: preferencesPath, bytes: 160, complete: true)
         let observations = [
             ScanObservation(startedAt: Date(timeIntervalSince1970: 100), folders: [
-                bundle, oldSupportObservation, groupObservation, childObservation,
+                bundle, oldSupportObservation, groupObservation, childObservation, preferencesObservation,
             ], cancelled: false),
             ScanObservation(startedAt: Date(timeIntervalSince1970: 200), folders: [
                 latestPartialSupportObservation,
@@ -1328,7 +1330,7 @@ private struct DiskerCoreChecks {
         let association = ApplicationFolderAssociation(
             bundlePath: bundlePath,
             relatedFolderPaths: [
-                containerPath, containerChild, groupPath, supportPath, cachePath,
+                containerPath, containerChild, groupPath, supportPath, cachePath, preferencesPath,
                 unknownPath, groupPath,
             ]
         )
@@ -1345,7 +1347,7 @@ private struct DiskerCoreChecks {
             for: bundle, in: history, homeDirectoryPath: home
         )
         let byPath = Dictionary(uniqueKeysWithValues: review.entries.map { ($0.path, $0) })
-        try expect(review.entries.count == 7 && review.entries.first?.kind == .applicationBundle,
+        try expect(review.entries.count == 8 && review.entries.first?.kind == .applicationBundle,
                    "the read-only review should show the bundle and deduplicated associated paths")
         try expect(byPath[bundlePath]?.observation == bundle
                    && byPath[bundlePath]?.observation?.logicalBytes == 100
@@ -1365,6 +1367,11 @@ private struct DiskerCoreChecks {
         try expect(byPath[cachePath]?.cleanupReviewClass == .possibleCache
                    && byPath[cachePath]?.cleanupReviewClass.guidance.contains("unverified") == true,
                    "a cache name may only produce a low-confidence review class with explicit recovery uncertainty")
+        try expect(byPath[preferencesPath]?.observation == preferencesObservation
+                   && byPath[preferencesPath]?.attribution?.evidence == .probablePreferencesFilePathMatch
+                   && byPath[preferencesPath]?.cleanupReviewClass == .unknownOrPotentiallyUnique
+                   && byPath[preferencesPath]?.cleanupReviewClass.guidance.contains("potentially unique") == true,
+                   "measured preferences remain private app-associated locations and must not become cache cleanup candidates")
         try expect(byPath[bundlePath]?.cleanupReviewClass == .selectedBundle
                    && byPath[supportPath]?.cleanupReviewClass == .unknownOrPotentiallyUnique
                    && byPath[containerPath]?.cleanupReviewClass == .unknownOrPotentiallyUnique,

@@ -7379,6 +7379,9 @@ private struct ApplicationFootprintReviewSheet: View {
 
     @ViewBuilder
     private func entryCard(_ entry: ApplicationFootprintReview.Entry) -> some View {
+        let entrySymbol = entry.kind == .applicationBundle
+            ? "app.fill"
+            : entry.attribution?.evidence == .probablePreferencesFilePathMatch ? "doc.text" : "folder"
         let planRow = removalReviewPlan.rows.first { $0.path == entry.path }
         let appLinkIDs = Set(crossDomainEvidence.links.filter {
             $0.domain == .application && $0.rootPath == review.bundlePath && $0.path == entry.path
@@ -7393,7 +7396,7 @@ private struct ApplicationFootprintReviewSheet: View {
             HStack {
                 Label(
                     entry.kind == .applicationBundle ? "Selected application bundle" : "Associated location",
-                    systemImage: entry.kind == .applicationBundle ? "app.fill" : "folder"
+                    systemImage: entrySymbol
                 )
                 .font(.subheadline.weight(.semibold))
                 Spacer()

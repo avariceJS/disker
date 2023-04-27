@@ -34,7 +34,7 @@ public struct ApplicationFootprintReview: Equatable, Sendable {
 
     public enum ScopeKind: Equatable, Sendable {
         case applicationBundle
-        case associatedFolder
+        case associatedLocation
     }
 
     public struct Entry: Equatable, Identifiable, Sendable {
@@ -127,14 +127,14 @@ public struct ApplicationFootprintReview: Equatable, Sendable {
         for path in associatedPaths {
             let normalized = standardized(path)
             guard seen.insert(normalized).inserted else { continue }
-            paths.append((normalized, .associatedFolder))
+            paths.append((normalized, .associatedLocation))
         }
 
         let observationsByPath = latestObservations(in: history)
         let otherAssociationsByPath = otherAssociations(in: history, for: bundlePath)
         let entries = paths.map { path, kind in
             let attribution: ApplicationPathAttribution?
-            if kind == .associatedFolder {
+            if kind == .associatedLocation {
                 attribution = ApplicationPathAttribution.classify(
                     bundleIdentifier: bundle.applicationBundleIdentifier,
                     associatedFolderPath: path,
