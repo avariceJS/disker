@@ -1113,6 +1113,7 @@ private struct DiskerCoreChecks {
             }
             try expect(preferencesScan.observation.folders.count == 1
                        && measuredPreferences.path == preferencesFile.standardizedFileURL.path
+                       && measuredPreferences.isFileRoot
                        && measuredPreferences.complete && measuredPreferences.fileCount == 1
                        && measuredPreferences.logicalBytes == Int64(preferencesContents.count)
                        && measuredPreferences.fileExtensionSummaries.map(\.extensionName) == ["plist"]
@@ -1121,6 +1122,13 @@ private struct DiskerCoreChecks {
             let actualPreferencesContents = try Data(contentsOf: preferencesFile)
             try expect(actualPreferencesContents == preferencesContents,
                        "measuring a preferences-file candidate must not read or change its contents")
+            let decodedPreferencesObservation = try JSONDecoder().decode(
+                FolderObservation.self,
+                from: JSONEncoder().encode(measuredPreferences)
+            )
+            try expect(decodedPreferencesObservation.isFileRoot
+                       && decodedPreferencesObservation.fileExtensionSummaries == measuredPreferences.fileExtensionSummaries,
+                       "file-root identity should persist with the measurement without changing its measured extension metadata")
 
             let scan = FolderScanner.scanWithFileInventories(
                 roots: [URL(fileURLWithPath: suggestion.path, isDirectory: true)]
@@ -1130,7 +1138,7 @@ private struct DiskerCoreChecks {
                 throw CheckFailure.assertion("the exact selected synthetic root should produce one observation")
             }
             try expect(scan.observation.folders.count == 1 && measured.path == container.standardizedFileURL.path
-                       && measured.complete && measured.fileCount == 1
+                       && !measured.isFileRoot && measured.complete && measured.fileCount == 1
                        && measured.logicalBytes == Int64(stateContents.count)
                        && measured.fileExtensionSummaries.map(\.extensionName) == ["sqlite"]
                        && FileExtensionBreakdown.categories(for: measured)?.count == 1,
@@ -5155,6 +5163,8 @@ private struct DiskerCoreChecks {
             throw CheckFailure.assertion("old history JSON should decode one folder")
         }
         try expect(folder.volumeDeviceID == nil, "legacy folder history should default to unknown volume identity")
+        try expect(!folder.isFileRoot,
+                   "legacy root history should default to a non-file root without inferring its type from the path")
         try expect(folder.excludedSymlinkCount == 0, "old folder history should default symlink count to zero")
         try expect(folder.excludedSymlinkPaths.isEmpty && !folder.excludedSymlinkPathsTruncated,
                    "old folder history should default excluded link paths to an empty untruncated list")
@@ -7010,6 +7020,8 @@ private struct DiskerCoreChecks {
             }
             let fileObservation = result.folders[0]
             try expect(fileObservation.logicalBytes == 4, "the file root should retain its sampled metadata total")
+            try expect(fileObservation.isFileRoot,
+                       "final metadata revalidation should preserve the selected regular-file root identity")
             try expect(!fileObservation.complete && fileObservation.changedDuringScanCount > 0,
                        "a selected file changed during a later root scan must be marked partial (complete=\(fileObservation.complete), changed=\(fileObservation.changedDuringScanCount), callback=\(changedSelectedFile))")
             try expect(fileObservation.largestFiles.first?.lastModifiedAt == nil,

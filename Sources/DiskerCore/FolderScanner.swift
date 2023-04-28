@@ -715,6 +715,7 @@ public enum FolderScanner {
                 logicalBytes: rootLogicalBytes,
                 allocatedBytes: rootAllocatedBytes,
                 fileCount: rootFileCount,
+                isFileRoot: selectedFileMetadata != nil,
                 fileExtensionSummaries: retainedExtensions,
                 fileExtensionSummariesTruncated: rankedExtensions.count > maximumFileExtensionSummaries,
                 otherFileExtensionUsage: otherExtensionUsage,
@@ -838,6 +839,7 @@ public enum FolderScanner {
         FolderObservation(
             id: folder.id, path: folder.path, volumeDeviceID: folder.volumeDeviceID, displayName: folder.displayName,
             logicalBytes: folder.logicalBytes, allocatedBytes: folder.allocatedBytes, fileCount: folder.fileCount,
+            isFileRoot: folder.isFileRoot,
             fileExtensionSummaries: folder.fileExtensionSummaries,
             fileExtensionSummariesTruncated: folder.fileExtensionSummariesTruncated,
             otherFileExtensionUsage: folder.otherFileExtensionUsage,
@@ -877,6 +879,7 @@ public enum FolderScanner {
         FolderObservation(
             id: folder.id, path: folder.path, volumeDeviceID: folder.volumeDeviceID, displayName: folder.displayName,
             logicalBytes: folder.logicalBytes, allocatedBytes: folder.allocatedBytes, fileCount: folder.fileCount,
+            isFileRoot: folder.isFileRoot,
             fileExtensionSummaries: folder.fileExtensionSummaries,
             fileExtensionSummariesTruncated: folder.fileExtensionSummariesTruncated,
             otherFileExtensionUsage: folder.otherFileExtensionUsage,

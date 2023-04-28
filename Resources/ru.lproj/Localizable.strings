@@ -226,6 +226,7 @@
 "Measure this selected app-associated location again" = "Повторно измерить это расположение, связанное с приложением";
 "Re-select this exact file or folder to measure it again" = "Повторно выберите именно этот файл или папку для измерения";
 "Reveal associated location in Finder" = "Показать связанное расположение в Finder";
+"Selected file root" = "Измерен выбранный файл";
 "Related locations · review suggested" = "Связанные расположения · требуется проверка";
 "The last exact-path check did not confirm the app bundle location. It may have moved, its volume may be disconnected, access may be restricted, or the path may have changed type. This does not establish that the app was removed. Saved location associations were selected manually; their presence, ownership, and safety are unknown." = "Последняя проверка точного пути не подтвердила расположение пакета приложения. Он мог быть перемещён, том мог отключиться, доступ мог быть ограничен или тип пути мог измениться. Это не доказывает удаление приложения. Связанные расположения выбраны вручную; их наличие, принадлежность и безопасность неизвестны.";
 "Check only the exact associated paths. Disker does not scan file contents in this check, follow symlinks, or decide whether anything can be removed." = "Проверяются только точные связанные пути. Disker не сканирует содержимое файлов, не переходит по символическим ссылкам и не решает, можно ли что-либо удалить.";

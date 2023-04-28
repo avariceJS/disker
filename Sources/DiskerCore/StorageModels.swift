@@ -137,6 +137,10 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     public let logicalBytes: Int64
     public let allocatedBytes: Int64
     public let fileCount: Int
+    /// True when this observation measures one explicitly selected regular file
+    /// rather than the contents of a selected directory. Legacy observations
+    /// decode as directory roots because their original root kind was not saved.
+    public let isFileRoot: Bool
     public let fileExtensionSummaries: [FileExtensionUsage]
     public let fileExtensionSummariesTruncated: Bool
     /// Combined bytes for filename categories beyond the retained cap. The
@@ -188,6 +192,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     public init(
         id: UUID = UUID(), path: String, volumeDeviceID: UInt64? = nil, displayName: String,
         logicalBytes: Int64, allocatedBytes: Int64, fileCount: Int,
+        isFileRoot: Bool = false,
         fileExtensionSummaries: [FileExtensionUsage] = [],
         fileExtensionSummariesTruncated: Bool = false,
         otherFileExtensionUsage: FileExtensionUsage? = nil,
@@ -221,6 +226,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         self.logicalBytes = logicalBytes
         self.allocatedBytes = allocatedBytes
         self.fileCount = fileCount
+        self.isFileRoot = isFileRoot
         self.fileExtensionSummaries = fileExtensionSummaries
         self.fileExtensionSummariesTruncated = fileExtensionSummariesTruncated
         self.otherFileExtensionUsage = otherFileExtensionUsage
@@ -251,7 +257,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, path, volumeDeviceID, displayName, logicalBytes, allocatedBytes, fileCount
+        case id, path, volumeDeviceID, displayName, logicalBytes, allocatedBytes, fileCount, isFileRoot
         case fileExtensionSummaries, fileExtensionSummariesTruncated
         case otherFileExtensionUsage, otherFileExtensionCategoryCount
         case inaccessibleCount, excludedSymlinkCount, excludedSymlinkPaths, excludedSymlinkPathsTruncated
@@ -276,6 +282,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         logicalBytes = try values.decode(Int64.self, forKey: .logicalBytes)
         allocatedBytes = try values.decode(Int64.self, forKey: .allocatedBytes)
         fileCount = try values.decode(Int.self, forKey: .fileCount)
+        isFileRoot = try values.decodeIfPresent(Bool.self, forKey: .isFileRoot) ?? false
         fileExtensionSummaries = try values.decodeIfPresent([FileExtensionUsage].self, forKey: .fileExtensionSummaries) ?? []
         fileExtensionSummariesTruncated = try values.decodeIfPresent(Bool.self, forKey: .fileExtensionSummariesTruncated) ?? false
         otherFileExtensionUsage = try values.decodeIfPresent(FileExtensionUsage.self, forKey: .otherFileExtensionUsage)
@@ -315,6 +322,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         try values.encode(logicalBytes, forKey: .logicalBytes)
         try values.encode(allocatedBytes, forKey: .allocatedBytes)
         try values.encode(fileCount, forKey: .fileCount)
+        try values.encode(isFileRoot, forKey: .isFileRoot)
         try values.encode(fileExtensionSummaries, forKey: .fileExtensionSummaries)
         try values.encode(fileExtensionSummariesTruncated, forKey: .fileExtensionSummariesTruncated)
         try values.encodeIfPresent(otherFileExtensionUsage, forKey: .otherFileExtensionUsage)
@@ -350,7 +358,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         FolderObservation(
             id: id, path: path, volumeDeviceID: volumeDeviceID, displayName: displayName,
             logicalBytes: logicalBytes, allocatedBytes: allocatedBytes,
-            fileCount: fileCount, fileExtensionSummaries: fileExtensionSummaries,
+            fileCount: fileCount, isFileRoot: isFileRoot,
+            fileExtensionSummaries: fileExtensionSummaries,
             fileExtensionSummariesTruncated: fileExtensionSummariesTruncated,
             otherFileExtensionUsage: otherFileExtensionUsage,
             otherFileExtensionCategoryCount: otherFileExtensionCategoryCount,

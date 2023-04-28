@@ -4323,6 +4323,11 @@ struct DashboardView: View {
                                         .font(.caption2.monospaced())
                                         .textSelection(.enabled)
                                         .fixedSize(horizontal: false, vertical: true)
+                                    if observation.isFileRoot {
+                                        Label("Selected file root", systemImage: "doc.text")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
                                     Text("Last measured · \(observation.finishedAt.formatted(date: .abbreviated, time: .shortened))")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
@@ -4351,7 +4356,7 @@ struct DashboardView: View {
                                         }
                                     }
                                     linkedPathFileChangesDisclosure(for: observation)
-                                    if !observation.fileExtensionSummaries.isEmpty {
+                                    if !observation.isFileRoot && !observation.fileExtensionSummaries.isEmpty {
                                         DisclosureGroup {
                                             fileExtensionSummary(for: observation)
                                                 .padding(.top, 4)
@@ -4584,6 +4589,11 @@ struct DashboardView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let observation = model.latestFolderObservation(at: path) {
+                    if observation.isFileRoot {
+                        Label("Selected file root", systemImage: "doc.text")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                     HStack(spacing: 8) {
                         Text(folderMeasurementSummary(observation))
                         Text("Measured \(observation.finishedAt.formatted(date: .abbreviated, time: .shortened))")
@@ -5304,7 +5314,8 @@ struct DashboardView: View {
                     !projectPaths.contains($0.rootRelativePath)
                 }
                 HStack(spacing: 14) {
-                    Image(systemName: "folder.fill").foregroundStyle(.blue)
+                    Image(systemName: folder.isFileRoot ? "doc.text.fill" : "folder.fill")
+                        .foregroundStyle(.blue)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(folder.displayName).font(.headline)
                         Text(folder.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
@@ -5342,7 +5353,12 @@ struct DashboardView: View {
                         }
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                        if includeDetails && !folder.fileExtensionSummaries.isEmpty {
+                        if folder.isFileRoot {
+                            Label("Selected file root", systemImage: "doc.text")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        if includeDetails && !folder.isFileRoot && !folder.fileExtensionSummaries.isEmpty {
                             fileExtensionSummary(for: folder)
                         }
                     }
