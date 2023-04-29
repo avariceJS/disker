@@ -1120,9 +1120,19 @@ final class DashboardModel {
 
     func rescanAssociatedFolder(_ path: String) {
         guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
-        if rememberedScopes.contains(where: { $0.path == path }) {
-            rescanRememberedFolder(path)
-            return
+        if let bookmark = rememberedScopes.first(where: { $0.path == path }) {
+            do {
+                let resolvedURL = try SelectedScopeBookmarkStore.resolve(bookmark)
+                do {
+                    rememberedScopes = try SelectedScopeBookmarkStore.load()
+                } catch {
+                    errorMessage = "The location is available for this scan, but saved locations could not be refreshed: \(error.localizedDescription)"
+                }
+                scan([resolvedURL])
+                return
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
 
         let selectedURL = URL(fileURLWithPath: path, isDirectory: true)
@@ -1146,6 +1156,7 @@ final class DashboardModel {
             )
             return
         }
+        errorMessage = nil
         rememberFolders([chosenURL])
         scan([chosenURL])
     }
@@ -3216,6 +3227,20 @@ struct DashboardView: View {
         let completeCount = matchingCandidates.reduce(into: 0) { count, candidate in
             if measurementsByPath[candidate.path]?.complete == true { count += 1 }
         }
+        let displayedCandidatePaths = Set(candidates.map(\.path))
+        let savedInventory = SavedApplicationInventory.make(
+            from: model.history,
+            visibleSpotlightPaths: Set(applicationDiscovery.candidates.map(\.path)),
+            extendedSpotlightPaths: Set(applicationDiscovery.searchableCandidates.map(\.path)),
+            spotlightQueryCompleted: applicationDiscovery.hasCompletedQuery,
+            searchText: applicationDiscoverySearchText
+        )
+        let savedOnlyEntries = Array(savedInventory.entries.filter { entry in
+            guard !displayedCandidatePaths.contains(entry.bundlePath) else { return false }
+            return true
+        }.prefix(120))
+        let savedInventoryHasMore = savedInventory.hasMore
+            || savedInventory.entries.filter { !displayedCandidatePaths.contains($0.bundlePath) }.count > savedOnlyEntries.count
 
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -3461,6 +3486,9 @@ struct DashboardView: View {
                     if candidate.id != candidates.last?.id { Divider() }
                 }
                 }
+            }
+            if !savedOnlyEntries.isEmpty {
+                savedApplicationHistorySection(entries: savedOnlyEntries, hasMore: savedInventoryHasMore)
             }
         }
         .padding(14)
@@ -4304,6 +4332,7 @@ struct DashboardView: View {
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         ForEach(paths, id: \.self) { path in
+                            let hasSavedAccess = model.rememberedScopes.contains { $0.path == path }
                             if let observation = model.latestFolderObservation(at: path) {
                                 let cancelled = model.scanWasCancelled(for: observation)
                                 VStack(alignment: .leading, spacing: 4) {
@@ -4370,9 +4399,23 @@ struct DashboardView: View {
                                             .font(.caption2)
                                             .foregroundStyle(.orange)
                                     }
-                                    Button("Rescan…") { model.rescanRememberedFolder(path) }
+                                    Button {
+                                        model.rescanAssociatedFolder(path)
+                                    } label: {
+                                        Text(hasSavedAccess
+                                             ? NSLocalizedString("Rescan…", comment: "Repeat a saved related-location scan")
+                                             : NSLocalizedString("Select to rescan…", comment: "Re-select an exact app-related location to restore access"))
+                                    }
                                         .controlSize(.small)
                                         .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
+                                        .help(
+                                            NSLocalizedString(
+                                                hasSavedAccess
+                                                    ? "Measure this selected app-associated location again"
+                                                    : "Re-select this exact file or folder to measure it again",
+                                                comment: "Saved-location action help describing whether access is reusable or must be reselected"
+                                            )
+                                        )
                                 }
                                 if path != paths.last { Divider() }
                             } else {
@@ -4393,6 +4436,226 @@ struct DashboardView: View {
                 }
                 .font(.caption.weight(.medium))
             }
+        }
+    }
+
+    private func savedApplicationHistorySection(
+        entries: [SavedApplicationInventoryEntry], hasMore: Bool
+    ) -> some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Disker keeps this local history even when an app is outside the current Spotlight sample. That does not establish whether the app is installed. Saved paths are never scanned until you choose a measurement action.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if hasMore {
+                    Label("More saved app records exist; refine the app filter to narrow this list.", systemImage: "line.3.horizontal.decrease.circle")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(entries) { entry in
+                        savedApplicationHistoryRow(entry)
+                        if entry.id != entries.last?.id { Divider() }
+                    }
+                }
+            }
+            .padding(.top, 6)
+        } label: {
+            Label {
+                Text(String.localizedStringWithFormat(
+                    NSLocalizedString("Saved app history · %ld", comment: "Count of saved applications shown in the local history section"),
+                    entries.count
+                ))
+                .font(.subheadline.weight(.semibold))
+            } icon: {
+                Image(systemName: "clock.arrow.circlepath")
+            }
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func savedApplicationHistoryRow(_ entry: SavedApplicationInventoryEntry) -> some View {
+        return DisclosureGroup {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(entry.bundlePath)
+                    .font(.caption2.monospaced())
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(savedApplicationSpotlightStateText(entry.spotlightState))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let identifier = entry.bundleIdentifier {
+                    Text("Bundle ID from selected bundle metadata · \(identifier)")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                if let firstSeen = entry.firstSeenInSpotlightAt {
+                    Text("First seen by Disker · \(firstSeen.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                if let lastSeen = entry.lastSeenInSpotlightAt {
+                    Text("Last observed in Spotlight index · \(lastSeen.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                if let lastOpened = entry.launchServicesLastOpenedAt {
+                    Text("Launch Services last-open date · \(lastOpened.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                if let bundleObservation = entry.bundleObservation {
+                    HStack(spacing: 7) {
+                        DiscoveryStatusBadge(
+                            title: NSLocalizedString(
+                                entry.bundleObservationWasCancelled
+                                    ? "Cancelled scan"
+                                    : bundleObservation.complete ? "Complete measurement" : "Partial measurement",
+                                comment: "Coverage state for a saved application bundle measurement"
+                            ),
+                            style: entry.bundleObservationWasCancelled || !bundleObservation.complete ? .partial : .measured
+                        )
+                        Text(folderMeasurementSummary(bundleObservation))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("Last measured · \(bundleObservation.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("No saved bundle measurement · size unknown")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                HStack(spacing: 8) {
+                    Button("Measure bundle…") {
+                        model.chooseApplicationBundle(
+                            startingAt: URL(fileURLWithPath: entry.bundlePath).deletingLastPathComponent(),
+                            expectedPath: entry.bundlePath
+                        )
+                    }
+                    .controlSize(.small)
+                    .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
+                    .help(NSLocalizedString(
+                        "Confirm this exact application bundle before Disker measures it",
+                        comment: "Exact-path explanation for remeasuring a saved application bundle"
+                    ))
+                }
+
+                if !entry.relatedLocations.isEmpty {
+                    Divider()
+                    Label {
+                        Text(String.localizedStringWithFormat(
+                            NSLocalizedString("Saved related locations · %ld", comment: "Count of saved app-associated locations"),
+                            entry.relatedLocations.count
+                        ))
+                        .font(.caption.weight(.semibold))
+                    } icon: {
+                        Image(systemName: "folder.badge.gearshape")
+                    }
+                    Text("Each location is shown separately. Overlapping paths are not added, and the link does not prove ownership.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(entry.relatedLocations) { location in
+                        savedApplicationLocationRow(location)
+                    }
+                }
+            }
+            .padding(.top, 5)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "app")
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.displayName)
+                        .font(.subheadline.weight(.medium))
+                    Text(savedApplicationSpotlightStateText(entry.spotlightState))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+        }
+    }
+
+    private func savedApplicationLocationRow(_ location: SavedApplicationLocation) -> some View {
+        let observation = location.latestObservation
+        let hasSavedAccess = model.rememberedScopes.contains { $0.path == location.path }
+        return VStack(alignment: .leading, spacing: 5) {
+            Text(location.path)
+                .font(.caption2.monospaced())
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            if let observation {
+                HStack(spacing: 7) {
+                    DiscoveryStatusBadge(
+                        title: NSLocalizedString(
+                            location.latestObservationWasCancelled
+                                ? "Cancelled scan"
+                                : observation.complete ? "Complete measurement" : "Partial measurement",
+                            comment: "Coverage state for a saved application-related location"
+                        ),
+                        style: location.latestObservationWasCancelled || !observation.complete ? .partial : .measured
+                    )
+                    Text(folderMeasurementSummary(observation))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                if observation.isFileRoot {
+                    Label("Selected file root", systemImage: "doc.text")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Text("Last measured · \(observation.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if location.latestObservationWasCancelled {
+                    Text("The last scan was cancelled; this measurement remains incomplete.")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+                linkedPathFileChangesDisclosure(for: observation)
+            } else {
+                Text("No saved measurement · size unknown")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Button {
+                model.rescanAssociatedFolder(location.path)
+            } label: {
+                Text(hasSavedAccess
+                     ? NSLocalizedString("Rescan…", comment: "Repeat a saved related-location scan")
+                     : NSLocalizedString("Select to rescan…", comment: "Re-select an exact app-related location to restore access"))
+            }
+            .controlSize(.small)
+            .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
+            .help(
+                NSLocalizedString(
+                    hasSavedAccess
+                        ? "Measure this selected app-associated location again"
+                        : "Re-select this exact file or folder to measure it again",
+                    comment: "Saved-location action help describing whether access is reusable or must be reselected"
+                )
+            )
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func savedApplicationSpotlightStateText(_ state: SavedApplicationSpotlightState) -> String {
+        switch state {
+        case .visibleInCurrentCatalog:
+            NSLocalizedString("Observed in the current visible Spotlight sample", comment: "Saved application is also in the visible Spotlight catalog")
+        case .availableInExtendedSearch:
+            NSLocalizedString("Returned in the extended Spotlight sample; use the app filter to find it", comment: "Saved application is beyond the visible first-page Spotlight results but searchable")
+        case .notObservedInCurrentSample:
+            NSLocalizedString("Not observed in the current Spotlight sample · presence unknown", comment: "A bounded Spotlight sample omitted a saved app; installed state is unknown")
+        case .unknown:
+            NSLocalizedString("Current Spotlight presence has not been confirmed", comment: "No completed current Spotlight result establishes this saved app's presence")
         }
     }
 

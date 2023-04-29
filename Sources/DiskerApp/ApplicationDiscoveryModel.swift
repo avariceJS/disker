@@ -13,6 +13,7 @@ final class ApplicationDiscoveryModel {
     private(set) var history: [ApplicationDiscoveryRecord] = []
     private(set) var isGathering = false
     private(set) var isRunning = false
+    private(set) var hasCompletedQuery = false
     private(set) var statusMessage: String?
     private(set) var scopePaths: [String] = []
     private(set) var userSelectedScopePaths: [String] = []
@@ -197,6 +198,7 @@ final class ApplicationDiscoveryModel {
         self.query = nil
         isRunning = false
         isGathering = false
+        hasCompletedQuery = false
         candidates = []
         searchableCandidates = []
         if releaseScopes {
@@ -233,6 +235,7 @@ final class ApplicationDiscoveryModel {
         }
         isGathering = true
         isRunning = true
+        hasCompletedQuery = false
 
         for name in [Notification.Name.NSMetadataQueryDidFinishGathering, Notification.Name.NSMetadataQueryDidUpdate] {
             observers.append(NotificationCenter.default.addObserver(
@@ -257,7 +260,10 @@ final class ApplicationDiscoveryModel {
         guard self.query === query else { return }
         query.disableUpdates()
         defer { query.enableUpdates() }
-        if finished { isGathering = false }
+        if finished {
+            isGathering = false
+            hasCompletedQuery = true
+        }
 
         var raw: [ApplicationDiscoveryCandidate] = []
         let maximumIndexedResults = ApplicationBundleIndex.maximumSearchableDiscoveryResults

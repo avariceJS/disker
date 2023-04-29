@@ -23,6 +23,13 @@ private struct DiskerCoreChecks {
             try benchmarkSelectedRootInventory(at: URL(fileURLWithPath: CommandLine.arguments[2]))
             return
         }
+        if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--seed-saved-app-ui" {
+            try seedSavedApplicationUIHistory(
+                at: URL(fileURLWithPath: CommandLine.arguments[2]),
+                fixtureRoot: URL(fileURLWithPath: CommandLine.arguments[3], isDirectory: true)
+            )
+            return
+        }
 
         let checks: [(String, () throws -> Void)] = [
             ("capacity math", testCapacityMath),
@@ -35,6 +42,7 @@ private struct DiskerCoreChecks {
             ("selected-folder growth aligned with capacity loss", testCapacityIntervalFolderGrowth),
             ("bounded history chart ranges", testObservationTimeRanges),
             ("explicit application bundle history index", testApplicationBundleIndex),
+            ("saved application inventory survives Spotlight sampling", testSavedApplicationInventory),
             ("scoped application discovery filtering and bounded history", testApplicationDiscoveryIndex),
             ("application discovery sorting preserves unknown measurement evidence", testApplicationDiscoverySorting),
             ("explicitly selected app bundle identity read", testApplicationBundleMetadata),
@@ -560,6 +568,216 @@ private struct DiskerCoreChecks {
         )
         try expect(legacySelectedBundle.selectedAsApplicationBundle,
                    "legacy app observations with stored bundle IDs should retain their explicit-app classification")
+    }
+
+    private static func testSavedApplicationInventory() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Disker-SavedApplicationInventory-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let historyURL = base.appendingPathComponent("observations.json")
+        let appPath = "/Applications/Synthetic.app"
+        let relatedFilePath = "/Users/synthetic/Library/Preferences/com.synthetic.plist"
+        let unmeasuredPath = "/Users/synthetic/Library/Containers/com.synthetic/Data"
+        let cancelledPath = "/Users/synthetic/Library/Logs/com.synthetic"
+        let firstSeen = Date(timeIntervalSince1970: 100)
+        let lastSeen = Date(timeIntervalSince1970: 200)
+        let firstObservation = FolderObservation(
+            path: appPath, displayName: "Synthetic.app", logicalBytes: 1_000, allocatedBytes: 1_000,
+            fileCount: 1, inaccessibleCount: 0, complete: true,
+            applicationBundleIdentifier: "com.synthetic.App", selectedAsApplicationBundle: true
+        )
+        let relatedComplete = FolderObservation(
+            path: relatedFilePath, displayName: "com.synthetic.plist", logicalBytes: 80, allocatedBytes: 4_096,
+            fileCount: 1, isFileRoot: true, inaccessibleCount: 0, complete: true
+        )
+        let relatedPartial = FolderObservation(
+            path: relatedFilePath, displayName: "com.synthetic.plist", logicalBytes: 96, allocatedBytes: 4_096,
+            fileCount: 1, isFileRoot: true, inaccessibleCount: 1, complete: false
+        )
+        let cancelledComplete = FolderObservation(
+            path: cancelledPath, displayName: "com.synthetic", logicalBytes: 40, allocatedBytes: 4_096,
+            fileCount: 1, inaccessibleCount: 0, complete: true
+        )
+        let cancelledPartial = FolderObservation(
+            path: cancelledPath, displayName: "com.synthetic", logicalBytes: 44, allocatedBytes: 4_096,
+            fileCount: 1, inaccessibleCount: 0, complete: false
+        )
+        _ = try ObservationStore.append(
+            ScanObservation(startedAt: firstSeen, folders: [firstObservation, relatedComplete, cancelledComplete], cancelled: false),
+            to: historyURL
+        )
+        _ = try ObservationStore.append(
+            ScanObservation(startedAt: lastSeen, folders: [relatedPartial], cancelled: false),
+            to: historyURL
+        )
+        _ = try ObservationStore.append(
+            ScanObservation(startedAt: lastSeen.addingTimeInterval(1), folders: [cancelledPartial], cancelled: true),
+            to: historyURL
+        )
+        _ = try ObservationStore.associateApplicationFolders(
+            [relatedFilePath, unmeasuredPath, cancelledPath], with: appPath,
+            bundleIdentifier: "com.synthetic.App", to: historyURL
+        )
+        _ = try ObservationStore.updateDiscoveredApplications([
+            ApplicationDiscoveryRecord(
+                path: appPath, displayName: "Synthetic", firstSeenAt: firstSeen, lastSeenAt: lastSeen
+            ),
+            ApplicationDiscoveryRecord(
+                path: "/Applications/NotAnApp", displayName: "Invalid historical path",
+                firstSeenAt: firstSeen, lastSeenAt: lastSeen
+            )
+        ], to: historyURL)
+
+        let persistedHistory = try ObservationStore.load(from: historyURL)
+        let visible = SavedApplicationInventory.make(
+            from: persistedHistory,
+            visibleSpotlightPaths: [], extendedSpotlightPaths: [], spotlightQueryCompleted: false
+        )
+        guard let app = visible.entries.first(where: { $0.bundlePath == appPath }) else {
+            throw CheckFailure.assertion("a locally saved app relationship should remain available when Spotlight has no current result")
+        }
+        try expect(app.displayName == "Synthetic"
+                   && app.bundleIdentifier == "com.synthetic.App"
+                   && app.firstSeenInSpotlightAt == firstSeen
+                   && app.lastSeenInSpotlightAt == lastSeen,
+                   "saved app inventory should retain the local discovery name, ID claim, and observed dates")
+        try expect(app.spotlightState == .unknown,
+                   "an unfinished or stopped current Spotlight query must not imply app removal")
+        try expect(app.bundleObservation?.logicalBytes == 1_000 && !app.bundleObservationWasCancelled,
+                   "the explicitly selected bundle's latest measurement should remain in the saved inventory")
+        guard let measuredLocation = app.relatedLocations.first(where: { $0.path == relatedFilePath }) else {
+            throw CheckFailure.assertion("explicitly associated app data should remain listed after store reload")
+        }
+        try expect(measuredLocation.latestObservation?.logicalBytes == 96
+                   && measuredLocation.latestObservation?.complete == false
+                   && measuredLocation.latestObservation?.isFileRoot == true
+                   && !measuredLocation.latestObservationWasCancelled,
+                   "the inventory should preserve the latest partial selected-file measurement instead of an older complete one")
+        try expect(app.relatedLocations.first(where: { $0.path == unmeasuredPath })?.latestObservation == nil,
+                   "a saved association without a measurement must stay unknown rather than becoming zero")
+        let cancelledLocation = app.relatedLocations.first(where: { $0.path == cancelledPath })
+        try expect(cancelledLocation?.latestObservation?.logicalBytes == 44
+                   && cancelledLocation?.latestObservationWasCancelled == true,
+                   "the inventory should retain a latest cancelled result and never substitute older complete data")
+        try expect(!visible.entries.contains(where: { $0.bundlePath == "/Applications/NotAnApp" }),
+                   "corrupt saved records that do not identify an application bundle should be excluded")
+
+        let current = SavedApplicationInventory.make(
+            from: persistedHistory,
+            visibleSpotlightPaths: [appPath], extendedSpotlightPaths: [appPath], spotlightQueryCompleted: true
+        )
+        try expect(current.entries.first(where: { $0.bundlePath == appPath })?.spotlightState == .visibleInCurrentCatalog,
+                   "a currently visible Spotlight result should be distinguishable from a saved-only entry")
+        let extended = SavedApplicationInventory.make(
+            from: persistedHistory,
+            visibleSpotlightPaths: [], extendedSpotlightPaths: [appPath], spotlightQueryCompleted: true
+        )
+        try expect(extended.entries.first(where: { $0.bundlePath == appPath })?.spotlightState == .availableInExtendedSearch,
+                   "a result beyond the visible catalog should remain discoverable through extended search")
+        let absent = SavedApplicationInventory.make(
+            from: persistedHistory,
+            visibleSpotlightPaths: [], extendedSpotlightPaths: [], spotlightQueryCompleted: true
+        )
+        try expect(absent.entries.first(where: { $0.bundlePath == appPath })?.spotlightState == .notObservedInCurrentSample,
+                   "a completed bounded Spotlight sample should report absence as a sample state, not uninstallation")
+
+        let many = (0...SavedApplicationInventory.maximumDisplayedEntries).map { index in
+            ApplicationDiscoveryRecord(
+                path: "/Applications/App-\(index).app", displayName: "App \(index)",
+                firstSeenAt: firstSeen, lastSeenAt: lastSeen
+            )
+        }
+        let bounded = SavedApplicationInventory.make(
+            from: LocalHistory(discoveredApplications: many),
+            visibleSpotlightPaths: [], extendedSpotlightPaths: [], spotlightQueryCompleted: false
+        )
+        try expect(bounded.entries.count == SavedApplicationInventory.maximumDisplayedEntries && bounded.hasMore,
+                   "saved app inventory display should stay bounded and disclose omitted rows")
+
+        let largeHistoryRecords = (0..<ApplicationBundleIndex.maximumPersistedDiscoveryRecords).map { index in
+            ApplicationDiscoveryRecord(
+                path: "/Applications/Indexed-\(index).app", displayName: "Indexed \(index)",
+                firstSeenAt: firstSeen, lastSeenAt: lastSeen
+            )
+        }
+        let largeAssociations = (0..<180).map { appIndex in
+            ApplicationFolderAssociation(
+                bundlePath: "/Applications/Tracked-\(appIndex).app",
+                bundleIdentifier: "com.synthetic.tracked\(appIndex)",
+                relatedFolderPaths: (0..<ApplicationFolderAssociation.maximumRelatedFolderCount).map { locationIndex in
+                    "/Users/synthetic/Tracked-\(appIndex)/Location-\(locationIndex)"
+                },
+                updatedAt: lastSeen
+            )
+        }
+        let largeObservations = largeAssociations.map { association in
+            ScanObservation(
+                startedAt: lastSeen,
+                folders: association.relatedFolderPaths.map { path in
+                    FolderObservation(
+                        path: path, displayName: URL(fileURLWithPath: path).lastPathComponent,
+                        logicalBytes: 1, allocatedBytes: 4_096, fileCount: 1,
+                        inaccessibleCount: 0, complete: true
+                    )
+                },
+                cancelled: false
+            )
+        }
+        let largeHistory = LocalHistory(
+            observations: largeObservations,
+            applicationAssociations: largeAssociations,
+            discoveredApplications: largeHistoryRecords
+        )
+        let profileStart = ProcessInfo.processInfo.systemUptime
+        let largeInventory = SavedApplicationInventory.make(
+            from: largeHistory,
+            visibleSpotlightPaths: Set(largeHistoryRecords.prefix(500).map(\.path)),
+            extendedSpotlightPaths: Set(largeHistoryRecords.map(\.path)),
+            spotlightQueryCompleted: true
+        )
+        let profileSeconds = ProcessInfo.processInfo.systemUptime - profileStart
+        print("  maximum saved app inventory (5,000 Spotlight records + 180 associations × 50 paths): \(String(format: "%.3f", profileSeconds)) s")
+        try expect(largeInventory.entries.count == SavedApplicationInventory.maximumDisplayedEntries
+                   && largeInventory.hasMore
+                   && largeInventory.entries.contains(where: { !$0.relatedLocations.isEmpty }),
+                   "maximum saved app inventory should map bounded related measurements and disclose omitted rows")
+    }
+
+    private static func seedSavedApplicationUIHistory(at historyURL: URL, fixtureRoot: URL) throws {
+        let bundleURL = fixtureRoot.appendingPathComponent("Synthetic.app", isDirectory: true)
+        let preferencesURL = fixtureRoot
+            .appendingPathComponent("Application Data", isDirectory: true)
+            .appendingPathComponent("com.synthetic.SavedInventory.plist")
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: preferencesURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let info = "<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>com.synthetic.SavedInventory</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>"
+        try Data(info.utf8).write(to: bundleURL.appendingPathComponent("Info.plist"))
+        let preferenceBytes = Data("synthetic saved application data\n".utf8)
+        try preferenceBytes.write(to: preferencesURL)
+
+        let scan = FolderScanner.scan(roots: [preferencesURL])
+        guard let observation = scan.folders.first, observation.complete, observation.isFileRoot,
+              observation.logicalBytes == Int64(preferenceBytes.count) else {
+            throw CheckFailure.assertion("the synthetic UI fixture should have one complete selected-file observation")
+        }
+        let now = Date.now
+        _ = try ObservationStore.append(
+            ScanObservation(startedAt: now, folders: [observation], cancelled: false), to: historyURL
+        )
+        _ = try ObservationStore.associateApplicationFolders(
+            [preferencesURL.path], with: bundleURL.path,
+            bundleIdentifier: "com.synthetic.SavedInventory", to: historyURL
+        )
+        _ = try ObservationStore.updateDiscoveredApplications([
+            ApplicationDiscoveryRecord(
+                path: bundleURL.path, displayName: "Synthetic Saved Inventory",
+                firstSeenAt: now.addingTimeInterval(-86_400), lastSeenAt: now.addingTimeInterval(-3_600)
+            )
+        ], to: historyURL)
     }
 
     private static func testApplicationDiscoveryIndex() throws {
