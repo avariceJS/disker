@@ -1797,6 +1797,8 @@ struct DashboardView: View {
     @State private var isAutomaticRAMSamplingEnabled = false
     @State private var applicationReviewBundle: FolderObservation?
     @State private var applicationDiscoverySearchText = ""
+    @State private var savedApplicationInventoryCache = SavedApplicationInventory.empty
+    @State private var isSavedApplicationInventoryLoading = false
     @State private var applicationDiscoveryMeasurementFilter: ApplicationDiscoveryMeasurementFilter = .all
     @State private var applicationDiscoverySort: ApplicationDiscoverySort = .name
     @State private var developerArtifactReviewFolder: FolderObservation?
@@ -3228,19 +3230,12 @@ struct DashboardView: View {
             if measurementsByPath[candidate.path]?.complete == true { count += 1 }
         }
         let displayedCandidatePaths = Set(candidates.map(\.path))
-        let savedInventory = SavedApplicationInventory.make(
-            from: model.history,
-            visibleSpotlightPaths: Set(applicationDiscovery.candidates.map(\.path)),
-            extendedSpotlightPaths: Set(applicationDiscovery.searchableCandidates.map(\.path)),
-            spotlightQueryCompleted: applicationDiscovery.hasCompletedQuery,
-            searchText: applicationDiscoverySearchText
-        )
-        let savedOnlyEntries = Array(savedInventory.entries.filter { entry in
-            guard !displayedCandidatePaths.contains(entry.bundlePath) else { return false }
-            return true
-        }.prefix(120))
-        let savedInventoryHasMore = savedInventory.hasMore
-            || savedInventory.entries.filter { !displayedCandidatePaths.contains($0.bundlePath) }.count > savedOnlyEntries.count
+        let matchingSavedEntries = savedApplicationInventoryCache.entries.filter {
+            !displayedCandidatePaths.contains($0.bundlePath)
+        }
+        let savedOnlyEntries = Array(matchingSavedEntries.prefix(120))
+        let savedInventoryHasMore = savedApplicationInventoryCache.hasMore
+            || matchingSavedEntries.count > savedOnlyEntries.count
 
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -3490,11 +3485,51 @@ struct DashboardView: View {
             if !savedOnlyEntries.isEmpty {
                 savedApplicationHistorySection(entries: savedOnlyEntries, hasMore: savedInventoryHasMore)
             }
+            if isSavedApplicationInventoryLoading {
+                Label("Updating saved application history…", systemImage: "clock")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .task(id: savedApplicationInventoryRefreshKey) {
+            let refreshKey = savedApplicationInventoryRefreshKey
+            let searchText = applicationDiscoverySearchText
+            isSavedApplicationInventoryLoading = true
+            do {
+                try await Task.sleep(nanoseconds: 150_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, refreshKey == savedApplicationInventoryRefreshKey else { return }
+            var history = model.history
+            history.discoveredApplications = applicationDiscovery.history
+            let visiblePaths = Set(applicationDiscovery.candidates.map(\.path))
+            let extendedPaths = Set(applicationDiscovery.searchableCandidates.map(\.path))
+            let queryCompleted = applicationDiscovery.hasCompletedQuery
+            let projection = await Task.detached(priority: .userInitiated) {
+                SavedApplicationInventory.make(
+                    from: history,
+                    visibleSpotlightPaths: visiblePaths,
+                    extendedSpotlightPaths: extendedPaths,
+                    spotlightQueryCompleted: queryCompleted,
+                    searchText: searchText
+                )
+            }.value
+            guard !Task.isCancelled, refreshKey == savedApplicationInventoryRefreshKey else { return }
+            savedApplicationInventoryCache = projection
+            isSavedApplicationInventoryLoading = false
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.background, in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
+    }
+
+    private var savedApplicationInventoryRefreshKey: String {
+        let history = model.history
+        let latestObservationID = history.observations.last?.id.uuidString ?? "none"
+        let latestAssociation = history.applicationAssociations.map(\.updatedAt).max()?.timeIntervalSinceReferenceDate.bitPattern ?? 0
+        return "\(history.observations.count):\(latestObservationID):\(history.applicationAssociations.count):\(latestAssociation):\(applicationDiscovery.resultRevision):\(applicationDiscovery.hasCompletedQuery):\(applicationDiscoverySearchText)"
     }
 
     private var foldersPage: some View {

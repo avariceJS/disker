@@ -230,6 +230,7 @@
 "Disker keeps this local history even when an app is outside the current Spotlight sample. That does not establish whether the app is installed. Saved paths are never scanned until you choose a measurement action." = "Disker хранит эту локальную историю, даже если приложение отсутствует в текущей выборке Spotlight. Это не доказывает, установлено ли приложение. Сохранённые пути сканируются только после вашего выбора действия измерения.";
 "More saved app records exist; refine the app filter to narrow this list." = "Есть и другие сохранённые записи приложений. Уточните фильтр, чтобы сузить список.";
 "Saved app history · %ld" = "Сохранённая история приложений · %ld";
+"Updating saved application history…" = "Обновление сохранённой истории приложений…";
 "Saved related locations · %ld" = "Сохранённые связанные расположения · %ld";
 "Observed in the current visible Spotlight sample" = "Найдено в текущей видимой выборке Spotlight";
 "Returned in the extended Spotlight sample; use the app filter to find it" = "Найдено в расширенной выборке Spotlight; используйте фильтр приложений для поиска";

@@ -38,6 +38,7 @@ public struct SavedApplicationInventoryEntry: Equatable, Identifiable, Sendable 
 
 public struct SavedApplicationInventory: Equatable, Sendable {
     public static let maximumDisplayedEntries = 500
+    public static let empty = SavedApplicationInventory(entries: [], hasMore: false)
 
     public let entries: [SavedApplicationInventoryEntry]
     public let hasMore: Bool

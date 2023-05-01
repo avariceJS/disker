@@ -14,6 +14,7 @@ final class ApplicationDiscoveryModel {
     private(set) var isGathering = false
     private(set) var isRunning = false
     private(set) var hasCompletedQuery = false
+    private(set) var resultRevision: UInt64 = 0
     private(set) var statusMessage: String?
     private(set) var scopePaths: [String] = []
     private(set) var userSelectedScopePaths: [String] = []
@@ -199,6 +200,7 @@ final class ApplicationDiscoveryModel {
         isRunning = false
         isGathering = false
         hasCompletedQuery = false
+        resultRevision &+= 1
         candidates = []
         searchableCandidates = []
         if releaseScopes {
@@ -298,6 +300,7 @@ final class ApplicationDiscoveryModel {
         let sampleIsTruncated = query.resultCount > maximumIndexedResults || scoped.hasMore
         let displayed = scoped.candidates
         candidates = displayed
+        resultRevision &+= 1
         let updatedHistory = ApplicationBundleIndex.updatingDiscoveryHistory(history, with: searchable)
         if updatedHistory != history {
             do {
