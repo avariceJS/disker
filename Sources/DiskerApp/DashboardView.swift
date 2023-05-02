@@ -1799,10 +1799,27 @@ struct DashboardView: View {
     @State private var applicationDiscoverySearchText = ""
     @State private var savedApplicationInventoryCache = SavedApplicationInventory.empty
     @State private var isSavedApplicationInventoryLoading = false
+    @State private var isSavedApplicationHistoryExpanded = false
+    @State private var expandedSavedApplicationPaths = Set<String>()
     @State private var applicationDiscoveryMeasurementFilter: ApplicationDiscoveryMeasurementFilter = .all
     @State private var applicationDiscoverySort: ApplicationDiscoverySort = .name
     @State private var developerArtifactReviewFolder: FolderObservation?
     @Environment(\.scenePhase) private var scenePhase
+
+    private let suppressSpotlightDiscovery: Bool
+    private let expandFirstSavedApplicationForSnapshot: Bool
+
+    init(
+        initialSection: String = "Overview",
+        expandSavedApplicationHistory: Bool = false,
+        suppressSpotlightDiscovery: Bool = false,
+        expandFirstSavedApplicationForSnapshot: Bool = false
+    ) {
+        _selectedSection = State(initialValue: initialSection)
+        _isSavedApplicationHistoryExpanded = State(initialValue: expandSavedApplicationHistory)
+        self.suppressSpotlightDiscovery = suppressSpotlightDiscovery
+        self.expandFirstSavedApplicationForSnapshot = expandFirstSavedApplicationForSnapshot
+    }
 
     private let sections = ["Overview", "Applications", "Folders", "Duplicates", "History", "RAM", "About"]
 
@@ -1878,12 +1895,15 @@ struct DashboardView: View {
             model.setStorageMonitoringSessionOpen(true)
             model.startStorageMonitoringScheduler()
             model.refreshCapacity()
+            if selectedSection == "Applications", !suppressSpotlightDiscovery {
+                applicationDiscovery.start()
+            }
             model.updateMemoryPressureMonitoring(
                 enabled: isAutomaticRAMSamplingEnabled, appIsActive: model.isAppActive
             )
         }
         .onChange(of: selectedSection) { _, section in
-            if section == "Applications" { applicationDiscovery.start() }
+            if section == "Applications", !suppressSpotlightDiscovery { applicationDiscovery.start() }
             else { applicationDiscovery.stop() }
         }
         .onChange(of: historyChartRange) { _, _ in
@@ -2057,6 +2077,15 @@ struct DashboardView: View {
             }
             .prefix(3)
             .map { $0 }
+    }
+
+    private func historyDateAxisFormat(for dates: [Date]) -> Date.FormatStyle {
+        guard let earliest = dates.min(), let latest = dates.max() else { return .dateTime.month(.abbreviated).day() }
+        let span = latest.timeIntervalSince(earliest)
+        if span < 24 * 60 * 60 { return .dateTime.hour().minute() }
+        if span < 21 * 24 * 60 * 60 { return .dateTime.month(.abbreviated).day().hour() }
+        if span < 730 * 24 * 60 * 60 { return .dateTime.month(.abbreviated).day() }
+        return .dateTime.month(.abbreviated).year()
     }
 
     private var fileChangeOverviewCard: some View {
@@ -2388,7 +2417,7 @@ struct DashboardView: View {
                             AxisMarks(values: .automatic(desiredCount: 6)) { _ in
                                 AxisGridLine()
                                     .foregroundStyle(.quaternary)
-                                AxisValueLabel(format: .dateTime.month(.abbreviated).day().hour())
+                                AxisValueLabel(format: historyDateAxisFormat(for: capacitySeries.map(\.observedAt)))
                             }
                         }
                         .chartPlotStyle { plot in
@@ -3517,6 +3546,9 @@ struct DashboardView: View {
             }.value
             guard !Task.isCancelled, refreshKey == savedApplicationInventoryRefreshKey else { return }
             savedApplicationInventoryCache = projection
+            if expandFirstSavedApplicationForSnapshot, let firstPath = projection.entries.first?.bundlePath {
+                expandedSavedApplicationPaths.insert(firstPath)
+            }
             isSavedApplicationInventoryLoading = false
         }
         .padding(14)
@@ -4477,7 +4509,7 @@ struct DashboardView: View {
     private func savedApplicationHistorySection(
         entries: [SavedApplicationInventoryEntry], hasMore: Bool
     ) -> some View {
-        DisclosureGroup {
+        DisclosureGroup(isExpanded: $isSavedApplicationHistoryExpanded) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Disker keeps this local history even when an app is outside the current Spotlight sample. That does not establish whether the app is installed. Saved paths are never scanned until you choose a measurement action.")
                     .font(.caption2)
@@ -4512,7 +4544,13 @@ struct DashboardView: View {
     }
 
     private func savedApplicationHistoryRow(_ entry: SavedApplicationInventoryEntry) -> some View {
-        return DisclosureGroup {
+        return DisclosureGroup(isExpanded: Binding(
+            get: { expandedSavedApplicationPaths.contains(entry.bundlePath) },
+            set: { isExpanded in
+                if isExpanded { expandedSavedApplicationPaths.insert(entry.bundlePath) }
+                else { expandedSavedApplicationPaths.remove(entry.bundlePath) }
+            }
+        )) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(entry.bundlePath)
                     .font(.caption2.monospaced())

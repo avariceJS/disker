@@ -4,8 +4,17 @@ import SwiftUI
 struct DiskerApp: App {
     var body: some Scene {
         WindowGroup {
+#if DEBUG
+            if let request = DiskerSnapshotRequest.from(arguments: ProcessInfo.processInfo.arguments) {
+                DiskerSnapshotHost(request: request)
+            } else {
+                DashboardView()
+                    .frame(minWidth: 760, minHeight: 540)
+            }
+#else
             DashboardView()
                 .frame(minWidth: 760, minHeight: 540)
+#endif
         }
         .windowResizability(.contentMinSize)
         .commands {
