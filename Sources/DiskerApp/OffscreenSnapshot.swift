@@ -8,12 +8,14 @@ struct DiskerSnapshotRequest {
     let width: CGFloat
     let height: CGFloat
     let appearanceName: NSAppearance.Name?
+    let suppressSpotlightDiscovery: Bool
 
     static func from(arguments: [String]) -> DiskerSnapshotRequest? {
         guard let outputIndex = arguments.firstIndex(of: "--snapshot-output"),
               arguments.indices.contains(outputIndex + 1) else { return nil }
         let sectionIndex = arguments.firstIndex(of: "--snapshot-section")
         let appearanceIndex = arguments.firstIndex(of: "--snapshot-appearance")
+        let suppressSpotlightDiscovery = !arguments.contains("--snapshot-enable-spotlight")
         let section = sectionIndex.flatMap { arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil }
             ?? "Overview"
         let appearance = appearanceIndex.flatMap { arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil }
@@ -28,7 +30,8 @@ struct DiskerSnapshotRequest {
             section: section,
             width: 1_280,
             height: 900,
-            appearanceName: appearanceName
+            appearanceName: appearanceName,
+            suppressSpotlightDiscovery: suppressSpotlightDiscovery
         )
     }
 }
@@ -40,7 +43,7 @@ struct DiskerSnapshotHost: View {
         DashboardView(
             initialSection: request.section,
             expandSavedApplicationHistory: true,
-            suppressSpotlightDiscovery: true,
+            suppressSpotlightDiscovery: request.suppressSpotlightDiscovery,
             expandFirstSavedApplicationForSnapshot: true
         )
         .frame(width: request.width, height: request.height)

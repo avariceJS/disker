@@ -100,7 +100,7 @@
 "Additional Spotlight folders" = "Дополнительные папки Spotlight";
 "Remove" = "Удалить";
 "Remove application search folder at %@" = "Удалить папку поиска приложений: %@";
-"Spotlight searches only /Applications, /System/Applications, ~/Applications, and folders you add here. Discovery reads indexed metadata only; it does not measure bundles or their data. Press Measure and confirm the exact bundle in the picker before Disker scans it." = "Spotlight ищет только в /Applications, /System/Applications, ~/Applications и папках, добавленных здесь. Поиск использует только индексированные метаданные и не измеряет пакеты или связанные данные. Нажмите «Измерить» и подтвердите точный пакет в окне выбора, прежде чем Disker начнёт сканирование.";
+"While Disker is open, Spotlight searches only /Applications, /System/Applications, ~/Applications, and folders you add here. Discovery reads indexed metadata only; it does not measure bundles or their data. Press Measure and confirm the exact bundle in the picker before Disker scans it." = "Пока Disker открыт, Spotlight ищет только в /Applications, /System/Applications, ~/Applications и папках, добавленных здесь. Поиск использует только индексированные метаданные и не измеряет пакеты или связанные данные. Нажмите «Измерить» и подтвердите точный пакет в окне выбора, прежде чем Disker начнёт сканирование.";
 "Filter by app name or path" = "Фильтр по имени приложения или пути";
 "Filter discovered applications" = "Фильтровать найденные приложения";
 "Filter applications by measurement" = "Фильтровать приложения по статусу измерения";
@@ -133,8 +133,7 @@
 "Measure again…" = "Измерить повторно…";
 "Measure…" = "Измерить…";
 "Collecting indexed Spotlight results…" = "Получение результатов из индекса Spotlight…";
-"No matching bundles have been reported yet." = "Подходящие пакеты пока не найдены.";
-"Discovery is stopped while this page is closed." = "Поиск остановлен, пока этот раздел закрыт.";
+"Spotlight returned no application bundles in the current sample." = "В текущей выборке Spotlight не вернул пакеты приложений.";
 "Add an application discovery folder" = "Добавить папку для поиска приложений";
 "Search This Folder" = "Искать в этой папке";
 "Spotlight will look for application bundles inside this folder. Disker will not scan or measure its contents." = "Spotlight будет искать пакеты приложений в этой папке. Disker не сканирует и не измеряет её содержимое.";

@@ -1895,16 +1895,10 @@ struct DashboardView: View {
             model.setStorageMonitoringSessionOpen(true)
             model.startStorageMonitoringScheduler()
             model.refreshCapacity()
-            if selectedSection == "Applications", !suppressSpotlightDiscovery {
-                applicationDiscovery.start()
-            }
+            if !suppressSpotlightDiscovery { applicationDiscovery.start() }
             model.updateMemoryPressureMonitoring(
                 enabled: isAutomaticRAMSamplingEnabled, appIsActive: model.isAppActive
             )
-        }
-        .onChange(of: selectedSection) { _, section in
-            if section == "Applications", !suppressSpotlightDiscovery { applicationDiscovery.start() }
-            else { applicationDiscovery.stop() }
         }
         .onChange(of: historyChartRange) { _, _ in
             selectedCapacityDate = nil
@@ -3278,7 +3272,7 @@ struct DashboardView: View {
                             >= ApplicationDiscoveryModel.maximumUserSelectedScopeCount
                     )
             }
-            Text("Spotlight searches only /Applications, /System/Applications, ~/Applications, and folders you add here. Discovery reads indexed metadata only; it does not measure bundles or their data. Press Measure and confirm the exact bundle in the picker before Disker scans it.")
+            Text("While Disker is open, Spotlight searches only /Applications, /System/Applications, ~/Applications, and folders you add here. Discovery reads indexed metadata only; it does not measure bundles or their data. Press Measure and confirm the exact bundle in the picker before Disker scans it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -3383,8 +3377,10 @@ struct DashboardView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-            if applicationDiscovery.candidates.isEmpty {
-                Text(applicationDiscovery.isRunning ? "No matching bundles have been reported yet." : "Discovery is stopped while this page is closed.")
+            if applicationDiscovery.candidates.isEmpty,
+               applicationDiscovery.isRunning,
+               !applicationDiscovery.isGathering {
+                Text("Spotlight returned no application bundles in the current sample.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else if candidates.isEmpty {
