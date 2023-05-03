@@ -1744,29 +1744,29 @@ final class DashboardModel {
 
     func directoryHistoryLabel(for folder: FolderObservation) -> String {
         if previousCompleteObservation(for: folder) != nil {
-            return "No comparable prior retained path"
+            return NSLocalizedString("No comparable prior retained path", comment: "History status when no matching complete prior path is retained")
         }
         guard let currentIndex = history.observations.firstIndex(where: { observation in
             observation.folders.contains(where: { $0.id == folder.id })
-        }) else { return "First complete observation" }
+        }) else { return NSLocalizedString("First complete observation", comment: "History status when this path has no prior complete scan") }
         let earlierComplete = history.observations[..<currentIndex].reversed().lazy
             .compactMap { observation in
                 observation.folders.first(where: { $0.path == folder.path && $0.complete })
             }
             .first
-        guard let earlierComplete else { return "First complete observation" }
+        guard let earlierComplete else { return NSLocalizedString("First complete observation", comment: "History status when this path has no prior complete scan") }
         if let previousDeviceID = earlierComplete.volumeDeviceID,
            let currentDeviceID = folder.volumeDeviceID,
            previousDeviceID != currentDeviceID {
-            return "Volume identity changed; comparison unavailable"
+            return NSLocalizedString("Volume identity changed; comparison unavailable", comment: "History status when a path now resolves to another volume")
         }
         if earlierComplete.volumeDeviceID == nil, folder.volumeDeviceID != nil {
-            return "Earlier volume identity unavailable; comparison omitted"
+            return NSLocalizedString("Earlier volume identity unavailable; comparison omitted", comment: "History status when the prior volume identity is missing")
         }
         if earlierComplete.volumeDeviceID != nil, folder.volumeDeviceID == nil {
-            return "Current volume identity unavailable; comparison omitted"
+            return NSLocalizedString("Current volume identity unavailable; comparison omitted", comment: "History status when the current volume identity is missing")
         }
-        return "No comparable prior retained path"
+        return NSLocalizedString("No comparable prior retained path", comment: "History status when no matching complete prior path is retained")
     }
 
     func previousCompleteDirectory(
@@ -3582,12 +3582,20 @@ struct DashboardView: View {
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                             Spacer(minLength: 8)
-                            Menu("Every \(Int(model.storageMonitoringInterval / 60)) min") {
+                            Menu {
                                 ForEach([5, 15, 30, 60], id: \.self) { minutes in
-                                    Button("Every \(minutes) minutes") {
+                                    Button(String.localizedStringWithFormat(
+                                        NSLocalizedString("Every %ld minutes", comment: "Storage monitoring interval option"),
+                                        minutes
+                                    )) {
                                         model.setStorageMonitoringInterval(TimeInterval(minutes * 60))
                                     }
                                 }
+                            } label: {
+                                Text(String.localizedStringWithFormat(
+                                    NSLocalizedString("Every %ld min", comment: "Selected storage monitoring interval"),
+                                    Int(model.storageMonitoringInterval / 60)
+                                ))
                             }
                             .disabled(model.monitoredScopePaths.isEmpty)
                             .help("Choose the interval for opted-in saved locations")
@@ -3716,7 +3724,11 @@ struct DashboardView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 } label: {
-                    Label("Saved scan roots (\(model.rememberedScopes.count)/\(SelectedScopeBookmarkStore.maximumBookmarkCount))", systemImage: "bookmark")
+                    Label(String.localizedStringWithFormat(
+                        NSLocalizedString("Saved scan roots (%ld/%ld)", comment: "Saved selected scan roots and maximum count"),
+                        model.rememberedScopes.count,
+                        SelectedScopeBookmarkStore.maximumBookmarkCount
+                    ), systemImage: "bookmark")
                 }
                 if let folders = model.latestScan?.folders, !folders.isEmpty {
                     folderList(folders, title: "Latest scan", scanCancelled: model.latestScan?.cancelled ?? false)
@@ -5643,7 +5655,7 @@ struct DashboardView: View {
         includeDetails: Bool = true
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(title).font(.title3.weight(.semibold))
+            Text(LocalizedStringKey(title)).font(.title3.weight(.semibold))
             ForEach(folders.sorted { $0.allocatedBytes > $1.allocatedBytes }) { folder in
                 let projectPaths = Set(folder.projectDirectorySummaries.map(\.rootRelativePath))
                 let rankedSubdirectories = folder.subdirectorySummaries.filter {
@@ -5868,7 +5880,11 @@ struct DashboardView: View {
                 }
             }
             if let latest = model.latestScan {
-                Text("Scan finished \(latest.finishedAt.formatted(date: .abbreviated, time: .shortened)) · \(latest.folders.count) selected locations")
+                Text(String.localizedStringWithFormat(
+                    NSLocalizedString("Scan finished %@ · %ld selected locations", comment: "Finished selected-folder scan time and root count"),
+                    latest.finishedAt.formatted(date: .abbreviated, time: .shortened),
+                    latest.folders.count
+                ))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -6118,10 +6134,18 @@ struct DashboardView: View {
                     .font(.caption.weight(.semibold))
             }
             if !reportMatchesCurrentScan {
-                let followUp = report == nil
-                    ? "No complete file-level baseline is available for this observation. A later scan that records a complete inventory can establish one; earlier changes cannot be reconstructed."
-                    : "The prior complete report remains stored; Disker can compare again after a later complete inventory."
-                Text("\(fileInventoryIncompleteness(for: folder)) \(followUp) Symlink targets are excluded.")
+                let followUp = NSLocalizedString(
+                    report == nil
+                        ? "No complete file-level baseline is available for this observation. A later scan that records a complete inventory can establish one; earlier changes cannot be reconstructed."
+                        : "The prior complete report remains stored; Disker can compare again after a later complete inventory.",
+                    comment: "Why file-level history is unavailable for the latest folder observation"
+                )
+                let explanation = Text(fileInventoryIncompleteness(for: folder))
+                    + Text(" ")
+                    + Text(followUp)
+                    + Text(" ")
+                    + Text(NSLocalizedString("Symlink targets are excluded.", comment: "File inventory symlink coverage boundary"))
+                explanation
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -6517,14 +6541,31 @@ struct DashboardView: View {
     }
 
     private func fileInventoryIncompleteness(for folder: FolderObservation) -> String {
-        if model.scanWasCancelled(for: folder) { return "This scan was cancelled before a full inventory finished." }
-        if folder.inaccessibleCount > 0 { return "This scan could not access \(folder.inaccessibleCount) entries, so file changes remain unknown." }
-        if folder.changedDuringScanCount > 0 { return "Files or folders changed during the scan, so no consistent inventory was saved." }
-        if folder.excludedVolumeBoundaryCount > 0 { return "A nested volume boundary was skipped, so the regular-file inventory is incomplete." }
-        if folder.excludedSpecialFileCount > 0 { return "Special filesystem entries prevented a complete regular-file inventory." }
-        if folder.byteAccountingOverflowed { return "Filesystem size accounting exceeded the supported integer range." }
-        if folder.fileCount > 500_000 { return "This folder contains more than the 500,000-path inventory limit." }
-        return "A complete regular-file inventory was not recorded for this scan."
+        if model.scanWasCancelled(for: folder) {
+            return NSLocalizedString("This scan was cancelled before a full inventory finished.", comment: "File inventory incompleteness caused by cancellation")
+        }
+        if folder.inaccessibleCount > 0 {
+            return String.localizedStringWithFormat(
+                NSLocalizedString("This scan could not access %ld entries, so file changes remain unknown.", comment: "File inventory incompleteness caused by inaccessible entries"),
+                folder.inaccessibleCount
+            )
+        }
+        if folder.changedDuringScanCount > 0 {
+            return NSLocalizedString("Files or folders changed during the scan, so no consistent inventory was saved.", comment: "File inventory incompleteness caused by concurrent changes")
+        }
+        if folder.excludedVolumeBoundaryCount > 0 {
+            return NSLocalizedString("A nested volume boundary was skipped, so the regular-file inventory is incomplete.", comment: "File inventory incompleteness caused by a nested volume")
+        }
+        if folder.excludedSpecialFileCount > 0 {
+            return NSLocalizedString("Special filesystem entries prevented a complete regular-file inventory.", comment: "File inventory incompleteness caused by special entries")
+        }
+        if folder.byteAccountingOverflowed {
+            return NSLocalizedString("Filesystem size accounting exceeded the supported integer range.", comment: "File inventory incompleteness caused by byte accounting overflow")
+        }
+        if folder.fileCount > 500_000 {
+            return NSLocalizedString("This folder contains more than the 500,000-path inventory limit.", comment: "File inventory incompleteness caused by the inventory path limit")
+        }
+        return NSLocalizedString("A complete regular-file inventory was not recorded for this scan.", comment: "File-history status when the latest scan lacks a complete file inventory")
     }
 
     private func fileInventorySummary(_ report: FileInventoryChangeSet) -> String {
@@ -6897,7 +6938,10 @@ struct DashboardView: View {
                 .font(.caption2)
             }
         } else if !fullSeries.isEmpty {
-            Text("Fewer than two complete observations of this path in \(historyRangeCaption(endingAt: latestDate)).")
+            Text(String.localizedStringWithFormat(
+                NSLocalizedString("Fewer than two complete observations of this path in %@.", comment: "Path history has too few complete observations in selected range"),
+                historyRangeCaption(endingAt: latestDate)
+            ))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
