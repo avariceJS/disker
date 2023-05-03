@@ -2363,6 +2363,9 @@ struct DashboardView: View {
                 }.sorted { $0.observedAt < $1.observedAt }
                 if capacitySeries.count > 1 {
                     let values = capacitySeries.map { Double($0.availableBytes) / 1_073_741_824 }
+                    let firstCapacityDate = capacitySeries[0].observedAt
+                    let lastCapacityDate = capacitySeries[capacitySeries.count - 1].observedAt
+                    let xAxisPadding = max(lastCapacityDate.timeIntervalSince(firstCapacityDate) * 0.04, 1)
                     let minimum = values.min() ?? 0
                     let maximum = values.max() ?? minimum
                     let padding = max((maximum - minimum) * 0.15, max(Double(capacity.totalBytes) / 1_073_741_824 * 0.005, 0.25))
@@ -2399,6 +2402,9 @@ struct DashboardView: View {
                                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                             }
                         }
+                        .chartXScale(domain:
+                            firstCapacityDate.addingTimeInterval(-xAxisPadding)...lastCapacityDate.addingTimeInterval(xAxisPadding)
+                        )
                         .chartYScale(domain: max(0, minimum - padding)...(maximum + padding))
                         .chartYAxisLabel("Available (GiB)")
                         .chartYAxis {
@@ -2408,10 +2414,13 @@ struct DashboardView: View {
                             }
                         }
                         .chartXAxis {
-                            AxisMarks(values: .automatic(desiredCount: 6)) { _ in
+                            AxisMarks(values: .automatic(desiredCount: 6)) { value in
                                 AxisGridLine()
                                     .foregroundStyle(.quaternary)
-                                AxisValueLabel(format: historyDateAxisFormat(for: capacitySeries.map(\.observedAt)))
+                                if let tickDate = value.as(Date.self),
+                                   tickDate <= lastCapacityDate.addingTimeInterval(-xAxisPadding) {
+                                    AxisValueLabel(format: historyDateAxisFormat(for: capacitySeries.map(\.observedAt)))
+                                }
                             }
                         }
                         .chartPlotStyle { plot in
