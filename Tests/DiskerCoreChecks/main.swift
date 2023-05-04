@@ -57,6 +57,7 @@ private struct DiskerCoreChecks {
             ("read-only application-removal review planner", testApplicationRemovalReviewPlanner),
             ("explicit app-folder associations", testApplicationFolderAssociations),
             ("bounded explicit project-resource associations", testProjectResourceAssociations),
+            ("exact project data candidates link to separate measured history", testProjectCandidateLinkWorkflow),
             ("project resource review preserves scope and coverage evidence", testProjectResourceReview),
             ("project linked growth compares exact paths independently", testProjectResourceGrowthReview),
             ("bounded read-only selected-scope bookmarks", testSelectedScopeBookmarks),
@@ -2449,6 +2450,89 @@ private struct DiskerCoreChecks {
         }
     }
 
+    private static func testProjectCandidateLinkWorkflow() throws {
+        try withTemporaryDirectory { base in
+            let project = base.appendingPathComponent("DemoProject", isDirectory: true)
+            let git = project.appendingPathComponent(".git", isDirectory: true)
+            let models = project.appendingPathComponent("models", isDirectory: true)
+            try FileManager.default.createDirectory(at: git, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: models, withIntermediateDirectories: true)
+            try Data("synthetic git metadata".utf8).write(to: git.appendingPathComponent("HEAD"))
+            let checkpoint = models.appendingPathComponent("weights.bin")
+            try Data(repeating: 0x31, count: 4_096).write(to: checkpoint)
+
+            let storeURL = base.appendingPathComponent("Disker/observations.json")
+            let bookmarkURL = base.appendingPathComponent("Disker/selected-scopes.json")
+            let projectScan = FolderScanner.scan(roots: [project])
+            try ObservationStore.append(projectScan, to: storeURL)
+            guard let selectedProject = projectScan.folders.first,
+                  selectedProject.gitMetadataEntryDetected,
+                  let candidate = DeveloperArtifactReview.make(from: selectedProject).entries.first(where: {
+                      $0.relativePath == "models" && $0.category == .userData
+                  }) else {
+                throw CheckFailure.assertion("a named model directory under the selected Git project should be a measurable candidate")
+            }
+
+            let sibling = project.appendingPathComponent("other-data", isDirectory: true)
+            try FileManager.default.createDirectory(at: sibling, withIntermediateDirectories: false)
+            try expect(!SelectedScopeBookmarkStore.isSameSelectedPath(sibling, as: candidate.path),
+                       "a sibling selected instead of the exact candidate must be rejected before association")
+            let alias = project.appendingPathComponent("models-alias", isDirectory: true)
+            try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: models)
+            try expect(SelectedScopePathProbe.probe(selectedURL: alias) == .symbolicLink,
+                       "a symlink selected at the candidate boundary must be rejected without following it")
+            let beforeConfirmation = try ObservationStore.load(from: storeURL)
+            try expect(beforeConfirmation.projectResourceAssociations.isEmpty,
+                       "wrong-path and symlink validation must not create a project link")
+
+            try expect(SelectedScopePathProbe.probe(selectedURL: models) == .availableDirectory,
+                       "the exact candidate directory should pass a metadata-only no-follow availability probe")
+            try expect(SelectedScopeBookmarkStore.isSameSelectedPath(models, as: candidate.path),
+                       "only the exact recognized candidate path should proceed to a project link")
+            try ObservationStore.associateProjectFolders([models.path], with: project.path, to: storeURL)
+            try SelectedScopeBookmarkStore.remember([models], at: bookmarkURL)
+
+            let firstCandidateScan = FolderScanner.scan(roots: [models])
+            try ObservationStore.append(firstCandidateScan, to: storeURL)
+            let firstHistory = try ObservationStore.load(from: storeURL)
+            let savedBookmarks = try SelectedScopeBookmarkStore.load(from: bookmarkURL)
+            try expect(savedBookmarks.map(\.path) == [models.standardizedFileURL.path],
+                       "explicit candidate selection should retain a separate reusable read-only scope bookmark")
+            let firstReview = ProjectResourceReview.make(for: project.path, in: firstHistory)
+            let firstModels = firstReview.entries.first(where: { $0.path == models.path })
+            try expect(firstModels?.kind == .userLinkedFolder
+                       && firstModels?.observation?.complete == true
+                       && firstModels?.observation?.logicalBytes == 4_096
+                       && firstModels?.overlappingPaths == [project.path],
+                       "the candidate should appear as its own complete observation, with parent overlap explicit and no combined total")
+
+            try Data(repeating: 0x52, count: 32_768).write(to: checkpoint)
+            try ObservationStore.append(FolderScanner.scan(roots: [models]), to: storeURL)
+            let secondHistory = try ObservationStore.load(from: storeURL)
+            let secondReview = ProjectResourceReview.make(for: project.path, in: secondHistory)
+            let secondGrowth = ProjectResourceGrowthReview.make(for: secondReview, in: secondHistory)
+            let measuredGrowth = secondGrowth.entries.first(where: { $0.path == models.path })
+            try expect(measuredGrowth?.status == .compared
+                       && measuredGrowth?.logicalDelta == 28_672
+                       && measuredGrowth?.allocatedDelta != nil,
+                       "a later complete scan should compare only this exact candidate path with its own baseline")
+
+            try FileManager.default.createSymbolicLink(
+                at: models.appendingPathComponent("outside-link"), withDestinationURL: base
+            )
+            try ObservationStore.append(FolderScanner.scan(roots: [models]), to: storeURL)
+            let partialHistory = try ObservationStore.load(from: storeURL)
+            let partialReview = ProjectResourceReview.make(for: project.path, in: partialHistory)
+            let partialGrowth = ProjectResourceGrowthReview.make(for: partialReview, in: partialHistory)
+            let latestCandidate = partialGrowth.entries.first(where: { $0.path == models.path })
+            try expect(latestCandidate?.status == .partial && latestCandidate?.allocatedDelta == nil,
+                       "a newer partial candidate scan must suppress the older complete growth delta")
+            let sentinelAfter = try Data(contentsOf: checkpoint)
+            try expect(sentinelAfter == Data(repeating: 0x52, count: 32_768),
+                       "candidate review, linking, and metadata scans must leave synthetic data unchanged")
+        }
+    }
+
     private static func testProjectResourceGrowthReview() throws {
         let root = "/synthetic/project-growth"
         let nested = root + "/nested"
@@ -2817,12 +2901,16 @@ private struct DiskerCoreChecks {
 
             try expect(SelectedScopePathProbe.probe(at: directory.path) == .availableDirectory,
                        "an existing selected directory should be reported as available")
+            try expect(SelectedScopePathProbe.probe(selectedURL: directory) == .availableDirectory,
+                       "a freshly selected security-scoped URL should pass the exact no-follow directory probe")
             try expect(SelectedScopePathProbe.Status.availableDirectoryWithinBookmarkScope.isAvailableDirectory,
                        "a directory reached through its explicit bookmark remains available with its ancestor limitation kept distinct")
             try expect(SelectedScopePathProbe.probe(at: file.path) == .notDirectory,
                        "an existing regular file should be distinguished from a missing directory")
             try expect(SelectedScopePathProbe.probe(at: symlink.path) == .symbolicLink,
                        "a selected symlink must be reported without following its target")
+            try expect(SelectedScopePathProbe.probe(selectedURL: symlink) == .symbolicLink,
+                       "a freshly selected symlink must remain rejected by the URL-based no-follow probe")
             try expect(SelectedScopePathProbe.probe(at: pathThroughSymlinkAncestor.path) == .symbolicLink,
                        "an ancestor symlink must be rejected instead of probing a directory outside the exact path")
             try expect(SelectedScopePathProbe.probe(

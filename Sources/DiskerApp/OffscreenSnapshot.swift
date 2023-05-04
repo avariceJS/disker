@@ -9,6 +9,7 @@ struct DiskerSnapshotRequest {
     let height: CGFloat
     let appearanceName: NSAppearance.Name?
     let suppressSpotlightDiscovery: Bool
+    let includeProjectCandidate: Bool
 
     static func from(arguments: [String]) -> DiskerSnapshotRequest? {
         guard let outputIndex = arguments.firstIndex(of: "--snapshot-output"),
@@ -18,6 +19,7 @@ struct DiskerSnapshotRequest {
         let suppressSpotlightDiscovery = !arguments.contains("--snapshot-enable-spotlight")
         let section = sectionIndex.flatMap { arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil }
             ?? "Overview"
+        let includeProjectCandidate = arguments.contains("--snapshot-project-candidate")
         let appearance = appearanceIndex.flatMap { arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil }
         let appearanceName: NSAppearance.Name?
         switch appearance?.lowercased() {
@@ -29,9 +31,10 @@ struct DiskerSnapshotRequest {
             outputURL: URL(fileURLWithPath: arguments[outputIndex + 1]),
             section: section,
             width: 1_280,
-            height: 900,
+            height: includeProjectCandidate ? 1_200 : 900,
             appearanceName: appearanceName,
-            suppressSpotlightDiscovery: suppressSpotlightDiscovery
+            suppressSpotlightDiscovery: suppressSpotlightDiscovery,
+            includeProjectCandidate: includeProjectCandidate
         )
     }
 }
@@ -44,7 +47,8 @@ struct DiskerSnapshotHost: View {
             initialSection: request.section,
             expandSavedApplicationHistory: true,
             suppressSpotlightDiscovery: request.suppressSpotlightDiscovery,
-            expandFirstSavedApplicationForSnapshot: true
+            expandFirstSavedApplicationForSnapshot: true,
+            includeSnapshotProjectCandidate: request.includeProjectCandidate
         )
         .frame(width: request.width, height: request.height)
         .task {
@@ -59,9 +63,10 @@ struct DiskerSnapshotHost: View {
 
     @MainActor
     private func captureWhenReady(attempt: Int) {
-        guard let window = NSApp.windows
+        let largestWindow = NSApp.windows
             .filter({ $0.contentView != nil })
-            .max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }),
+            .max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height })
+        guard let window = NSApp.keyWindow ?? largestWindow,
               let contentView = window.contentView else {
             retryOrFail(attempt: attempt, reason: "No native window is available to snapshot.")
             return

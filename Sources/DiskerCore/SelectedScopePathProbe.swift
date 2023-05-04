@@ -30,6 +30,25 @@ public enum SelectedScopePathProbe {
 
     /// Reports metadata availability for one exact user-selected path. It does
     /// not enumerate descendants, read file contents, or refresh bookmarks.
+    /// Pass the URL returned by `NSOpenPanel` when checking a freshly selected
+    /// sandbox scope so its active access token remains available for the
+    /// descriptor-based no-follow walk.
+    public static func probe(selectedURL: URL) -> Status {
+        let rawComponents = selectedURL.path.split(separator: "/", omittingEmptySubsequences: true)
+        guard !rawComponents.contains("."), !rawComponents.contains("..") else {
+            return .permissionOrAccessUnknown
+        }
+        let accessGranted = selectedURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessGranted { selectedURL.stopAccessingSecurityScopedResource() }
+        }
+        let status = probe(at: selectedURL.path)
+        guard status == .permissionOrAccessUnknown else { return status }
+        return probeExactSelectedDirectory(selectedURL.standardizedFileURL)
+    }
+
+    /// Reports metadata availability for one exact user-selected path. It does
+    /// not enumerate descendants, read file contents, or refresh bookmarks.
     /// Every reachable path component is opened relative to a directory
     /// descriptor with `O_NOFOLLOW`. If App Sandbox prevents traversing an
     /// ancestor outside an explicitly selected bookmark, the exact bookmarked
@@ -150,14 +169,14 @@ public enum SelectedScopePathProbe {
         guard bookmark != nil, failure == EACCES || failure == EPERM else {
             return status(forErrno: failure)
         }
-        return probeExactBookmarkedDirectory(url)
+        return probeExactSelectedDirectory(url)
     }
 
-    /// A sandbox-scoped bookmark may authorize the selected directory while
-    /// denying traversal through its parents from `/`. Checking the bookmarked
-    /// directory itself preserves the user's exact scope and rejects a final
-    /// symbolic link; it does not inspect ancestor symlinks or descendants.
-    private static func probeExactBookmarkedDirectory(_ url: URL) -> Status {
+    /// A selected sandbox URL may authorize the exact directory while denying
+    /// traversal through its parents from `/`. Checking that directory itself
+    /// preserves the selection and rejects a final symlink; it cannot verify
+    /// inaccessible ancestors or inspect descendants.
+    private static func probeExactSelectedDirectory(_ url: URL) -> Status {
         let descriptor = url.withUnsafeFileSystemRepresentation { path -> Int32 in
             guard let path else { return -1 }
             return open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)

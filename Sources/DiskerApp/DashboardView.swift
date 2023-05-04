@@ -509,7 +509,7 @@ final class DashboardModel {
     private var duplicateTask: Task<DuplicateVerificationResult, Never>?
     private var memoryPressureSource: DispatchSourceMemoryPressure?
 
-    init() {
+    init(includeSnapshotProjectCandidate: Bool = false) {
         do {
             history = try ObservationStore.load()
             ram = history.ramObservations.last
@@ -545,6 +545,63 @@ final class DashboardModel {
         } catch {
             errorMessage = "Saved monitoring choices could not be loaded: \(error.localizedDescription)"
         }
+        if includeSnapshotProjectCandidate {
+            history = Self.snapshotProjectCandidateHistory()
+        }
+    }
+
+    private static func snapshotProjectCandidateHistory() -> LocalHistory {
+        let root = "/synthetic/QA/DemoProject"
+        let models = root + "/models"
+        let now = Date()
+        let gitUsage = DirectoryUsage(
+            rootRelativePath: ".git", logicalBytes: 8_192, allocatedBytes: 12_288,
+            fileCount: 2, incompleteCount: 0, excludedSymlinkCount: 0,
+            gitMetadataEntryDetected: true, complete: true
+        )
+        let modelUsage = DirectoryUsage(
+            rootRelativePath: "models", logicalBytes: 268_435_456, allocatedBytes: 281_018_368,
+            fileCount: 4, incompleteCount: 0, excludedSymlinkCount: 0, complete: true
+        )
+        let project = FolderObservation(
+            path: root, volumeDeviceID: 42, displayName: "DemoProject",
+            logicalBytes: 268_443_648, allocatedBytes: 281_030_656, fileCount: 6,
+            inaccessibleCount: 0, finishedAt: now.addingTimeInterval(-600), complete: true,
+            gitMetadataEntryDetected: true, gitMetadataUsage: gitUsage,
+            projectDirectorySummaries: [gitUsage, modelUsage]
+        )
+        let candidateBefore = FolderObservation(
+            path: models, volumeDeviceID: 42, displayName: "models",
+            logicalBytes: 250_609_664, allocatedBytes: 262_144_000, fileCount: 4,
+            inaccessibleCount: 0, finishedAt: now.addingTimeInterval(-1_200), complete: true
+        )
+        let candidateLatest = FolderObservation(
+            path: models, volumeDeviceID: 42, displayName: "models",
+            logicalBytes: modelUsage.logicalBytes, allocatedBytes: modelUsage.allocatedBytes, fileCount: 4,
+            inaccessibleCount: 0, finishedAt: now.addingTimeInterval(-300), complete: true
+        )
+        let association = try? ProjectResourceAssociation(
+            projectRootPath: root, relatedFolderPaths: [models],
+            updatedAt: now.addingTimeInterval(-300)
+        )
+        let observations = [
+            ScanObservation(
+                startedAt: candidateBefore.finishedAt, finishedAt: candidateBefore.finishedAt,
+                folders: [candidateBefore], cancelled: false
+            ),
+            ScanObservation(
+                startedAt: candidateLatest.finishedAt, finishedAt: candidateLatest.finishedAt,
+                folders: [candidateLatest], cancelled: false
+            ),
+            ScanObservation(
+                startedAt: project.finishedAt, finishedAt: project.finishedAt,
+                folders: [project], cancelled: false
+            ),
+        ]
+        return LocalHistory(
+            observations: observations,
+            projectResourceAssociations: association.map { [$0] } ?? []
+        )
     }
 
     var latestScan: ScanObservation? { history.observations.last }
@@ -948,6 +1005,16 @@ final class DashboardModel {
         ProjectResourceReview.make(for: projectRootPath, in: history)
     }
 
+    func projectRootsLinkingResource(_ path: String) -> [String] {
+        let standardizedPath = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path
+        return history.projectResourceAssociations.compactMap { association in
+            guard association.relatedFolderPaths.contains(where: {
+                URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL.path == standardizedPath
+            }) else { return nil }
+            return URL(fileURLWithPath: association.projectRootPath, isDirectory: true).standardizedFileURL.path
+        }.sorted()
+    }
+
     func crossDomainResourceEvidence(for projectRootPath: String) -> CrossDomainResourceEvidence {
         CrossDomainResourceEvidence.make(
             forProjectRootPath: projectRootPath,
@@ -1006,6 +1073,85 @@ final class DashboardModel {
         guard panel.runModal() == .OK, let chosenURL = panel.urls.first else { return }
         guard SelectedScopeBookmarkStore.isSameSelectedPath(chosenURL, as: expectedURL.path) else {
             errorMessage = "Choose the same candidate folder to measure its exact path. No scan was started."
+            return
+        }
+        guard SelectedScopePathProbe.probe(selectedURL: chosenURL).isAvailableDirectory else {
+            errorMessage = NSLocalizedString(
+                "Disker could not confirm this exact path as a directory without following symbolic links. No link or scan was created.",
+                comment: "Rejects inaccessible, non-directory, or symlink project data candidates before saving access"
+            )
+            return
+        }
+        rememberFolders([chosenURL])
+        scan([chosenURL])
+    }
+
+    func measureAndLinkProjectCandidate(at path: String, to projectRootPath: String) {
+        guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
+        let expectedURL = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+        let standardizedRoot = URL(fileURLWithPath: projectRootPath, isDirectory: true).standardizedFileURL.path
+        let latestProjectObservation = history.observations.reversed()
+            .lazy
+            .flatMap(\.folders)
+            .first { URL(fileURLWithPath: $0.path, isDirectory: true).standardizedFileURL.path == standardizedRoot }
+        guard let latestProjectObservation,
+              latestProjectObservation.gitMetadataEntryDetected,
+              DeveloperArtifactReview.make(from: latestProjectObservation).entries.contains(where: {
+                  $0.path == expectedURL.path && $0.category != .sourceControl
+              }) else {
+            errorMessage = NSLocalizedString(
+                "This path is no longer a recognized candidate in the selected Git project. Refresh the project scan and try again.",
+                comment: "The candidate changed or is stale before the user confirms an exact project resource"
+            )
+            return
+        }
+
+        let existingAssociation = history.projectResourceAssociations.first {
+            URL(fileURLWithPath: $0.projectRootPath, isDirectory: true).standardizedFileURL.path == standardizedRoot
+        }
+        if existingAssociation?.relatedFolderPaths.contains(expectedURL.path) != true,
+           (existingAssociation?.relatedFolderPaths.count ?? 0) >= ProjectResourceAssociation.maximumRelatedFolderCount {
+            errorMessage = NSLocalizedString(
+                "This project already has the maximum number of linked locations. Remove an existing link before adding another.",
+                comment: "Project resource association bound reached"
+            )
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.title = NSLocalizedString("Confirm Project Data Candidate", comment: "Exact candidate selection title for project resource measurement")
+        panel.prompt = NSLocalizedString("Measure and Link", comment: "Confirm exact project candidate and measure it")
+        panel.message = NSLocalizedString(
+            "Choose this exact candidate directory. Disker will save your project link and read-only access, then measure only this directory as a separate path.",
+            comment: "Explains exact selected candidate, separate scope, and explicit project relationship"
+        )
+        panel.directoryURL = expectedURL.deletingLastPathComponent()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        guard panel.runModal() == .OK, let chosenURL = panel.urls.first else { return }
+        guard SelectedScopeBookmarkStore.isSameSelectedPath(chosenURL, as: expectedURL.path) else {
+            errorMessage = NSLocalizedString(
+                "Choose the same candidate directory to keep its project link and history exact. No link or scan was created.",
+                comment: "Rejects a different path selected while confirming a project candidate"
+            )
+            return
+        }
+        guard SelectedScopePathProbe.probe(selectedURL: chosenURL).isAvailableDirectory else {
+            errorMessage = NSLocalizedString(
+                "Disker could not confirm this exact path as a directory without following symbolic links. No link or scan was created.",
+                comment: "Rejects inaccessible, non-directory, or symlink project candidate paths"
+            )
+            return
+        }
+
+        do {
+            history = try ObservationStore.associateProjectFolders(
+                [chosenURL.standardizedFileURL.path], with: standardizedRoot
+            )
+        } catch {
+            errorMessage = "The project link could not be saved: \(error.localizedDescription)"
             return
         }
         rememberFolders([chosenURL])
@@ -1785,7 +1931,7 @@ private struct OverviewFileChangeRow: Identifiable {
 }
 
 struct DashboardView: View {
-    @State private var model = DashboardModel()
+    @State private var model: DashboardModel
     @State private var applicationDiscovery = ApplicationDiscoveryModel()
     @State private var selectedSection: String? = "Overview"
     @State private var historyChartRange: ObservationTimeRange = .week
@@ -1801,6 +1947,7 @@ struct DashboardView: View {
     @State private var isSavedApplicationInventoryLoading = false
     @State private var isSavedApplicationHistoryExpanded = false
     @State private var expandedSavedApplicationPaths = Set<String>()
+    @State private var expandedProjectResourceRoots = Set<String>()
     @State private var applicationDiscoveryMeasurementFilter: ApplicationDiscoveryMeasurementFilter = .all
     @State private var applicationDiscoverySort: ApplicationDiscoverySort = .name
     @State private var developerArtifactReviewFolder: FolderObservation?
@@ -1808,17 +1955,25 @@ struct DashboardView: View {
 
     private let suppressSpotlightDiscovery: Bool
     private let expandFirstSavedApplicationForSnapshot: Bool
+    private let includeSnapshotProjectCandidate: Bool
 
     init(
         initialSection: String = "Overview",
         expandSavedApplicationHistory: Bool = false,
         suppressSpotlightDiscovery: Bool = false,
-        expandFirstSavedApplicationForSnapshot: Bool = false
+        expandFirstSavedApplicationForSnapshot: Bool = false,
+        includeSnapshotProjectCandidate: Bool = false
     ) {
+        _model = State(initialValue: DashboardModel(
+            includeSnapshotProjectCandidate: includeSnapshotProjectCandidate
+        ))
         _selectedSection = State(initialValue: initialSection)
         _isSavedApplicationHistoryExpanded = State(initialValue: expandSavedApplicationHistory)
+        _expandedProjectResourceRoots = State(initialValue: includeSnapshotProjectCandidate
+            ? ["/synthetic/QA/DemoProject"] : [])
         self.suppressSpotlightDiscovery = suppressSpotlightDiscovery
         self.expandFirstSavedApplicationForSnapshot = expandFirstSavedApplicationForSnapshot
+        self.includeSnapshotProjectCandidate = includeSnapshotProjectCandidate
     }
 
     private let sections = ["Overview", "Applications", "Folders", "Duplicates", "History", "RAM", "About"]
@@ -1886,7 +2041,7 @@ struct DashboardView: View {
         }
         .sheet(item: $developerArtifactReviewFolder) { folder in
             DeveloperArtifactReviewSheet(folder: folder, history: model.history) { url in
-                model.chooseFolders(startingAt: url)
+                model.measureSelectedCandidate(at: url.path)
             }
             .frame(minWidth: 620, minHeight: 560)
         }
@@ -1894,7 +2049,7 @@ struct DashboardView: View {
             model.setStorageMonitoringAppActive(scenePhase == .active)
             model.setStorageMonitoringSessionOpen(true)
             model.startStorageMonitoringScheduler()
-            model.refreshCapacity()
+            if !includeSnapshotProjectCandidate { model.refreshCapacity() }
             if !suppressSpotlightDiscovery { applicationDiscovery.start() }
             model.updateMemoryPressureMonitoring(
                 enabled: isAutomaticRAMSamplingEnabled, appIsActive: model.isAppActive
@@ -5779,7 +5934,15 @@ struct DashboardView: View {
                         == URL(fileURLWithPath: folder.path, isDirectory: true).standardizedFileURL.path
                 }
                 if includeDetails && (folder.gitMetadataEntryDetected || projectHasSavedLinks) {
-                    projectResourceSection(for: folder)
+                    projectResourceSection(for: folder.path)
+                }
+                if includeDetails {
+                    ForEach(model.projectRootsLinkingResource(folder.path).filter {
+                        URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL.path
+                            != URL(fileURLWithPath: folder.path, isDirectory: true).standardizedFileURL.path
+                    }, id: \.self) { projectRootPath in
+                        projectResourceSection(for: projectRootPath)
+                    }
                 }
 
                 if includeDetails && (!folder.projectDirectorySummaries.isEmpty
@@ -6000,6 +6163,18 @@ struct DashboardView: View {
                                 .help("Confirm this exact candidate folder before a separate metadata-only measurement")
                                 .accessibilityLabel("Measure candidate folder \(directory.rootRelativePath)")
                             }
+                        }
+                        if folder.gitMetadataEntryDetected,
+                           StorageAreaHint.matchingDirectory(relativePath: directory.rootRelativePath) != nil,
+                           let candidatePath = candidatePaths[directory.rootRelativePath] {
+                            Button("Measure and link to project…") {
+                                model.measureAndLinkProjectCandidate(at: candidatePath, to: folder.path)
+                            }
+                            .buttonStyle(.link)
+                            .font(.caption2)
+                            .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
+                            .help("Confirm this exact project data candidate, save your link, and measure it separately")
+                            .accessibilityLabel("Measure and link project candidate \(directory.rootRelativePath)")
                         }
                         if let hint = StorageAreaHint.matchingDirectory(relativePath: directory.rootRelativePath) {
                             Label(hint.title, systemImage: "tag")
@@ -6246,19 +6421,29 @@ struct DashboardView: View {
         }
     }
 
-    private func projectResourceSection(for folder: FolderObservation) -> some View {
-        let review = model.projectResourceReview(for: folder.path)
+    private func projectResourceSection(for projectRootPath: String) -> some View {
+        let review = model.projectResourceReview(for: projectRootPath)
         let growthReview = ProjectResourceGrowthReview.make(for: review, in: model.history)
-        let crossDomainEvidence = model.crossDomainResourceEvidence(for: folder.path)
-        let standardizedRoot = URL(fileURLWithPath: folder.path, isDirectory: true).standardizedFileURL.path
+        let crossDomainEvidence = model.crossDomainResourceEvidence(for: projectRootPath)
+        let standardizedRoot = URL(fileURLWithPath: projectRootPath, isDirectory: true).standardizedFileURL.path
         let projectLinkIDs = Set(crossDomainEvidence.links.filter {
             $0.domain == .project && $0.rootPath == standardizedRoot
         }.flatMap { $0.overlaps.map(\.otherLinkID) })
         let overlappingAppPaths = Array(Set(crossDomainEvidence.links.filter {
             $0.domain == .application && projectLinkIDs.contains($0.id)
         }.map(\.path))).sorted()
-        return DisclosureGroup {
+        return DisclosureGroup(isExpanded: Binding(
+            get: { expandedProjectResourceRoots.contains(standardizedRoot) },
+            set: { isExpanded in
+                if isExpanded { expandedProjectResourceRoots.insert(standardizedRoot) }
+                else { expandedProjectResourceRoots.remove(standardizedRoot) }
+            }
+        )) {
             VStack(alignment: .leading, spacing: 10) {
+                Text("Selected project · \(projectRootPath)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
                 Text("Paths are grouped here because you selected them. A link does not prove ownership or exclusive use. Measurements stay separate; shared storage, hard links, and overlapping paths can make totals misleading.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -6286,10 +6471,10 @@ struct DashboardView: View {
                     projectResourceGrowthSection(growthReview)
                 }
                 ForEach(review.entries) { entry in
-                    projectResourceRow(entry, projectRootPath: folder.path)
+                    projectResourceRow(entry, projectRootPath: projectRootPath)
                 }
                 Button("Link folders and scan…") {
-                    model.chooseProjectResourceFolders(for: folder.path)
+                    model.chooseProjectResourceFolders(for: projectRootPath)
                 }
                 .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
                 .help("Choose exact folders to associate with this selected project root and scan only those folders")
@@ -6432,6 +6617,13 @@ struct DashboardView: View {
                 Text(entry.kind == .selectedProjectRoot ? "Selected project root" : "User-linked location")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                if entry.kind == .userLinkedFolder,
+                   !model.rememberedScopes.contains(where: { $0.path == entry.path }) {
+                    Label("Saved access unavailable · select this exact path again before a later scan", systemImage: "lock.open")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if entry.isSharedLink {
                     Label("Also linked from another selected project", systemImage: "person.2")
                         .font(.caption2)
@@ -7417,12 +7609,12 @@ private struct DeveloperArtifactReviewSheet: View {
                 }
                 .buttonStyle(.borderless)
                 Spacer()
-                Button("Choose this folder to rescan…") {
+                Button("Confirm exact folder to rescan…") {
                     onRescan(URL(fileURLWithPath: entry.path, isDirectory: true))
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .help("Opens the native folder picker. Disker will scan only after you select a folder.")
+                .help("Confirm this exact candidate folder in the native picker. Choosing another path starts no scan.")
             }
         }
         .padding(13)
