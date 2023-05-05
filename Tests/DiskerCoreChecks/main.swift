@@ -4290,6 +4290,10 @@ private struct DiskerCoreChecks {
             (".cache/huggingface/hub/models--researcher/model/snapshots", .modelDataDirectory),
             ("project/model-cache", .modelDataDirectory),
             ("training/datasets", .datasetDirectory),
+            ("project/chroma_db", .databaseDataDirectory),
+            ("project/qdrant", .databaseDataDirectory),
+            ("training/artifacts", .trainingArtifactDirectory),
+            ("training/runs", .trainingArtifactDirectory),
             ("service/logs", .logDirectory),
             ("Library/Developer/Xcode/Archives", .xcodeArchives),
             ("archive/App.xcarchive", .xcodeArchiveBundle),
@@ -4312,6 +4316,10 @@ private struct DiskerCoreChecks {
                    "a directly named development folder should get an independent summary")
         try expect(StorageAreaHint.matchingDirectory(relativePath: "research/checkpoints") == .modelDataDirectory,
                    "a directly named model/checkpoint folder should become a separate candidate")
+        try expect(StorageAreaHint.matchingDirectory(relativePath: "project/chroma_db") == .databaseDataDirectory,
+                   "a directly named database or vector-store folder should become a separate candidate")
+        try expect(StorageAreaHint.matchingDirectory(relativePath: "training/artifacts") == .trainingArtifactDirectory,
+                   "a directly named training-artifact folder should become a separate candidate")
         for path in ["training/weights", "training/embeddings", "models--researcher"] {
             try expect(StorageAreaHint.matchingDirectory(relativePath: path) == .modelDataDirectory,
                        "model weights, embeddings, and Hugging Face repository directories should become separate candidates")
@@ -4341,6 +4349,14 @@ private struct DiskerCoreChecks {
             rootRelativePath: "research/datasets", logicalBytes: 9_000, allocatedBytes: 8_192,
             fileCount: 1, incompleteCount: 1, excludedSymlinkCount: 1, complete: false
         )
+        let database = DirectoryUsage(
+            rootRelativePath: "research/chroma_db", logicalBytes: 12_000, allocatedBytes: 12_288,
+            fileCount: 3, incompleteCount: 0, excludedSymlinkCount: 0, complete: true
+        )
+        let trainingArtifacts = DirectoryUsage(
+            rootRelativePath: "training/artifacts", logicalBytes: 15_000, allocatedBytes: 16_384,
+            fileCount: 4, incompleteCount: 0, excludedSymlinkCount: 0, complete: true
+        )
         let gitMarker = DirectoryUsage(
             rootRelativePath: "source", logicalBytes: 400, allocatedBytes: 512,
             fileCount: 2, incompleteCount: 0, excludedSymlinkCount: 0,
@@ -4364,7 +4380,7 @@ private struct DiskerCoreChecks {
             allocatedBytes: 18_000, fileCount: 12, inaccessibleCount: 1,
             finishedAt: finishedAt, complete: false, gitMetadataEntryDetected: true,
             gitMetadataUsage: directGit,
-            projectDirectorySummaries: [userData, dependencies, gitMarker, build, symbols, traversalPath],
+            projectDirectorySummaries: [userData, database, trainingArtifacts, dependencies, gitMarker, build, symbols, traversalPath],
             projectDirectorySummariesTruncated: true
         )
 
@@ -4373,14 +4389,19 @@ private struct DiskerCoreChecks {
                    "review should retain selected-root and observation provenance")
         try expect(!review.selectedRootComplete && review.candidatesTruncated,
                    "partial root coverage and omitted candidates must remain explicit")
-        try expect(review.entries.map(\.relativePath) == [".git", "Project/.build", "Project/.build/node_modules", "Release/App.dSYM", "research/datasets", "source"],
+        try expect(review.entries.map(\.relativePath) == [".git", "Project/.build", "Project/.build/node_modules", "Release/App.dSYM", "research/chroma_db", "research/datasets", "source", "training/artifacts"],
                    "review rows should be deduplicated and deterministically sorted by exact relative path")
         let byPath = Dictionary(uniqueKeysWithValues: review.entries.map { ($0.relativePath, $0) })
         try expect(byPath["Project/.build"]?.category == .buildProducts
                    && byPath["Project/.build/node_modules"]?.category == .dependencies
                    && byPath["research/datasets"]?.category == .userData
+                   && byPath["research/chroma_db"]?.category == .userData
+                   && byPath["training/artifacts"]?.category == .userData
                    && byPath["Release/App.dSYM"]?.category == .archiveOrSymbols,
                    "similar development candidates should retain distinct risk-relevant categories")
+        try expect(byPath["research/chroma_db"]?.risk.contains("database") == true
+                   && byPath["training/artifacts"]?.possibleConsequence.contains("project") == true,
+                   "database and training outputs should be conservatively presented as potentially important user data")
         try expect(byPath["source"]?.category == .sourceControl && byPath[".git"]?.category == .sourceControl,
                    "nested repository markers and the direct Git footprint should get source-control classification")
         try expect(byPath[".git"]?.logicalBytes == 128 && byPath[".git"]?.allocatedBytesEstimate == 512,

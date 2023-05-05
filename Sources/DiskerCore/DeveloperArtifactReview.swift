@@ -74,7 +74,7 @@ public struct DeveloperArtifactReview: Equatable, Sendable {
             case .dependencies: "Project dependencies"
             case .packageManagerData: "Package manager data"
             case .runtimeAndSimulatorData: "Runtime or simulator data"
-            case .userData: "Model or dataset files"
+            case .userData: "Models, databases, or datasets"
             case .logs: "Logs"
             case .archiveOrSymbols: "Archives or debug symbols"
             case .testOutput: "Test or web output"
@@ -216,7 +216,7 @@ public struct DeveloperArtifactReview: Equatable, Sendable {
             .packageManagerData
         case .simulatorData, .dockerData:
             .runtimeAndSimulatorData
-        case .modelDataDirectory, .datasetDirectory:
+        case .modelDataDirectory, .datasetDirectory, .databaseDataDirectory, .trainingArtifactDirectory:
             .userData
         case .logDirectory:
             .logs
@@ -235,7 +235,7 @@ public struct DeveloperArtifactReview: Equatable, Sendable {
         case .buildProducts: "Medium: often reproducible, but may include state or outputs still needed by a project."
         case .dependencies, .packageManagerData: "Medium: may be reproducible, but can be costly or impossible to restore offline."
         case .runtimeAndSimulatorData: "High: may include machine state, images, or environments used by active tools."
-        case .userData: "High: may be original models, checkpoints, or datasets with no recoverable copy."
+        case .userData: "High: may be original project data, databases, checkpoints, or datasets with no recoverable copy."
         case .logs: "Medium: may be needed for debugging, auditing, or incident investigation."
         case .archiveOrSymbols: "High: archives and symbols may be needed for release, support, or crash analysis."
         case .testOutput: "Low to medium: often regenerable, but current workflows may depend on retained results."
@@ -248,7 +248,7 @@ public struct DeveloperArtifactReview: Equatable, Sendable {
         case .buildProducts: "Removing it could force a rebuild or remove generated artifacts needed by a workflow."
         case .dependencies, .packageManagerData: "Removing it could require downloads or package reconstruction before work can continue."
         case .runtimeAndSimulatorData: "Removing it could reset emulators, containers, or local runtime state."
-        case .userData: "Removing it could permanently lose valuable user or research data."
+        case .userData: "Removing it could permanently lose valuable project or research data."
         case .logs: "Removing it could erase diagnostic evidence."
         case .archiveOrSymbols: "Removing it could prevent re-signing, submission, or symbolication of a release."
         case .testOutput: "Removing it could discard reports or require test and frontend work to run again."

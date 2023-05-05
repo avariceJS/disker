@@ -197,6 +197,15 @@
 "Possible application logs · ID pattern" = "Возможные журналы приложения · шаблон идентификатора";
 "Possible saved state · ID pattern" = "Возможное сохранённое состояние · шаблон идентификатора";
 "Model, weight, embedding, or checkpoint data · name pattern" = "Модели, веса, эмбеддинги или контрольные точки · совпадение имени";
+"Database or vector-store data · name match" = "База данных или векторное хранилище · совпадение имени";
+"Training artifacts · name match" = "Артефакты обучения · совпадение имени";
+"Models, databases, or datasets" = "Модели, базы данных или наборы данных";
+"High: may be original project data, databases, checkpoints, or datasets with no recoverable copy." = "Высокий: здесь могут храниться исходные данные проекта, базы данных, контрольные точки или наборы данных без восстанавливаемой копии.";
+"Removing it could permanently lose valuable project or research data." = "Удаление может привести к безвозвратной потере важных данных проекта или исследования.";
+"No allocated-size change" = "Выделенный размер не изменился";
+"Since previous %@" = "По сравнению с предыдущим замером %@";
+"%@ since %@" = "%@ · предыдущий замер %@";
+"Complete scans: %@ → %@" = "Полные сканирования: %@ → %@";
 "Possible app logs path · name match" = "Возможная папка журналов приложения · совпадение имени";
 "Possible saved app state · name match" = "Возможное сохранённое состояние приложения · совпадение имени";
 "This is the standard path pattern for the supplied bundle ID. Its presence, use, and exclusive ownership have not been checked." = "Это стандартный путь для указанного идентификатора пакета. Наличие, использование и исключительная принадлежность не проверялись.";

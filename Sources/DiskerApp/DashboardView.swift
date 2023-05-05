@@ -5112,7 +5112,7 @@ struct DashboardView: View {
                                let delta = ObservationComparison.allocatedByteDelta(
                                 current: observation, previous: previous
                                ) {
-                                Text("\(changeDescription(delta)) since \(previous.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                                Text(changeDescription(delta, since: previous.finishedAt))
                                     .foregroundStyle(delta >= 0 ? .orange : .green)
                             } else {
                                 Text("First complete measurement")
@@ -5975,7 +5975,7 @@ struct DashboardView: View {
                                         .lineLimit(1)
                                         .truncationMode(.middle)
                                     if let hint = StorageAreaHint.matching(relativePath: directory.rootRelativePath) {
-                                        Label("\(hint.title) · name match", systemImage: hint.symbolName)
+                                        Label(LocalizedStringKey(hint.title), systemImage: hint.symbolName)
                                             .font(.caption2)
                                             .foregroundStyle(.blue)
                                     }
@@ -6177,7 +6177,7 @@ struct DashboardView: View {
                             .accessibilityLabel("Measure and link project candidate \(directory.rootRelativePath)")
                         }
                         if let hint = StorageAreaHint.matchingDirectory(relativePath: directory.rootRelativePath) {
-                            Label(hint.title, systemImage: "tag")
+                            Label(LocalizedStringKey(hint.title), systemImage: "tag")
                                 .font(.caption2)
                                 .foregroundStyle(.blue)
                         }
@@ -6643,7 +6643,7 @@ struct DashboardView: View {
                            let delta = ObservationComparison.allocatedByteDelta(
                             current: observation, previous: previous
                            ) {
-                            Text("\(changeDescription(delta)) since \(previous.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                            Text(changeDescription(delta, since: previous.finishedAt))
                                 .font(.caption2)
                                 .foregroundStyle(delta >= 0 ? .orange : .green)
                         } else {
@@ -7253,7 +7253,21 @@ struct DashboardView: View {
     }
 
     private func changeDescription(_ bytes: Int64) -> String {
-        bytes == 0 ? "No allocated-size change" : "Since previous \(formattedDelta(bytes))"
+        guard bytes != 0 else {
+            return NSLocalizedString("No allocated-size change", comment: "Exact-path allocated estimate did not change")
+        }
+        return String.localizedStringWithFormat(
+            NSLocalizedString("Since previous %@", comment: "Exact-path allocated estimate change since prior complete scan"),
+            formattedDelta(bytes)
+        )
+    }
+
+    private func changeDescription(_ bytes: Int64, since previous: Date) -> String {
+        String.localizedStringWithFormat(
+            NSLocalizedString("%@ since %@", comment: "Exact-path allocated estimate change and prior complete scan time"),
+            changeDescription(bytes),
+            previous.formatted(date: .abbreviated, time: .shortened)
+        )
     }
 
     private func directoryChangeLabel(
@@ -7262,7 +7276,11 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 1) {
             Text(changeDescription(bytes))
                 .foregroundStyle(bytes >= 0 ? .orange : .green)
-            Text("Complete scans: \(previous.finishedAt.formatted(date: .abbreviated, time: .shortened)) → \(current.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+            Text(String.localizedStringWithFormat(
+                NSLocalizedString("Complete scans: %@ → %@", comment: "Time interval for two complete, comparable selected-path scans"),
+                previous.finishedAt.formatted(date: .abbreviated, time: .shortened),
+                current.finishedAt.formatted(date: .abbreviated, time: .shortened)
+            ))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -7476,7 +7494,7 @@ private struct DeveloperArtifactReviewSheet: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text(recommendation.possibleConsequence)
+                        Text(LocalizedStringKey(recommendation.possibleConsequence))
                             .font(.caption2)
                             .fixedSize(horizontal: false, vertical: true)
                         Text("Logical \(format(recommendation.entry.logicalBytes)) · allocated ~\(format(recommendation.entry.allocatedBytesEstimate)) · reclaimable unknown")
@@ -7486,7 +7504,7 @@ private struct DeveloperArtifactReviewSheet: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text(recommendation.risk)
+                        Text(LocalizedStringKey(recommendation.risk))
                             .font(.caption2.weight(.medium))
                             .foregroundStyle(.orange)
                             .fixedSize(horizontal: false, vertical: true)
@@ -7526,12 +7544,12 @@ private struct DeveloperArtifactReviewSheet: View {
                         .textSelection(.enabled)
                         .lineLimit(2)
                         .truncationMode(.middle)
-                    Text(entry.category.title)
+                    Text(LocalizedStringKey(entry.category.title))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 6)
-                Text(entry.risk)
+                Text(LocalizedStringKey(entry.risk))
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(.orange)
                     .multilineTextAlignment(.trailing)
@@ -7552,7 +7570,7 @@ private struct DeveloperArtifactReviewSheet: View {
             Text(entry.evidence)
                 .font(.caption)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(entry.possibleConsequence)
+            Text(LocalizedStringKey(entry.possibleConsequence))
                 .font(.caption)
                 .fixedSize(horizontal: false, vertical: true)
             Text(entry.caution)

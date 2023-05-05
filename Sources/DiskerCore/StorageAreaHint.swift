@@ -19,6 +19,8 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
     case dockerData
     case modelDataDirectory
     case datasetDirectory
+    case databaseDataDirectory
+    case trainingArtifactDirectory
     case logDirectory
     case xcodeArchives
     case xcodeArchiveBundle
@@ -47,6 +49,8 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
         case .dockerData: "Docker data · name match"
         case .modelDataDirectory: "Model, weight, embedding, or checkpoint data · name pattern"
         case .datasetDirectory: "Dataset directory · name match"
+        case .databaseDataDirectory: "Database or vector-store data · name match"
+        case .trainingArtifactDirectory: "Training artifacts · name match"
         case .logDirectory: "Log directory · name match"
         case .xcodeArchives: "Xcode archives directory · name match"
         case .xcodeArchiveBundle: "Xcode archive bundle · name match"
@@ -64,8 +68,8 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
         case .pythonEnvironment, .pythonBytecode: "curlybraces"
         case .gradleData, .mavenData, .cargoData, .buildOutputCandidate: "hammer"
         case .cocoaPodsDependencies, .carthageDependencies: "shippingbox"
-        case .simulatorData, .dockerData, .modelDataDirectory, .datasetDirectory, .xcodeArchives,
-             .xcodeArchiveBundle: "externaldrive"
+        case .simulatorData, .dockerData, .modelDataDirectory, .datasetDirectory, .databaseDataDirectory,
+             .trainingArtifactDirectory, .xcodeArchives, .xcodeArchiveBundle: "externaldrive"
         case .logDirectory: "doc.text"
         case .debugSymbols: "hammer"
         case .webBuildOutput, .testCoverageOutput: "hammer"
@@ -99,6 +103,11 @@ public enum StorageAreaHint: String, CaseIterable, Sendable {
                 return .modelDataDirectory
             case let component where component.hasPrefix("models--"): return .modelDataDirectory
             case "datasets", "dataset": return .datasetDirectory
+            case "database", "databases", "db", "sqlite", "chroma", "chroma_db", "lancedb",
+                 "qdrant", "weaviate", "milvus", "postgres", "mongodb":
+                return .databaseDataDirectory
+            case "artifacts", "training-artifacts", "training_artifacts", "runs":
+                return .trainingArtifactDirectory
             case "logs": return .logDirectory
             case "Archives": return .xcodeArchives
             case let component where component.hasSuffix(".xcarchive"): return .xcodeArchiveBundle
