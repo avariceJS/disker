@@ -1,5 +1,6 @@
 #if DEBUG
 import AppKit
+import DiskerCore
 import SwiftUI
 
 struct DiskerSnapshotRequest {
@@ -10,6 +11,8 @@ struct DiskerSnapshotRequest {
     let appearanceName: NSAppearance.Name?
     let suppressSpotlightDiscovery: Bool
     let includeProjectCandidate: Bool
+    let includeDatabaseSidecarReview: Bool
+    let usePartialDatabaseSidecarFixture: Bool
 
     static func from(arguments: [String]) -> DiskerSnapshotRequest? {
         guard let outputIndex = arguments.firstIndex(of: "--snapshot-output"),
@@ -20,6 +23,8 @@ struct DiskerSnapshotRequest {
         let section = sectionIndex.flatMap { arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil }
             ?? "Overview"
         let includeProjectCandidate = arguments.contains("--snapshot-project-candidate")
+        let includeDatabaseSidecarReview = arguments.contains("--snapshot-database-sidecars")
+        let usePartialDatabaseSidecarFixture = arguments.contains("--snapshot-database-sidecars-partial")
         let appearance = appearanceIndex.flatMap { arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil }
         let appearanceName: NSAppearance.Name?
         switch appearance?.lowercased() {
@@ -31,10 +36,12 @@ struct DiskerSnapshotRequest {
             outputURL: URL(fileURLWithPath: arguments[outputIndex + 1]),
             section: section,
             width: 1_280,
-            height: includeProjectCandidate ? 1_200 : 900,
+            height: includeProjectCandidate ? 1_200 : includeDatabaseSidecarReview ? 540 : 900,
             appearanceName: appearanceName,
             suppressSpotlightDiscovery: suppressSpotlightDiscovery,
-            includeProjectCandidate: includeProjectCandidate
+            includeProjectCandidate: includeProjectCandidate,
+            includeDatabaseSidecarReview: includeDatabaseSidecarReview || usePartialDatabaseSidecarFixture,
+            usePartialDatabaseSidecarFixture: usePartialDatabaseSidecarFixture
         )
     }
 }
@@ -43,13 +50,20 @@ struct DiskerSnapshotHost: View {
     let request: DiskerSnapshotRequest
 
     var body: some View {
-        DashboardView(
-            initialSection: request.section,
-            expandSavedApplicationHistory: true,
-            suppressSpotlightDiscovery: request.suppressSpotlightDiscovery,
-            expandFirstSavedApplicationForSnapshot: true,
-            includeSnapshotProjectCandidate: request.includeProjectCandidate
-        )
+        Group {
+            if request.includeDatabaseSidecarReview {
+                let fixture = databaseSidecarReviewFixture(partial: request.usePartialDatabaseSidecarFixture)
+                DatabaseSidecarReviewSheet(folder: fixture.folder, initialReview: fixture.review)
+            } else {
+                DashboardView(
+                    initialSection: request.section,
+                    expandSavedApplicationHistory: true,
+                    suppressSpotlightDiscovery: request.suppressSpotlightDiscovery,
+                    expandFirstSavedApplicationForSnapshot: true,
+                    includeSnapshotProjectCandidate: request.includeProjectCandidate
+                )
+            }
+        }
         .frame(width: request.width, height: request.height)
         .task {
             do {
@@ -59,6 +73,44 @@ struct DiskerSnapshotHost: View {
             }
             captureWhenReady(attempt: 0)
         }
+    }
+
+    private func databaseSidecarReviewFixture(partial: Bool) -> (folder: FolderObservation, review: DatabaseSidecarReview) {
+        let observedAt = Date()
+        let observationID = UUID(uuidString: "BBE6BA6B-0E1B-4B5F-91D8-846782F0779B")!
+        let folder = FolderObservation(
+            id: observationID,
+            path: "/synthetic/QA/SQLiteProject",
+            volumeDeviceID: 42,
+            displayName: "SQLiteProject",
+            logicalBytes: partial ? 13_107_200 : 96_894_976,
+            allocatedBytes: partial ? 13_107_200 : 93_110_272,
+            fileCount: partial ? 2 : 8,
+            inaccessibleCount: 0,
+            finishedAt: observedAt,
+            complete: !partial,
+            excludedSymlinkCount: 1
+        )
+        let completeEntries = [
+            FileInventoryEntry(relativePath: "data/events.sqlite", logicalBytes: 2_097_152, allocatedBytes: 1_900_544),
+            FileInventoryEntry(relativePath: "data/events.sqlite-shm", logicalBytes: 32_768, allocatedBytes: 32_768),
+            FileInventoryEntry(relativePath: "data/events.sqlite-wal", logicalBytes: 524_288, allocatedBytes: 516_096),
+            FileInventoryEntry(relativePath: "data/orphan.sqlite3-wal", logicalBytes: 12_582_912, allocatedBytes: 12_582_912),
+            FileInventoryEntry(relativePath: "runs/training.sqlite3", logicalBytes: 81_788_928, allocatedBytes: 78_643_200),
+        ]
+        let entries = partial
+            ? completeEntries.filter { $0.relativePath.hasSuffix("-wal") }
+            : completeEntries
+        let snapshot = FileInventorySnapshot(
+            rootPath: folder.path,
+            folderObservationID: observationID,
+            volumeDeviceID: folder.volumeDeviceID,
+            observedAt: observedAt,
+            entries: entries,
+            complete: !partial,
+            excludedSymlinkCount: 1
+        )
+        return (folder, DatabaseSidecarReview.make(from: snapshot))
     }
 
     @MainActor

@@ -221,6 +221,54 @@ public enum FileInventoryStore {
         }
     }
 
+    private struct TargetSnapshot: Decodable {
+        private enum CodingKeys: String, CodingKey {
+            case snapshotFormatVersion
+            case snapshots
+        }
+
+        private struct RootKey: CodingKey {
+            let stringValue: String
+            var intValue: Int? { nil }
+
+            init?(stringValue: String) { self.stringValue = stringValue }
+            init?(intValue: Int) { return nil }
+        }
+
+        let snapshot: FileInventorySnapshot?
+
+        init(from decoder: Decoder) throws {
+            guard let rootPath = decoder.userInfo[Self.requestedRootPath] as? String,
+                  let rootKey = RootKey(stringValue: rootPath) else {
+                throw DecodingError.dataCorrupted(
+                    .init(codingPath: decoder.codingPath, debugDescription: "A selected inventory path was not provided.")
+                )
+            }
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let version = try container.decodeIfPresent(Int.self, forKey: .snapshotFormatVersion) ?? 1
+            guard version == 1 || version == 2 else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .snapshotFormatVersion, in: container,
+                    debugDescription: "Unsupported file-inventory snapshot format."
+                )
+            }
+            guard container.contains(.snapshots) else {
+                snapshot = nil
+                return
+            }
+            let snapshots = try container.nestedContainer(keyedBy: RootKey.self, forKey: .snapshots)
+            if version == 1 {
+                snapshot = try snapshots.decodeIfPresent(FileInventorySnapshot.self, forKey: rootKey)
+            } else if let stored = try snapshots.decodeIfPresent(StoredSnapshot.self, forKey: rootKey) {
+                snapshot = try stored.materialize()
+            } else {
+                snapshot = nil
+            }
+        }
+
+        static let requestedRootPath = CodingUserInfoKey(rawValue: "Disker.FileInventoryStore.RequestedRootPath")!
+    }
+
     private struct DashboardState: Decodable {
         let reports: [String: FileInventoryChangeSet]
         let trendPoints: [String: [FileInventoryTrendPoint]]?
@@ -281,6 +329,30 @@ public enum FileInventoryStore {
 
     public static func loadTrends(at fileURL: URL? = nil) throws -> [String: [FileInventoryTrendPoint]] {
         try loadDashboardHistory(at: fileURL).trendPoints
+    }
+
+    /// Loads one packed selected-root inventory for an explicit detail action.
+    /// Other roots' entry payloads remain packed; this must not run from a
+    /// SwiftUI body or another latency-sensitive render path.
+    public static func loadSnapshot(
+        for rootPath: String,
+        matchingObservationID: UUID? = nil,
+        at fileURL: URL? = nil
+    ) throws -> FileInventorySnapshot? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard rootPath.hasPrefix("/"), !rootPath.utf8.contains(0) else { return nil }
+        let url = try resolvedURL(fileURL)
+        guard let data = try LocalStoreFile.read(at: url, maximumBytes: maximumFileSize) else { return nil }
+        let decoder = PropertyListDecoder()
+        decoder.userInfo[TargetSnapshot.requestedRootPath] = rootPath
+        let target: TargetSnapshot
+        do { target = try decoder.decode(TargetSnapshot.self, from: data) }
+        catch { throw HistoryDecodeError.invalidHistory(error.localizedDescription) }
+        guard let snapshot = target.snapshot else { return nil }
+        guard snapshot.rootPath == rootPath, snapshot.complete,
+              matchingObservationID.map({ snapshot.folderObservationID == $0 }) ?? true else { return nil }
+        return snapshot
     }
 
     public static func clear(at fileURL: URL? = nil) throws {

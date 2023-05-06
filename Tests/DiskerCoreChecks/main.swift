@@ -94,6 +94,7 @@ private struct DiskerCoreChecks {
             ("developer artifact review exposes exact candidate history", testDeveloperArtifactHistory),
             ("read-only developer artifact investigation recommendations", testDeveloperArtifactRecommendations),
             ("cautious file artifact hints", testFileArtifactHints),
+            ("SQLite database sidecar relationships stay exact and separate", testDatabaseSidecarReview),
             ("Git metadata marker detection", testGitMetadataMarkerDetection),
             ("Git metadata footprint survives summary cap", testGitMetadataUsageSurvivesSummaryCap),
             ("selected symlink root is incomplete", testSelectedSymlinkRootIsIncomplete),
@@ -4785,6 +4786,135 @@ private struct DiskerCoreChecks {
         }
         try expect(FileArtifactHint.matching(extensionName: "unknown") == nil,
                    "unknown file extensions must remain unclassified")
+    }
+
+    private static func testDatabaseSidecarReview() throws {
+        let observationID = UUID()
+        let snapshot = FileInventorySnapshot(
+            rootPath: "/synthetic/project",
+            folderObservationID: observationID,
+            volumeDeviceID: 12,
+            observedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            entries: [
+                FileInventoryEntry(relativePath: "data/events.sqlite", logicalBytes: 100, allocatedBytes: 80),
+                FileInventoryEntry(relativePath: "data/events.sqlite-wal", logicalBytes: 30, allocatedBytes: 24),
+                FileInventoryEntry(relativePath: "data/events.sqlite-shm", logicalBytes: 10, allocatedBytes: 8),
+                FileInventoryEntry(relativePath: "data/events.sqlite-journal", logicalBytes: 5, allocatedBytes: 4),
+                FileInventoryEntry(relativePath: "data/other.db", logicalBytes: 40, allocatedBytes: 32),
+                FileInventoryEntry(relativePath: "data/unpaired.sqlite3-wal", logicalBytes: 7, allocatedBytes: 4),
+                FileInventoryEntry(relativePath: "elsewhere/events.sqlite-wal", logicalBytes: 9, allocatedBytes: 8),
+                FileInventoryEntry(relativePath: "notes.txt", logicalBytes: 15, allocatedBytes: 12),
+            ].sorted { $0.relativePath < $1.relativePath },
+            complete: true,
+            excludedSymlinkCount: 2
+        )
+        let review = DatabaseSidecarReview.make(from: snapshot)
+        try expect(review.inventoryComplete && review.excludedSymlinkCount == 2,
+                   "review should retain complete-scan and excluded-symlink boundaries")
+        try expect(review.groups.count == 1
+                       && review.groups[0].database.relativePath == "data/events.sqlite"
+                       && review.groups[0].sidecars.map(\.relativePath)
+                           == ["data/events.sqlite-wal", "data/events.sqlite-shm", "data/events.sqlite-journal"],
+                   "only exact same-path SQLite sidecars should relate to the database")
+        try expect(review.groups[0].database.logicalBytes == 100
+                       && review.groups[0].sidecars.reduce(0, { $0 + $1.logicalBytes }) == 45,
+                   "database and sidecar metrics must remain independently measurable")
+        try expect(review.unpairedSidecars.map(\.relativePath)
+                       == ["data/unpaired.sqlite3-wal", "elsewhere/events.sqlite-wal"],
+                   "unpaired sidecar names should remain distinct and scoped by their exact relative paths")
+        let unsafeReview = DatabaseSidecarReview.make(from: FileInventorySnapshot(
+            rootPath: snapshot.rootPath,
+            folderObservationID: observationID,
+            volumeDeviceID: snapshot.volumeDeviceID,
+            observedAt: snapshot.observedAt,
+            entries: [FileInventoryEntry(relativePath: "../outside.sqlite", logicalBytes: 9_000, allocatedBytes: 9_000)],
+            complete: true,
+            excludedSymlinkCount: 0
+        ))
+        try expect(unsafeReview.groups.isEmpty && unsafeReview.unpairedSidecars.isEmpty,
+                   "unsafe relative paths must never enter a database relationship")
+
+        let partial = FileInventorySnapshot(
+            rootPath: snapshot.rootPath,
+            folderObservationID: observationID,
+            volumeDeviceID: snapshot.volumeDeviceID,
+            observedAt: snapshot.observedAt,
+            entries: [FileInventoryEntry(relativePath: "data/events.sqlite-wal", logicalBytes: 30, allocatedBytes: 24)],
+            complete: false,
+            excludedSymlinkCount: 1
+        )
+        let partialReview = DatabaseSidecarReview.make(from: partial)
+        try expect(!partialReview.inventoryComplete && partialReview.groups.isEmpty
+                       && partialReview.unpairedSidecars.count == 1,
+                   "partial inventory may expose an observed sidecar but must not imply its database is absent")
+
+        let manyEntries = (0..<(DatabaseSidecarReview.maximumGroups + 1)).flatMap { index in
+            let databasePath = "db/\(index).sqlite"
+            return [
+                FileInventoryEntry(relativePath: databasePath, logicalBytes: 1, allocatedBytes: 1),
+                FileInventoryEntry(relativePath: databasePath + "-wal", logicalBytes: 1, allocatedBytes: 1),
+            ]
+        }
+        let bounded = DatabaseSidecarReview.make(from: FileInventorySnapshot(
+            rootPath: snapshot.rootPath,
+            folderObservationID: observationID,
+            volumeDeviceID: snapshot.volumeDeviceID,
+            observedAt: snapshot.observedAt,
+            entries: manyEntries,
+            complete: true,
+            excludedSymlinkCount: 0
+        ))
+        try expect(bounded.groups.count == DatabaseSidecarReview.maximumGroups
+                       && bounded.omittedGroupCount == 1,
+                   "large projects should receive a bounded review with an explicit omitted count")
+
+        try withTemporaryDirectory { directory in
+            let storeURL = directory.appendingPathComponent("file-inventory.plist")
+            let recorded = try FileInventoryStore.record(snapshot, at: storeURL)
+            try expect(recorded != nil,
+                       "a complete selected inventory should be stored before targeted review")
+            let restored = try FileInventoryStore.loadSnapshot(
+                for: snapshot.rootPath, matchingObservationID: observationID, at: storeURL
+            )
+            try expect(restored == snapshot,
+                       "targeted loading should restore only the requested complete observation")
+            let stale = try FileInventoryStore.loadSnapshot(
+                for: snapshot.rootPath, matchingObservationID: UUID(), at: storeURL
+            )
+            try expect(stale == nil, "stale detail requests must not show an older inventory as current")
+
+            let otherRoot = FileInventorySnapshot(
+                rootPath: "/synthetic/unrelated",
+                folderObservationID: UUID(),
+                volumeDeviceID: 22,
+                observedAt: snapshot.observedAt.addingTimeInterval(1),
+                entries: [FileInventoryEntry(relativePath: "other.sqlite", logicalBytes: 1, allocatedBytes: 1)],
+                complete: true,
+                excludedSymlinkCount: 0
+            )
+            _ = try FileInventoryStore.record(otherRoot, at: storeURL)
+            let savedData = try Data(contentsOf: storeURL)
+            var propertyList = try PropertyListSerialization.propertyList(
+                from: savedData, options: .mutableContainersAndLeaves, format: nil
+            ) as? [String: Any]
+            var snapshots = propertyList?["snapshots"] as? [String: Any]
+            var unrelated = snapshots?[otherRoot.rootPath] as? [String: Any]
+            unrelated?["entryPayload"] = Data([0xFF])
+            snapshots?[otherRoot.rootPath] = unrelated
+            propertyList?["snapshots"] = snapshots
+            guard let damagedStore = propertyList else {
+                throw CheckFailure.assertion("the synthetic packed store should be a property list dictionary")
+            }
+            let damagedData = try PropertyListSerialization.data(
+                fromPropertyList: damagedStore, format: .binary, options: 0
+            )
+            try damagedData.write(to: storeURL, options: .atomic)
+            let scopedRestore = try FileInventoryStore.loadSnapshot(
+                for: snapshot.rootPath, matchingObservationID: observationID, at: storeURL
+            )
+            try expect(scopedRestore == snapshot,
+                       "a detail read should decode only the requested packed root, not expand unrelated manifests")
+        }
     }
 
     private static func testGitMetadataMarkerDetection() throws {

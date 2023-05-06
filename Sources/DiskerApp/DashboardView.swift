@@ -1951,6 +1951,7 @@ struct DashboardView: View {
     @State private var applicationDiscoveryMeasurementFilter: ApplicationDiscoveryMeasurementFilter = .all
     @State private var applicationDiscoverySort: ApplicationDiscoverySort = .name
     @State private var developerArtifactReviewFolder: FolderObservation?
+    @State private var databaseSidecarReviewFolder: FolderObservation?
     @Environment(\.scenePhase) private var scenePhase
 
     private let suppressSpotlightDiscovery: Bool
@@ -2044,6 +2045,10 @@ struct DashboardView: View {
                 model.measureSelectedCandidate(at: url.path)
             }
             .frame(minWidth: 620, minHeight: 560)
+        }
+        .sheet(item: $databaseSidecarReviewFolder) { folder in
+            DatabaseSidecarReviewSheet(folder: folder)
+                .frame(minWidth: 620, minHeight: 500)
         }
         .onAppear {
             model.setStorageMonitoringAppActive(scenePhase == .active)
@@ -6245,6 +6250,17 @@ struct DashboardView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if folder.complete,
+               model.fileInventoryReports[folder.path]?.folderObservationID == folder.id {
+                Button {
+                    databaseSidecarReviewFolder = folder
+                } label: {
+                    Label("Review SQLite sidecar names…", systemImage: "externaldrive")
+                }
+                .buttonStyle(.link)
+                .help("Inspect exact database and SQLite sidecar filename relationships from this complete selected-folder inventory.")
+                .accessibilityHint("Opens a read-only local review. File contents are not read and sizes are not combined.")
+            }
             fileInventoryChangeSection(for: folder)
             newlyObservedLargeFileSection(for: folder, scanCancelled: scanCancelled)
             largeFileModificationSection(for: folder, scanCancelled: scanCancelled)
@@ -8197,6 +8213,224 @@ private struct ApplicationFootprintReviewSheet: View {
         return reasons.isEmpty
             ? NSLocalizedString("some data may be unmeasured", comment: "No precise partial-coverage reason is available")
             : reasons.joined(separator: " · ")
+    }
+
+    private func format(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+}
+
+struct DatabaseSidecarReviewSheet: View {
+    let folder: FolderObservation
+    let initialReview: DatabaseSidecarReview?
+
+    @State private var review: DatabaseSidecarReview?
+    @State private var isLoading = true
+    @State private var loadFailed = false
+
+    init(folder: FolderObservation, initialReview: DatabaseSidecarReview? = nil) {
+        self.folder = folder
+        self.initialReview = initialReview
+        _review = State(initialValue: initialReview)
+        _isLoading = State(initialValue: initialReview == nil)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "externaldrive")
+                        .font(.title2)
+                        .foregroundStyle(.blue)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("SQLite files in selected folder")
+                            .font(.title3.weight(.semibold))
+                        Text(folder.path)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                    }
+                    Spacer(minLength: 0)
+                    if let review {
+                        SWStatusBadge(
+                            text: review.inventoryComplete ? "Complete inventory" : "Partial inventory",
+                            style: review.inventoryComplete ? .success : .warning
+                        )
+                    }
+                }
+
+                Text("Related names are based on exact paths such as database.sqlite and database.sqlite-wal. Disker does not open database files, verify their contents, determine ownership, or add their sizes together.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if isLoading {
+                    ProgressView("Loading the saved file inventory…")
+                        .frame(maxWidth: .infinity, minHeight: 120)
+                } else if loadFailed {
+                    Label("The saved file inventory could not be read. Scan this selected folder again to refresh it.", systemImage: "exclamationmark.triangle")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                } else if let review {
+                    if review.groups.isEmpty && review.unpairedSidecars.isEmpty {
+                        ContentUnavailableView(
+                            review.inventoryComplete ? "No SQLite Sidecar Names Found" : "No SQLite Pair Observed",
+                            systemImage: "doc.text.magnifyingglass",
+                            description: Text(review.inventoryComplete
+                                ? "No exact database and SQLite sidecar filename relationships were observed in this selected regular-file inventory."
+                                : "No exact database and SQLite sidecar pair was observed among measured files. Unmeasured files may contain a match.")
+                        )
+                    } else {
+                        if !review.groups.isEmpty {
+                            VStack(alignment: .leading, spacing: 9) {
+                                Label("Matching database and sidecar names", systemImage: "link")
+                                    .font(.headline)
+                                ForEach(review.groups) { group in
+                                    databaseGroup(group)
+                                }
+                                if review.omittedGroupCount > 0 {
+                                    Text(String.localizedStringWithFormat(
+                                        NSLocalizedString("Showing %ld groups; %ld additional matching groups were omitted from this bounded review.", comment: "Bounded SQLite relationship review group count"),
+                                        Int32(review.groups.count), Int32(review.omittedGroupCount)
+                                    ))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        if !review.unpairedSidecars.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Label(
+                                    review.inventoryComplete
+                                        ? "Sidecar-name candidates without a matching database path"
+                                        : "Observed sidecar-name candidates",
+                                    systemImage: "questionmark.folder"
+                                )
+                                    .font(.headline)
+                                Text(review.inventoryComplete
+                                    ? "A same-name database path was not found in this selected regular-file inventory. This does not establish that the sidecar is orphaned or unused."
+                                    : "This inventory is partial; a matching database may be among unmeasured files. No absence, orphan, or unused conclusion can be made.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                ForEach(review.unpairedSidecars, id: \.relativePath) { entry in
+                                    inventoryRow(
+                                        entry,
+                                        relationshipLabel: review.inventoryComplete ? "No matching path" : "Matching path unknown"
+                                    )
+                                }
+                                if review.omittedUnpairedSidecarCount > 0 {
+                                    Text(String.localizedStringWithFormat(
+                                        NSLocalizedString("%ld additional sidecar-name candidates were omitted from this bounded review.", comment: "Bounded SQLite sidecar candidate count"),
+                                        Int32(review.omittedUnpairedSidecarCount)
+                                    ))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+
+                    if review.excludedSymlinkCount > 0 {
+                        Label(String.localizedStringWithFormat(
+                            NSLocalizedString("%ld symlink entries were excluded; their targets were not followed.", comment: "Symlink boundary in SQLite sidecar review"),
+                            Int32(review.excludedSymlinkCount)
+                        ), systemImage: "arrow.turn.up.right")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !review.inventoryComplete {
+                        Text("Only measured regular files are shown; unmeasured paths remain unknown.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                    Text(String.localizedStringWithFormat(
+                        NSLocalizedString("Measured %@. Each logical size and allocated-byte estimate belongs to its own path; allocation is not reclaimable space.", comment: "Observation date and byte-measurement meaning for the SQLite detail review"),
+                        review.observedAt.formatted(date: .abbreviated, time: .shortened)
+                    ))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack {
+                    Spacer()
+                    Button("Done") { dismiss() }
+                        .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+        .task(id: folder.id) {
+            guard initialReview == nil else {
+                isLoading = false
+                return
+            }
+            isLoading = true
+            loadFailed = false
+            review = nil
+            let path = folder.path
+            let observationID = folder.id
+            let loadTask = Task.detached(priority: .utility) {
+                try FileInventoryStore.loadSnapshot(
+                    for: path,
+                    matchingObservationID: observationID
+                )
+            }
+            do {
+                guard let snapshot = try await loadTask.value else {
+                    loadFailed = true
+                    isLoading = false
+                    return
+                }
+                review = DatabaseSidecarReview.make(from: snapshot)
+            } catch {
+                loadFailed = true
+            }
+            isLoading = false
+        }
+    }
+
+    @Environment(\.dismiss) private var dismiss
+
+    @ViewBuilder
+    private func databaseGroup(_ group: DatabaseSidecarReview.Group) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            inventoryRow(group.database, relationshipLabel: "Database filename")
+            ForEach(group.sidecars, id: \.relativePath) { entry in
+                inventoryRow(entry, relationshipLabel: "Exact sidecar-name match")
+                    .padding(.leading, 16)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.background, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
+    }
+
+    private func inventoryRow(_ entry: FileInventoryEntry, relationshipLabel: LocalizedStringKey) -> some View {
+        HStack(alignment: .top, spacing: 9) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(entry.relativePath)
+                    .font(.caption.monospaced().weight(.medium))
+                    .textSelection(.enabled)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                Text("Logical \(format(entry.logicalBytes)) · allocated ~\(format(entry.allocatedBytes))")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            SWStatusBadge(text: relationshipLabel, style: .info)
+        }
     }
 
     private func format(_ bytes: Int64) -> String {
