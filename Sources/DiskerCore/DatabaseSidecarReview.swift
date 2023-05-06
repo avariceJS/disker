@@ -13,6 +13,11 @@ public struct DatabaseSidecarReview: Equatable, Sendable {
     public let unpairedSidecars: [FileInventoryEntry]
     public let omittedGroupCount: Int
     public let omittedUnpairedSidecarCount: Int
+    /// Changes from a same-root, same-volume report matching this exact complete observation.
+    public let fileChangesByPath: [String: FileInventoryChange]
+    public let previousFileInventoryObservationAt: Date?
+    /// Nil when no comparable baseline report is available.
+    public let omittedFileChangeCount: Int?
 
     public struct Group: Equatable, Identifiable, Sendable {
         public let database: FileInventoryEntry
@@ -23,7 +28,10 @@ public struct DatabaseSidecarReview: Equatable, Sendable {
     public static let maximumGroups = 200
     public static let maximumUnpairedSidecars = 200
 
-    public static func make(from snapshot: FileInventorySnapshot) -> Self {
+    public static func make(
+        from snapshot: FileInventorySnapshot,
+        fileChangeReport: FileInventoryChangeSet? = nil
+    ) -> Self {
         let entriesByPath = Dictionary(
             snapshot.entries.map { ($0.relativePath, $0) },
             uniquingKeysWith: { first, _ in first }
@@ -49,6 +57,27 @@ public struct DatabaseSidecarReview: Equatable, Sendable {
             .filter { isSidecarPath($0.relativePath) && !pairedSidecarPaths.contains($0.relativePath) }
             .sorted { $0.relativePath < $1.relativePath }
 
+        let comparableReport = fileChangeReport.flatMap { report -> FileInventoryChangeSet? in
+            guard snapshot.complete,
+                  let currentVolumeID = snapshot.volumeDeviceID,
+                  report.rootPath == snapshot.rootPath,
+                  report.folderObservationID == snapshot.folderObservationID,
+                  report.volumeDeviceID == currentVolumeID,
+                  report.observedAt == snapshot.observedAt,
+                  report.hasBaseline,
+                  let previousObservedAt = report.previousObservedAt,
+                  previousObservedAt < report.observedAt,
+                  report.changedPathCount >= report.changes.count,
+                  report.omittedChangeCount == report.changedPathCount - report.changes.count,
+                  Set(report.changes.map(\.relativePath)).count == report.changes.count else { return nil }
+            return report
+        }
+        let fileChangesByPath = Dictionary(
+            (comparableReport?.changes ?? []).filter { entriesByPath[$0.relativePath] != nil }
+                .map { ($0.relativePath, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
         return Self(
             rootPath: snapshot.rootPath,
             folderObservationID: snapshot.folderObservationID,
@@ -58,7 +87,10 @@ public struct DatabaseSidecarReview: Equatable, Sendable {
             groups: Array(groups.prefix(maximumGroups)),
             unpairedSidecars: Array(unpairedSidecars.prefix(maximumUnpairedSidecars)),
             omittedGroupCount: max(0, groups.count - maximumGroups),
-            omittedUnpairedSidecarCount: max(0, unpairedSidecars.count - maximumUnpairedSidecars)
+            omittedUnpairedSidecarCount: max(0, unpairedSidecars.count - maximumUnpairedSidecars),
+            fileChangesByPath: fileChangesByPath,
+            previousFileInventoryObservationAt: comparableReport?.previousObservedAt,
+            omittedFileChangeCount: comparableReport?.omittedChangeCount
         )
     }
 

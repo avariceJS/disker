@@ -94,7 +94,7 @@ private struct DiskerCoreChecks {
             ("developer artifact review exposes exact candidate history", testDeveloperArtifactHistory),
             ("read-only developer artifact investigation recommendations", testDeveloperArtifactRecommendations),
             ("cautious file artifact hints", testFileArtifactHints),
-            ("SQLite database sidecar relationships stay exact and separate", testDatabaseSidecarReview),
+            ("SQLite sidecar links and growth require exact evidence", testDatabaseSidecarReview),
             ("Git metadata marker detection", testGitMetadataMarkerDetection),
             ("Git metadata footprint survives summary cap", testGitMetadataUsageSurvivesSummaryCap),
             ("selected symlink root is incomplete", testSelectedSymlinkRootIsIncomplete),
@@ -4822,6 +4822,110 @@ private struct DiskerCoreChecks {
         try expect(review.unpairedSidecars.map(\.relativePath)
                        == ["data/unpaired.sqlite3-wal", "elsewhere/events.sqlite-wal"],
                    "unpaired sidecar names should remain distinct and scoped by their exact relative paths")
+
+        let previousInventoryAt = snapshot.observedAt.addingTimeInterval(-300)
+        let walChange = FileInventoryChange(
+            relativePath: "data/events.sqlite-wal", kind: .resized,
+            logicalDelta: 8, allocatedDelta: 8, logicalBytes: 38, allocatedBytes: 32
+        )
+        let exactChangeReport = FileInventoryChangeSet(
+            rootPath: snapshot.rootPath, folderObservationID: observationID,
+            previousObservedAt: previousInventoryAt, observedAt: snapshot.observedAt,
+            volumeDeviceID: snapshot.volumeDeviceID,
+            changes: [walChange], changedPathCount: 1, omittedChangeCount: 0,
+            netLogicalDelta: 8, netAllocatedDelta: 8, symlinkExcludedCount: 2, hasBaseline: true
+        )
+        let reviewWithGrowth = DatabaseSidecarReview.make(
+            from: snapshot, fileChangeReport: exactChangeReport
+        )
+        try expect(reviewWithGrowth.fileChangesByPath[walChange.relativePath] == walChange
+                       && reviewWithGrowth.previousFileInventoryObservationAt == previousInventoryAt
+                       && reviewWithGrowth.omittedFileChangeCount == 0,
+                   "an exact complete report should expose the retained current sidecar delta and baseline date")
+
+        let reportVariants: [FileInventoryChangeSet] = [
+            FileInventoryChangeSet(
+                rootPath: "/synthetic/other", folderObservationID: observationID,
+                previousObservedAt: previousInventoryAt, observedAt: snapshot.observedAt,
+                volumeDeviceID: snapshot.volumeDeviceID, changes: [walChange], changedPathCount: 1,
+                omittedChangeCount: 0, netLogicalDelta: 8, netAllocatedDelta: 8,
+                symlinkExcludedCount: 0, hasBaseline: true
+            ),
+            FileInventoryChangeSet(
+                rootPath: snapshot.rootPath, folderObservationID: UUID(),
+                previousObservedAt: previousInventoryAt, observedAt: snapshot.observedAt,
+                volumeDeviceID: snapshot.volumeDeviceID, changes: [walChange], changedPathCount: 1,
+                omittedChangeCount: 0, netLogicalDelta: 8, netAllocatedDelta: 8,
+                symlinkExcludedCount: 0, hasBaseline: true
+            ),
+            FileInventoryChangeSet(
+                rootPath: snapshot.rootPath, folderObservationID: observationID,
+                previousObservedAt: previousInventoryAt, observedAt: snapshot.observedAt,
+                volumeDeviceID: 99, changes: [walChange], changedPathCount: 1,
+                omittedChangeCount: 0, netLogicalDelta: 8, netAllocatedDelta: 8,
+                symlinkExcludedCount: 0, hasBaseline: true
+            ),
+            FileInventoryChangeSet(
+                rootPath: snapshot.rootPath, folderObservationID: observationID,
+                previousObservedAt: previousInventoryAt, observedAt: snapshot.observedAt.addingTimeInterval(1),
+                volumeDeviceID: snapshot.volumeDeviceID, changes: [walChange], changedPathCount: 1,
+                omittedChangeCount: 0, netLogicalDelta: 8, netAllocatedDelta: 8,
+                symlinkExcludedCount: 0, hasBaseline: true
+            ),
+            FileInventoryChangeSet(
+                rootPath: snapshot.rootPath, folderObservationID: observationID,
+                previousObservedAt: nil, observedAt: snapshot.observedAt,
+                volumeDeviceID: snapshot.volumeDeviceID, changes: [], changedPathCount: 0,
+                omittedChangeCount: 0, netLogicalDelta: nil, netAllocatedDelta: nil,
+                symlinkExcludedCount: 0, hasBaseline: false
+            ),
+        ]
+        try expect(reportVariants.allSatisfy {
+            let rejected = DatabaseSidecarReview.make(from: snapshot, fileChangeReport: $0)
+            return rejected.fileChangesByPath.isEmpty
+                && rejected.previousFileInventoryObservationAt == nil
+                && rejected.omittedFileChangeCount == nil
+        }, "reports from another root, observation, volume, time, or without a baseline must not supply sidecar growth")
+        let unknownVolumeSnapshot = FileInventorySnapshot(
+            rootPath: snapshot.rootPath, folderObservationID: observationID, volumeDeviceID: nil,
+            observedAt: snapshot.observedAt, entries: snapshot.entries, complete: true,
+            excludedSymlinkCount: snapshot.excludedSymlinkCount
+        )
+        let unknownVolumeReport = FileInventoryChangeSet(
+            rootPath: snapshot.rootPath, folderObservationID: observationID,
+            previousObservedAt: previousInventoryAt, observedAt: snapshot.observedAt,
+            volumeDeviceID: nil, changes: [walChange], changedPathCount: 1,
+            omittedChangeCount: 0, netLogicalDelta: 8, netAllocatedDelta: 8,
+            symlinkExcludedCount: 0, hasBaseline: true
+        )
+        let unknownVolumeReview = DatabaseSidecarReview.make(
+            from: unknownVolumeSnapshot, fileChangeReport: unknownVolumeReport
+        )
+        try expect(unknownVolumeReview.fileChangesByPath.isEmpty
+                       && unknownVolumeReview.previousFileInventoryObservationAt == nil,
+                   "unknown volume identity must suppress file-level comparisons even when paths and timestamps match")
+
+        let omittedChanges = (0..<100).map { index in
+            FileInventoryChange(
+                relativePath: "unrelated/\(index).dat", kind: .resized,
+                logicalDelta: 1, allocatedDelta: 1, logicalBytes: 2, allocatedBytes: 2
+            )
+        }
+        let boundedChangeReport = FileInventoryChangeSet(
+            rootPath: snapshot.rootPath, folderObservationID: observationID,
+            previousObservedAt: previousInventoryAt, observedAt: snapshot.observedAt,
+            volumeDeviceID: snapshot.volumeDeviceID, changes: omittedChanges,
+            changedPathCount: 101, omittedChangeCount: 1,
+            netLogicalDelta: 101, netAllocatedDelta: 101, symlinkExcludedCount: 0, hasBaseline: true
+        )
+        let boundedChangeReview = DatabaseSidecarReview.make(
+            from: snapshot, fileChangeReport: boundedChangeReport
+        )
+        try expect(boundedChangeReview.fileChangesByPath.isEmpty
+                       && boundedChangeReview.omittedFileChangeCount == 1
+                       && boundedChangeReview.previousFileInventoryObservationAt == previousInventoryAt,
+                   "an unlisted sidecar path must stay unknown when the bounded change report omitted paths")
+
         let unsafeReview = DatabaseSidecarReview.make(from: FileInventorySnapshot(
             rootPath: snapshot.rootPath,
             folderObservationID: observationID,
@@ -4847,6 +4951,12 @@ private struct DiskerCoreChecks {
         try expect(!partialReview.inventoryComplete && partialReview.groups.isEmpty
                        && partialReview.unpairedSidecars.count == 1,
                    "partial inventory may expose an observed sidecar but must not imply its database is absent")
+        let partialGrowthReview = DatabaseSidecarReview.make(
+            from: partial, fileChangeReport: exactChangeReport
+        )
+        try expect(partialGrowthReview.fileChangesByPath.isEmpty
+                       && partialGrowthReview.previousFileInventoryObservationAt == nil,
+                   "a partial current inventory must suppress otherwise matching file-change details")
 
         let manyEntries = (0..<(DatabaseSidecarReview.maximumGroups + 1)).flatMap { index in
             let databasePath = "db/\(index).sqlite"

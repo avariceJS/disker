@@ -13,6 +13,7 @@ struct DiskerSnapshotRequest {
     let includeProjectCandidate: Bool
     let includeDatabaseSidecarReview: Bool
     let usePartialDatabaseSidecarFixture: Bool
+    let useOmittedDatabaseChangeFixture: Bool
 
     static func from(arguments: [String]) -> DiskerSnapshotRequest? {
         guard let outputIndex = arguments.firstIndex(of: "--snapshot-output"),
@@ -25,6 +26,7 @@ struct DiskerSnapshotRequest {
         let includeProjectCandidate = arguments.contains("--snapshot-project-candidate")
         let includeDatabaseSidecarReview = arguments.contains("--snapshot-database-sidecars")
         let usePartialDatabaseSidecarFixture = arguments.contains("--snapshot-database-sidecars-partial")
+        let useOmittedDatabaseChangeFixture = arguments.contains("--snapshot-database-sidecars-omitted")
         let appearance = appearanceIndex.flatMap { arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil }
         let appearanceName: NSAppearance.Name?
         switch appearance?.lowercased() {
@@ -40,8 +42,10 @@ struct DiskerSnapshotRequest {
             appearanceName: appearanceName,
             suppressSpotlightDiscovery: suppressSpotlightDiscovery,
             includeProjectCandidate: includeProjectCandidate,
-            includeDatabaseSidecarReview: includeDatabaseSidecarReview || usePartialDatabaseSidecarFixture,
-            usePartialDatabaseSidecarFixture: usePartialDatabaseSidecarFixture
+            includeDatabaseSidecarReview: includeDatabaseSidecarReview || usePartialDatabaseSidecarFixture
+                || useOmittedDatabaseChangeFixture,
+            usePartialDatabaseSidecarFixture: usePartialDatabaseSidecarFixture,
+            useOmittedDatabaseChangeFixture: useOmittedDatabaseChangeFixture
         )
     }
 }
@@ -52,7 +56,10 @@ struct DiskerSnapshotHost: View {
     var body: some View {
         Group {
             if request.includeDatabaseSidecarReview {
-                let fixture = databaseSidecarReviewFixture(partial: request.usePartialDatabaseSidecarFixture)
+                let fixture = databaseSidecarReviewFixture(
+                    partial: request.usePartialDatabaseSidecarFixture,
+                    includeOmittedChange: request.useOmittedDatabaseChangeFixture
+                )
                 DatabaseSidecarReviewSheet(folder: fixture.folder, initialReview: fixture.review)
             } else {
                 DashboardView(
@@ -75,7 +82,10 @@ struct DiskerSnapshotHost: View {
         }
     }
 
-    private func databaseSidecarReviewFixture(partial: Bool) -> (folder: FolderObservation, review: DatabaseSidecarReview) {
+    private func databaseSidecarReviewFixture(
+        partial: Bool,
+        includeOmittedChange: Bool
+    ) -> (folder: FolderObservation, review: DatabaseSidecarReview) {
         let observedAt = Date()
         let observationID = UUID(uuidString: "BBE6BA6B-0E1B-4B5F-91D8-846782F0779B")!
         let folder = FolderObservation(
@@ -83,9 +93,9 @@ struct DiskerSnapshotHost: View {
             path: "/synthetic/QA/SQLiteProject",
             volumeDeviceID: 42,
             displayName: "SQLiteProject",
-            logicalBytes: partial ? 13_107_200 : 96_894_976,
-            allocatedBytes: partial ? 13_107_200 : 93_110_272,
-            fileCount: partial ? 2 : 8,
+            logicalBytes: partial ? 13_107_200 : 96_894_976 + (includeOmittedChange ? 100 : 0),
+            allocatedBytes: partial ? 13_107_200 : 93_110_272 + (includeOmittedChange ? 100 : 0),
+            fileCount: partial ? 2 : 8 + (includeOmittedChange ? 100 : 0),
             inaccessibleCount: 0,
             finishedAt: observedAt,
             complete: !partial,
@@ -97,7 +107,11 @@ struct DiskerSnapshotHost: View {
             FileInventoryEntry(relativePath: "data/events.sqlite-wal", logicalBytes: 524_288, allocatedBytes: 516_096),
             FileInventoryEntry(relativePath: "data/orphan.sqlite3-wal", logicalBytes: 12_582_912, allocatedBytes: 12_582_912),
             FileInventoryEntry(relativePath: "runs/training.sqlite3", logicalBytes: 81_788_928, allocatedBytes: 78_643_200),
-        ]
+        ] + (includeOmittedChange ? (0..<99).map { index in
+            FileInventoryEntry(
+                relativePath: "growth/retained-\(index).dat", logicalBytes: 1, allocatedBytes: 1
+            )
+        } + [FileInventoryEntry(relativePath: "growth/omitted.dat", logicalBytes: 1, allocatedBytes: 1)] : [])
         let entries = partial
             ? completeEntries.filter { $0.relativePath.hasSuffix("-wal") }
             : completeEntries
@@ -110,7 +124,34 @@ struct DiskerSnapshotHost: View {
             complete: !partial,
             excludedSymlinkCount: 1
         )
-        return (folder, DatabaseSidecarReview.make(from: snapshot))
+        let walChange = FileInventoryChange(
+            relativePath: "data/events.sqlite-wal", kind: .resized,
+            logicalDelta: 262_144, allocatedDelta: 258_048,
+            logicalBytes: 524_288, allocatedBytes: 516_096
+        )
+        let retainedChangeRows = includeOmittedChange
+            ? [walChange] + (0..<99).map { index in
+                FileInventoryChange(
+                    relativePath: "growth/retained-\(index).dat", kind: .added,
+                    logicalDelta: 1, allocatedDelta: 1, logicalBytes: 1, allocatedBytes: 1
+                )
+            }
+            : [walChange]
+        let walChangeReport: FileInventoryChangeSet? = partial ? nil : FileInventoryChangeSet(
+            rootPath: folder.path,
+            folderObservationID: observationID,
+            previousObservedAt: observedAt.addingTimeInterval(-300),
+            observedAt: observedAt,
+            volumeDeviceID: folder.volumeDeviceID,
+            changes: retainedChangeRows,
+            changedPathCount: includeOmittedChange ? 101 : 1,
+            omittedChangeCount: includeOmittedChange ? 1 : 0,
+            netLogicalDelta: includeOmittedChange ? 262_243 : 262_144,
+            netAllocatedDelta: includeOmittedChange ? 258_147 : 258_048,
+            symlinkExcludedCount: 1,
+            hasBaseline: true
+        )
+        return (folder, DatabaseSidecarReview.make(from: snapshot, fileChangeReport: walChangeReport))
     }
 
     @MainActor

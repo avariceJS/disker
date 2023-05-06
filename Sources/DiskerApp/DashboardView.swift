@@ -2047,7 +2047,12 @@ struct DashboardView: View {
             .frame(minWidth: 620, minHeight: 560)
         }
         .sheet(item: $databaseSidecarReviewFolder) { folder in
-            DatabaseSidecarReviewSheet(folder: folder)
+            DatabaseSidecarReviewSheet(
+                folder: folder,
+                fileChangeReport: model.fileInventoryReports[folder.path].flatMap {
+                    $0.folderObservationID == folder.id ? $0 : nil
+                }
+            )
                 .frame(minWidth: 620, minHeight: 500)
         }
         .onAppear {
@@ -8223,14 +8228,20 @@ private struct ApplicationFootprintReviewSheet: View {
 struct DatabaseSidecarReviewSheet: View {
     let folder: FolderObservation
     let initialReview: DatabaseSidecarReview?
+    let fileChangeReport: FileInventoryChangeSet?
 
     @State private var review: DatabaseSidecarReview?
     @State private var isLoading = true
     @State private var loadFailed = false
 
-    init(folder: FolderObservation, initialReview: DatabaseSidecarReview? = nil) {
+    init(
+        folder: FolderObservation,
+        initialReview: DatabaseSidecarReview? = nil,
+        fileChangeReport: FileInventoryChangeSet? = nil
+    ) {
         self.folder = folder
         self.initialReview = initialReview
+        self.fileChangeReport = fileChangeReport
         _review = State(initialValue: initialReview)
         _isLoading = State(initialValue: initialReview == nil)
     }
@@ -8263,6 +8274,11 @@ struct DatabaseSidecarReviewSheet: View {
 
                 Text("Related names are based on exact paths such as database.sqlite and database.sqlite-wal. Disker does not open database files, verify their contents, determine ownership, or add their sizes together.")
                     .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text("File-level size changes are shown only when two complete inventories match this selected folder and volume. If the bounded report omitted changed paths, an unlisted file's change remains unknown.")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -8391,7 +8407,7 @@ struct DatabaseSidecarReviewSheet: View {
                     isLoading = false
                     return
                 }
-                review = DatabaseSidecarReview.make(from: snapshot)
+                review = DatabaseSidecarReview.make(from: snapshot, fileChangeReport: fileChangeReport)
             } catch {
                 loadFailed = true
             }
@@ -8427,6 +8443,38 @@ struct DatabaseSidecarReviewSheet: View {
                 Text("Logical \(format(entry.logicalBytes)) · allocated ~\(format(entry.allocatedBytes))")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
+                if let review, let previousAt = review.previousFileInventoryObservationAt {
+                    if let change = review.fileChangesByPath[entry.relativePath] {
+                        Text(String.localizedStringWithFormat(
+                            NSLocalizedString("Size change since %@: logical %@ · allocated estimate %@", comment: "Exact path logical and allocated estimate deltas from the previous complete inventory"),
+                            previousAt.formatted(date: .abbreviated, time: .shortened),
+                            formattedDelta(change.logicalDelta),
+                            formattedDelta(change.allocatedDelta)
+                        ))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(change.logicalDelta > 0 || change.allocatedDelta > 0 ? .orange : .secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if review.omittedFileChangeCount == 0 {
+                        Text(String.localizedStringWithFormat(
+                            NSLocalizedString("No logical or allocated size change recorded since %@.", comment: "Exact path had no measured size change in a complete file inventory comparison"),
+                            previousAt.formatted(date: .abbreviated, time: .shortened)
+                        ))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    } else if let omittedCount = review.omittedFileChangeCount {
+                        Text(String.localizedStringWithFormat(
+                            NSLocalizedString("Change unknown; the report omitted changed paths since %@ (%ld total).", comment: "Exact path may have changed but was absent from the bounded file change list"),
+                            previousAt.formatted(date: .abbreviated, time: .shortened),
+                            Int32(omittedCount)
+                        ))
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                } else {
+                    Text("No comparable complete inventory; size change is unknown.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer(minLength: 4)
             SWStatusBadge(text: relationshipLabel, style: .info)
@@ -8449,5 +8497,10 @@ struct DatabaseSidecarReviewSheet: View {
 
     private func format(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    private func formattedDelta(_ bytes: Int64) -> String {
+        let magnitude = bytes == Int64.min ? Int64.max : abs(bytes)
+        return "\(bytes >= 0 ? "+" : "−")\(format(magnitude))"
     }
 }

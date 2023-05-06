@@ -496,5 +496,10 @@
 "Exact sidecar-name match" = "Точное совпадение имени sidecar";
 "Reveal %@ in Finder" = "Показать %@ в Finder";
 "Logical %@ · allocated ~%@" = "Логический размер %@ · выделено ~%@";
+"File-level size changes are shown only when two complete inventories match this selected folder and volume. If the bounded report omitted changed paths, an unlisted file's change remains unknown." = "Изменение размера файла показывается только при наличии двух полных инвентаризаций этой папки и тома. Если ограниченный отчёт не включил изменённые пути, изменение для отсутствующего в списке файла остаётся неизвестным.";
+"Size change since %@: logical %@ · allocated estimate %@" = "Изменение размера с %@: логический размер %@ · оценка выделенного места %@";
+"No logical or allocated size change recorded since %@." = "С %@ не зафиксировано изменение логического размера или оценки выделенного места.";
+"Change unknown; the report omitted changed paths since %@ (%ld total)." = "Изменение неизвестно: в отчёт с %@ не вошли изменённые пути (%ld всего).";
+"No comparable complete inventory; size change is unknown." = "Нет сопоставимой полной инвентаризации; изменение размера неизвестно.";
 "Filename match" = "Совпадение имени файла";
 "Done" = "Готово";
