@@ -8430,6 +8430,20 @@ struct DatabaseSidecarReviewSheet: View {
             }
             Spacer(minLength: 4)
             SWStatusBadge(text: relationshipLabel, style: .info)
+            Button {
+                let fileURL = URL(fileURLWithPath: folder.path, isDirectory: true)
+                    .appendingPathComponent(entry.relativePath)
+                NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+            } label: {
+                Image(systemName: "arrow.up.right.square")
+            }
+            .buttonStyle(.borderless)
+            .help("Reveal this exact measured file path in Finder.")
+            .accessibilityLabel(String.localizedStringWithFormat(
+                NSLocalizedString("Reveal %@ in Finder", comment: "Reveal one exact SQLite review file in Finder"),
+                entry.relativePath
+            ))
+            .accessibilityHint("Opens Finder at this measured path. Disker does not open its contents.")
         }
     }
 

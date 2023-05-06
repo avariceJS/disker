@@ -494,6 +494,7 @@
 "Measured %@. Each logical size and allocated-byte estimate belongs to its own path; allocation is not reclaimable space." = "Измерено %@. Логический размер и оценка выделенного места указаны отдельно для каждого пути; выделенное место не равно возвращаемому.";
 "Database filename" = "Имя файла базы данных";
 "Exact sidecar-name match" = "Точное совпадение имени sidecar";
+"Reveal %@ in Finder" = "Показать %@ в Finder";
 "Logical %@ · allocated ~%@" = "Логический размер %@ · выделено ~%@";
 "Filename match" = "Совпадение имени файла";
 "Done" = "Готово";
