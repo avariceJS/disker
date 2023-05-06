@@ -27,14 +27,35 @@ final class ApplicationDiscoveryModel {
     @ObservationIgnored private var securityScopedPaths = Set<String>()
     @ObservationIgnored private var savedScopeRestoreFailed = false
 
-    init() {
+    init(includeSnapshotCandidate: Bool = false) {
+#if DEBUG
+        if includeSnapshotCandidate {
+            let candidate = ApplicationDiscoveryCandidate(
+                path: "/synthetic/Applications/DemoApp.app",
+                displayName: "Demo App",
+                spotlightBundleIdentifier: "com.example.DemoApp"
+            )
+            candidates = [candidate]
+            searchableCandidates = [candidate]
+            hasCompletedQuery = true
+            resultRevision = 1
+            return
+        }
+#endif
         history = (try? ObservationStore.load().discoveredApplications) ?? []
     }
 
     func start() {
         guard query == nil else { return }
         savedScopeRestoreFailed = false
-        let defaults = ["/Applications", "/System/Applications", NSHomeDirectory() + "/Applications"]
+        var defaultScopePaths = ["/Applications", "/System/Applications"]
+        if let userHome = CurrentUserHomeDirectory.path {
+            defaultScopePaths.append(
+                URL(fileURLWithPath: userHome, isDirectory: true)
+                    .appendingPathComponent("Applications", isDirectory: true).path
+            )
+        }
+        let defaults = defaultScopePaths
             .map { URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL }
             .filter(Self.isRealDirectory)
         selectedScopeURLs = defaults

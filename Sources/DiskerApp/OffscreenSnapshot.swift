@@ -11,6 +11,7 @@ struct DiskerSnapshotRequest {
     let appearanceName: NSAppearance.Name?
     let suppressSpotlightDiscovery: Bool
     let includeProjectCandidate: Bool
+    let includeSnapshotDiscoveredApplicationCandidate: Bool
     let includeDatabaseSidecarReview: Bool
     let usePartialDatabaseSidecarFixture: Bool
     let useOmittedDatabaseChangeFixture: Bool
@@ -24,6 +25,7 @@ struct DiskerSnapshotRequest {
         let section = sectionIndex.flatMap { arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil }
             ?? "Overview"
         let includeProjectCandidate = arguments.contains("--snapshot-project-candidate")
+        let includeSnapshotDiscoveredApplicationCandidate = arguments.contains("--snapshot-discovered-app-data")
         let includeDatabaseSidecarReview = arguments.contains("--snapshot-database-sidecars")
         let usePartialDatabaseSidecarFixture = arguments.contains("--snapshot-database-sidecars-partial")
         let useOmittedDatabaseChangeFixture = arguments.contains("--snapshot-database-sidecars-omitted")
@@ -42,6 +44,7 @@ struct DiskerSnapshotRequest {
             appearanceName: appearanceName,
             suppressSpotlightDiscovery: suppressSpotlightDiscovery,
             includeProjectCandidate: includeProjectCandidate,
+            includeSnapshotDiscoveredApplicationCandidate: includeSnapshotDiscoveredApplicationCandidate,
             includeDatabaseSidecarReview: includeDatabaseSidecarReview || usePartialDatabaseSidecarFixture
                 || useOmittedDatabaseChangeFixture,
             usePartialDatabaseSidecarFixture: usePartialDatabaseSidecarFixture,
@@ -63,11 +66,13 @@ struct DiskerSnapshotHost: View {
                 DatabaseSidecarReviewSheet(folder: fixture.folder, initialReview: fixture.review)
             } else {
                 DashboardView(
-                    initialSection: request.section,
+                    initialSection: request.includeSnapshotDiscoveredApplicationCandidate
+                        ? "Applications" : request.section,
                     expandSavedApplicationHistory: true,
                     suppressSpotlightDiscovery: request.suppressSpotlightDiscovery,
                     expandFirstSavedApplicationForSnapshot: true,
-                    includeSnapshotProjectCandidate: request.includeProjectCandidate
+                    includeSnapshotProjectCandidate: request.includeProjectCandidate,
+                    includeSnapshotDiscoveredApplicationCandidate: request.includeSnapshotDiscoveredApplicationCandidate
                 )
             }
         }

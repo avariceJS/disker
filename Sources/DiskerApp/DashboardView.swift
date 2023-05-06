@@ -628,7 +628,7 @@ final class DashboardModel {
 
     func applicationFootprintReview(for bundle: FolderObservation) -> ApplicationFootprintReview {
         ApplicationFootprintReview.make(
-            for: bundle, in: history, homeDirectoryPath: NSHomeDirectory()
+            for: bundle, in: history, homeDirectoryPath: CurrentUserHomeDirectory.path ?? ""
         )
     }
 
@@ -656,10 +656,20 @@ final class DashboardModel {
     func checkApplicationDataLocation(_ path: String, for bundle: FolderObservation) {
         let candidates = ApplicationDataLocationCandidates.suggestions(
             bundleIdentifier: bundle.applicationBundleIdentifier,
-            homeDirectoryPath: NSHomeDirectory(),
+            homeDirectoryPath: CurrentUserHomeDirectory.path ?? "",
             claimedGroupIdentifiers: bundle.applicationGroupIdentifiers,
             signatureValidated: bundle.applicationSignatureValidated,
             signedBundleIdentifier: bundle.applicationSignedBundleIdentifier
+        )
+        checkApplicationDataLocation(path, among: candidates)
+    }
+
+    func checkDiscoveredApplicationDataLocation(
+        _ path: String, for candidate: ApplicationDiscoveryCandidate
+    ) {
+        let candidates = ApplicationDataLocationCandidates.suggestions(
+            bundleIdentifier: candidate.spotlightBundleIdentifier,
+            homeDirectoryPath: CurrentUserHomeDirectory.path ?? ""
         )
         checkApplicationDataLocation(path, among: candidates)
     }
@@ -698,7 +708,7 @@ final class DashboardModel {
         guard ApplicationDataLocationCandidates.suggestion(
             matchingExactPath: expectedPath,
             bundleIdentifier: spotlightBundleIdentifier,
-            homeDirectoryPath: NSHomeDirectory()
+            homeDirectoryPath: CurrentUserHomeDirectory.path ?? ""
         ) != nil else { return }
 
         let panel = NSOpenPanel()
@@ -723,7 +733,7 @@ final class DashboardModel {
         let selectedSuggestion = ApplicationDataLocationCandidates.suggestion(
             matchingExactPath: selectedURL.path,
             bundleIdentifier: spotlightBundleIdentifier,
-            homeDirectoryPath: NSHomeDirectory()
+            homeDirectoryPath: CurrentUserHomeDirectory.path ?? ""
         )
         guard SelectedScopeBookmarkStore.isSameSelectedPath(selectedURL, as: expectedPath),
               selectedSuggestion?.path == expectedPath else {
@@ -1019,7 +1029,7 @@ final class DashboardModel {
         CrossDomainResourceEvidence.make(
             forProjectRootPath: projectRootPath,
             in: history,
-            homeDirectoryPath: NSHomeDirectory()
+            homeDirectoryPath: CurrentUserHomeDirectory.path ?? ""
         )
     }
 
@@ -1027,7 +1037,7 @@ final class DashboardModel {
         CrossDomainResourceEvidence.make(
             forApplicationBundlePath: bundlePath,
             in: history,
-            homeDirectoryPath: NSHomeDirectory()
+            homeDirectoryPath: CurrentUserHomeDirectory.path ?? ""
         )
     }
 
@@ -1932,7 +1942,7 @@ private struct OverviewFileChangeRow: Identifiable {
 
 struct DashboardView: View {
     @State private var model: DashboardModel
-    @State private var applicationDiscovery = ApplicationDiscoveryModel()
+    @State private var applicationDiscovery: ApplicationDiscoveryModel
     @State private var selectedSection: String? = "Overview"
     @State private var historyChartRange: ObservationTimeRange = .week
     @State private var selectedCapacityDate: Date?
@@ -1947,6 +1957,7 @@ struct DashboardView: View {
     @State private var isSavedApplicationInventoryLoading = false
     @State private var isSavedApplicationHistoryExpanded = false
     @State private var expandedSavedApplicationPaths = Set<String>()
+    @State private var expandedApplicationDiscoveryDataPaths = Set<String>()
     @State private var expandedProjectResourceRoots = Set<String>()
     @State private var applicationDiscoveryMeasurementFilter: ApplicationDiscoveryMeasurementFilter = .all
     @State private var applicationDiscoverySort: ApplicationDiscoverySort = .name
@@ -1957,24 +1968,32 @@ struct DashboardView: View {
     private let suppressSpotlightDiscovery: Bool
     private let expandFirstSavedApplicationForSnapshot: Bool
     private let includeSnapshotProjectCandidate: Bool
+    private let includeSnapshotDiscoveredApplicationCandidate: Bool
 
     init(
         initialSection: String = "Overview",
         expandSavedApplicationHistory: Bool = false,
         suppressSpotlightDiscovery: Bool = false,
         expandFirstSavedApplicationForSnapshot: Bool = false,
-        includeSnapshotProjectCandidate: Bool = false
+        includeSnapshotProjectCandidate: Bool = false,
+        includeSnapshotDiscoveredApplicationCandidate: Bool = false
     ) {
         _model = State(initialValue: DashboardModel(
             includeSnapshotProjectCandidate: includeSnapshotProjectCandidate
+        ))
+        _applicationDiscovery = State(initialValue: ApplicationDiscoveryModel(
+            includeSnapshotCandidate: includeSnapshotDiscoveredApplicationCandidate
         ))
         _selectedSection = State(initialValue: initialSection)
         _isSavedApplicationHistoryExpanded = State(initialValue: expandSavedApplicationHistory)
         _expandedProjectResourceRoots = State(initialValue: includeSnapshotProjectCandidate
             ? ["/synthetic/QA/DemoProject"] : [])
+        _expandedApplicationDiscoveryDataPaths = State(initialValue: includeSnapshotDiscoveredApplicationCandidate
+            ? ["/synthetic/Applications/DemoApp.app"] : [])
         self.suppressSpotlightDiscovery = suppressSpotlightDiscovery
         self.expandFirstSavedApplicationForSnapshot = expandFirstSavedApplicationForSnapshot
         self.includeSnapshotProjectCandidate = includeSnapshotProjectCandidate
+        self.includeSnapshotDiscoveredApplicationCandidate = includeSnapshotDiscoveredApplicationCandidate
     }
 
     private let sections = ["Overview", "Applications", "Folders", "Duplicates", "History", "RAM", "About"]
@@ -2059,7 +2078,9 @@ struct DashboardView: View {
             model.setStorageMonitoringAppActive(scenePhase == .active)
             model.setStorageMonitoringSessionOpen(true)
             model.startStorageMonitoringScheduler()
-            if !includeSnapshotProjectCandidate { model.refreshCapacity() }
+            if !includeSnapshotProjectCandidate && !includeSnapshotDiscoveredApplicationCandidate {
+                model.refreshCapacity()
+            }
             if !suppressSpotlightDiscovery { applicationDiscovery.start() }
             model.updateMemoryPressureMonitoring(
                 enabled: isAutomaticRAMSamplingEnabled, appIsActive: model.isAppActive
@@ -4425,7 +4446,7 @@ struct DashboardView: View {
     private func applicationDataLocationSuggestions(for bundle: FolderObservation) -> some View {
         let suggestions = ApplicationDataLocationCandidates.suggestions(
             bundleIdentifier: bundle.applicationBundleIdentifier,
-            homeDirectoryPath: NSHomeDirectory(),
+            homeDirectoryPath: CurrentUserHomeDirectory.path ?? "",
             claimedGroupIdentifiers: bundle.applicationGroupIdentifiers,
             signatureValidated: bundle.applicationSignatureValidated,
             signedBundleIdentifier: bundle.applicationSignedBundleIdentifier
@@ -4517,20 +4538,29 @@ struct DashboardView: View {
     ) -> some View {
         let suggestions = ApplicationDataLocationCandidates.suggestions(
             bundleIdentifier: candidate.spotlightBundleIdentifier,
-            homeDirectoryPath: NSHomeDirectory()
+            homeDirectoryPath: CurrentUserHomeDirectory.path ?? ""
         )
         return Group {
             if let identifier = candidate.spotlightBundleIdentifier, !suggestions.isEmpty {
-                DisclosureGroup("Possible related data locations") {
+                DisclosureGroup(isExpanded: Binding(
+                    get: { expandedApplicationDiscoveryDataPaths.contains(candidate.path) },
+                    set: { isExpanded in
+                        if isExpanded { expandedApplicationDiscoveryDataPaths.insert(candidate.path) }
+                        else { expandedApplicationDiscoveryDataPaths.remove(candidate.path) }
+                    }
+                )) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Spotlight returned bundle ID · \(identifier) · unverified")
                             .font(.caption.weight(.medium))
                             .textSelection(.enabled)
-                        Text("These conventional paths are hints only. The indexed bundle ID is not verified against the app signature or data ownership. Disker does not inspect them until you choose the exact suggested file or folder in the picker; only then does its metadata-only scan begin.")
+                        Text("These conventional paths are hints only. Spotlight's bundle ID is not verified against the app signature or data ownership. Check inspects only the exact suggested path and does not list descendants or read file contents. A metadata-only measurement starts only after you choose the exact file or folder in the picker.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         ForEach(suggestions) { suggestion in
+                            let candidatePath = URL(fileURLWithPath: suggestion.path, isDirectory: true)
+                                .standardizedFileURL.path
+                            let candidateStatus = model.applicationDataLocationStatuses[candidatePath]
                             HStack(alignment: .top, spacing: 10) {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(suggestion.title)
@@ -4543,20 +4573,56 @@ struct DashboardView: View {
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                         .fixedSize(horizontal: false, vertical: true)
+                                    if let candidateStatus {
+                                        Label(
+                                            applicationDataLocationStatusText(candidateStatus),
+                                            systemImage: associatedPathStatusSymbol(candidateStatus)
+                                        )
+                                        .font(.caption2)
+                                        .foregroundStyle(associatedPathStatusColor(candidateStatus))
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    }
                                 }
                                 Spacer(minLength: 4)
-                                Button("Choose exact location to measure…") {
-                                    model.chooseDiscoveredApplicationDataLocation(
-                                        suggestion.path, for: candidate
-                                    )
+                                VStack(alignment: .trailing, spacing: 6) {
+                                    if suggestion.evidence != .probablePreferencesFile {
+                                        Button {
+                                            model.checkDiscoveredApplicationDataLocation(
+                                                suggestion.path, for: candidate
+                                            )
+                                        } label: {
+                                            if model.checkingApplicationDataLocationPaths.contains(candidatePath) {
+                                                ProgressView()
+                                                    .controlSize(.small)
+                                            } else {
+                                                Label(
+                                                    candidateStatus == nil ? "Check exact path" : "Check again",
+                                                    systemImage: "magnifyingglass"
+                                                )
+                                            }
+                                        }
+                                        .controlSize(.small)
+                                        .disabled(model.checkingApplicationDataLocationPaths.contains(candidatePath))
+                                        .help("Check only this exact folder path; no descendants or file contents are read")
+                                        .accessibilityLabel(
+                                            model.checkingApplicationDataLocationPaths.contains(candidatePath)
+                                                ? "Checking exact path…"
+                                                : candidateStatus == nil ? "Check exact path" : "Check again"
+                                        )
+                                    }
+                                    Button("Choose exact location to measure…") {
+                                        model.chooseDiscoveredApplicationDataLocation(suggestion.path, for: candidate)
+                                    }
+                                    .controlSize(.small)
+                                    .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
                                 }
-                                .controlSize(.small)
-                                .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
                             }
                             if suggestion.id != suggestions.last?.id { Divider() }
                         }
                     }
                     .padding(.top, 6)
+                } label: {
+                    Text("Possible related data locations")
                 }
                 .font(.caption.weight(.medium))
             }
@@ -5066,7 +5132,7 @@ struct DashboardView: View {
         let attribution = ApplicationPathAttribution.classify(
             bundleIdentifier: bundle.applicationBundleIdentifier,
             associatedFolderPath: path,
-            homeDirectoryPath: NSHomeDirectory(),
+            homeDirectoryPath: CurrentUserHomeDirectory.path ?? "",
             claimedGroupIdentifiers: bundle.applicationGroupIdentifiers,
             signatureValidated: bundle.applicationSignatureValidated,
             signedBundleIdentifier: bundle.applicationSignedBundleIdentifier

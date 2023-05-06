@@ -47,6 +47,7 @@ private struct DiskerCoreChecks {
             ("application discovery sorting preserves unknown measurement evidence", testApplicationDiscoverySorting),
             ("explicitly selected app bundle identity read", testApplicationBundleMetadata),
             ("evidence-scoped application container attribution", testApplicationPathAttribution),
+            ("current account home path is absolute and normalized", testCurrentUserHomeDirectory),
             ("Spotlight app data hints require exact selected-root measurements", testSpotlightAppDataMeasurementWorkflow),
             ("explicit application data path probes", testApplicationDataLocationProbe),
             ("selected app bundle file-growth history", testApplicationBundleFileGrowthHistory),
@@ -1189,9 +1190,14 @@ private struct DiskerCoreChecks {
             bundleIdentifier: "..", associatedFolderPath: "\(home)/Library",
             homeDirectoryPath: home
         )
+        let unknownHome = ApplicationPathAttribution.classify(
+            bundleIdentifier: identifier, associatedFolderPath: container,
+            homeDirectoryPath: ""
+        )
         try expect(missingID.evidence == .userSelectedOnly
                    && invalidID.evidence == .userSelectedOnly
-                   && traversalID.evidence == .userSelectedOnly,
+                   && traversalID.evidence == .userSelectedOnly
+                   && unknownHome.evidence == .userSelectedOnly,
                    "missing or path-like bundle identifiers must not be treated as attribution evidence")
         let unclaimedGroup = ApplicationPathAttribution.classify(
             bundleIdentifier: identifier, associatedFolderPath: groupContainer,
@@ -1277,7 +1283,9 @@ private struct DiskerCoreChecks {
         try expect(ApplicationDataLocationCandidates.suggestions(
             bundleIdentifier: "../Other", homeDirectoryPath: home,
             claimedGroupIdentifiers: [groupIdentifier]
-        ).isEmpty, "invalid identifiers must not generate app-data paths")
+        ).isEmpty && ApplicationDataLocationCandidates.suggestions(
+            bundleIdentifier: identifier, homeDirectoryPath: ""
+        ).isEmpty, "invalid identifiers or unknown account homes must not generate app-data paths")
     }
 
     private static func testSpotlightAppDataMeasurementWorkflow() throws {
@@ -1458,6 +1466,15 @@ private struct DiskerCoreChecks {
                        && saved.applicationAssociations[0].bundleIdentifier == nil,
                        "complete-partial-complete app-data history should retain the last complete baseline and never turn the Spotlight hint into verified bundle identity")
         }
+    }
+
+    private static func testCurrentUserHomeDirectory() throws {
+        guard let path = CurrentUserHomeDirectory.path else {
+            throw CheckFailure.assertion("the current account should expose a home-directory path")
+        }
+        try expect(path.hasPrefix("/")
+                       && path == URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path,
+                   "the current account home path should be absolute and normalized")
     }
 
     private static func testApplicationDataLocationProbe() throws {

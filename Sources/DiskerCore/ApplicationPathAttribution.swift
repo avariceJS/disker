@@ -174,6 +174,13 @@ public struct ApplicationPathAttribution: Equatable, Sendable {
         homeDirectoryPath: String, claimedGroupIdentifiers: [String] = [],
         signatureValidated: Bool = false, signedBundleIdentifier: String? = nil
     ) -> ApplicationPathAttribution {
+        guard homeDirectoryPath.hasPrefix("/") else {
+            return ApplicationPathAttribution(
+                evidence: .userSelectedOnly,
+                bundleIdentifier: bundleIdentifier,
+                groupIdentifier: nil
+            )
+        }
         let validatedBundleIdentity = signatureValidated
             && bundleIdentifier != nil
             && signedBundleIdentifier == bundleIdentifier
@@ -303,36 +310,40 @@ public struct ApplicationDataLocationCandidate: Equatable, Sendable, Identifiabl
 
     public var title: String {
         switch evidence {
-        case .probableAppContainer: "Probable per-app container path"
-        case .validatedAppContainerIdentifier: "Signed identifier · conventional per-app container path"
-        case .probableNamedSupportDirectory: "Possible app support or cache · name match"
-        case .probablePreferencesFile: "Possible app preferences file · name match"
-        case .probableLogsDirectory: "Possible application logs · ID pattern"
-        case .probableSavedApplicationState: "Possible saved state · ID pattern"
-        case .declaredSharedGroupClaim: "Declared App Group path · shared"
-        case .signatureCoveredSharedGroupClaim: "Signature-covered App Group path · shared"
+        case .probableAppContainer: localized("Probable per-app container path")
+        case .validatedAppContainerIdentifier: localized("Signed identifier · conventional per-app container path")
+        case .probableNamedSupportDirectory: localized("Possible app support or cache · name match")
+        case .probablePreferencesFile: localized("Possible app preferences file · name match")
+        case .probableLogsDirectory: localized("Possible application logs · ID pattern")
+        case .probableSavedApplicationState: localized("Possible saved state · ID pattern")
+        case .declaredSharedGroupClaim: localized("Declared App Group path · shared")
+        case .signatureCoveredSharedGroupClaim: localized("Signature-covered App Group path · shared")
         }
     }
 
     public var explanation: String {
         switch evidence {
         case .probableAppContainer:
-            "This is the standard path pattern for the supplied bundle ID. Its presence, use, and exclusive ownership have not been checked."
+            localized("This is the standard path pattern for the supplied bundle ID. Its presence, use, and exclusive ownership have not been checked.")
         case .validatedAppContainerIdentifier:
-            "The selected bundle's locally validated signature carries this identifier. This conventional path has not been checked for presence, origin, or exclusive use."
+            localized("The selected bundle's locally validated signature carries this identifier. This conventional path has not been checked for presence, origin, or exclusive use.")
         case .probableNamedSupportDirectory:
-            "The candidate directory name exactly matches the supplied bundle ID under Application Support or Caches. This is only a naming clue; presence, app ownership, and exclusive use have not been checked."
+            localized("The candidate directory name exactly matches the supplied bundle ID under Application Support or Caches. This is only a naming clue; presence, app ownership, and exclusive use have not been checked.")
         case .probablePreferencesFile:
-            "This conventional Preferences plist filename matches the supplied bundle ID. Its presence, origin, app ownership, current use, and contents have not been checked; it may contain private settings."
+            localized("This conventional Preferences plist filename matches the supplied bundle ID. Its presence, origin, app ownership, current use, and contents have not been checked; it may contain private settings.")
         case .probableLogsDirectory:
-            "This conventional Logs directory path uses the supplied bundle ID as a hint. Its presence, origin, app ownership, and exclusive use have not been checked."
+            localized("This conventional Logs directory path uses the supplied bundle ID as a hint. Its presence, origin, app ownership, and exclusive use have not been checked.")
         case .probableSavedApplicationState:
-            "This conventional saved-state path uses the supplied bundle ID as a hint. Its presence, origin, current use, and exclusive ownership have not been checked; it may contain user state."
+            localized("This conventional saved-state path uses the supplied bundle ID as a hint. Its presence, origin, current use, and exclusive ownership have not been checked; it may contain user state.")
         case .declaredSharedGroupClaim:
-            "The selected bundle declares this App Group. The path is shared by design; signature validity and OS-granted access are not established."
+            localized("The selected bundle declares this App Group. The path is shared by design; signature validity and OS-granted access are not established.")
         case .signatureCoveredSharedGroupClaim:
-            "The selected bundle's locally valid signature covers this App Group claim. The path is shared by design; publisher trust and OS-granted access are not established."
+            localized("The selected bundle's locally valid signature covers this App Group claim. The path is shared by design; publisher trust and OS-granted access are not established.")
         }
+    }
+
+    private func localized(_ key: String) -> String {
+        NSLocalizedString(key, comment: "Evidence and limits for a suggested application data location")
     }
 }
 
@@ -345,7 +356,8 @@ public enum ApplicationDataLocationCandidates {
         claimedGroupIdentifiers: [String] = [],
         signatureValidated: Bool = false, signedBundleIdentifier: String? = nil
     ) -> [ApplicationDataLocationCandidate] {
-        guard let bundleIdentifier,
+        guard homeDirectoryPath.hasPrefix("/"),
+              let bundleIdentifier,
               ApplicationPathAttribution.isValidBundleIdentifier(bundleIdentifier)
         else { return [] }
 
