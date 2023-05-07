@@ -40,7 +40,9 @@ struct DiskerSnapshotRequest {
             outputURL: URL(fileURLWithPath: arguments[outputIndex + 1]),
             section: section,
             width: 1_280,
-            height: includeProjectCandidate ? 1_200 : includeDatabaseSidecarReview ? 540 : 900,
+            height: includeProjectCandidate ? 1_200
+                : includeSnapshotDiscoveredApplicationCandidate ? 1_400
+                : includeDatabaseSidecarReview ? 540 : 900,
             appearanceName: appearanceName,
             suppressSpotlightDiscovery: suppressSpotlightDiscovery,
             includeProjectCandidate: includeProjectCandidate,

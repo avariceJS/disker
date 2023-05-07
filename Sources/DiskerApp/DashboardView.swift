@@ -509,45 +509,62 @@ final class DashboardModel {
     private var duplicateTask: Task<DuplicateVerificationResult, Never>?
     private var memoryPressureSource: DispatchSourceMemoryPressure?
 
-    init(includeSnapshotProjectCandidate: Bool = false) {
-        do {
-            history = try ObservationStore.load()
-            ram = history.ramObservations.last
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-        do {
-            let fileInventoryHistory = try FileInventoryStore.loadDashboardHistory()
-            fileInventoryReports = fileInventoryHistory.reports
-            fileInventoryTrends = fileInventoryHistory.trendPoints
-            sameSizeFileCandidates = fileInventoryHistory.sameSizeCandidates
-        } catch {
-            errorMessage = "File change history could not be loaded: \(error.localizedDescription)"
-        }
-        do {
-            rememberedScopes = try SelectedScopeBookmarkStore.load()
-        } catch {
-            errorMessage = "Saved scan locations could not be loaded: \(error.localizedDescription)"
-        }
-        do {
-            let savedMonitoringPaths = try StorageMonitoringPreferences.load()
-            monitoredScopePaths = savedMonitoringPaths.intersection(Set(rememberedScopes.map(\.path)))
-            if monitoredScopePaths != savedMonitoringPaths {
-                try StorageMonitoringPreferences.save(monitoredScopePaths)
-            }
-            for path in monitoredScopePaths {
-                let lastCompleteScan = fileInventoryTrends[path]?.last?.observedAt
-                    ?? fileInventoryReports[path]?.observedAt
-                    ?? .distantPast
-                storageMonitoringEnabledAtByPath[path] = lastCompleteScan
-                storageMonitoringCooldownByPath[path] = lastCompleteScan
-            }
-        } catch {
-            errorMessage = "Saved monitoring choices could not be loaded: \(error.localizedDescription)"
-        }
+    init(
+        includeSnapshotProjectCandidate: Bool = false,
+        includeSnapshotDiscoveredApplicationCandidate: Bool = false
+    ) {
         if includeSnapshotProjectCandidate {
             history = Self.snapshotProjectCandidateHistory()
+        } else if includeSnapshotDiscoveredApplicationCandidate {
+            history = Self.snapshotDiscoveredApplicationHistory()
+        } else {
+            do {
+                history = try ObservationStore.load()
+                ram = history.ramObservations.last
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
+        if !includeSnapshotProjectCandidate && !includeSnapshotDiscoveredApplicationCandidate {
+            do {
+                let fileInventoryHistory = try FileInventoryStore.loadDashboardHistory()
+                fileInventoryReports = fileInventoryHistory.reports
+                fileInventoryTrends = fileInventoryHistory.trendPoints
+                sameSizeFileCandidates = fileInventoryHistory.sameSizeCandidates
+            } catch {
+                errorMessage = "File change history could not be loaded: \(error.localizedDescription)"
+            }
+            do {
+                rememberedScopes = try SelectedScopeBookmarkStore.load()
+            } catch {
+                errorMessage = "Saved scan locations could not be loaded: \(error.localizedDescription)"
+            }
+            do {
+                let savedMonitoringPaths = try StorageMonitoringPreferences.load()
+                monitoredScopePaths = savedMonitoringPaths.intersection(Set(rememberedScopes.map(\.path)))
+                if monitoredScopePaths != savedMonitoringPaths {
+                    try StorageMonitoringPreferences.save(monitoredScopePaths)
+                }
+                for path in monitoredScopePaths {
+                    let lastCompleteScan = fileInventoryTrends[path]?.last?.observedAt
+                        ?? fileInventoryReports[path]?.observedAt
+                        ?? .distantPast
+                    storageMonitoringEnabledAtByPath[path] = lastCompleteScan
+                    storageMonitoringCooldownByPath[path] = lastCompleteScan
+                }
+            } catch {
+                errorMessage = "Saved monitoring choices could not be loaded: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private static func snapshotDiscoveredApplicationHistory() -> LocalHistory {
+        LocalHistory(applicationAssociations: [
+            ApplicationFolderAssociation(
+                bundlePath: "/synthetic/Applications/DemoApp.app",
+                relatedFolderPaths: ["/synthetic/QA/UnmeasuredAppData"]
+            )
+        ])
     }
 
     private static func snapshotProjectCandidateHistory() -> LocalHistory {
@@ -1958,6 +1975,7 @@ struct DashboardView: View {
     @State private var isSavedApplicationHistoryExpanded = false
     @State private var expandedSavedApplicationPaths = Set<String>()
     @State private var expandedApplicationDiscoveryDataPaths = Set<String>()
+    @State private var expandedApplicationDiscoveryRelatedLocations = Set<String>()
     @State private var expandedProjectResourceRoots = Set<String>()
     @State private var applicationDiscoveryMeasurementFilter: ApplicationDiscoveryMeasurementFilter = .all
     @State private var applicationDiscoverySort: ApplicationDiscoverySort = .name
@@ -1979,7 +1997,8 @@ struct DashboardView: View {
         includeSnapshotDiscoveredApplicationCandidate: Bool = false
     ) {
         _model = State(initialValue: DashboardModel(
-            includeSnapshotProjectCandidate: includeSnapshotProjectCandidate
+            includeSnapshotProjectCandidate: includeSnapshotProjectCandidate,
+            includeSnapshotDiscoveredApplicationCandidate: includeSnapshotDiscoveredApplicationCandidate
         ))
         _applicationDiscovery = State(initialValue: ApplicationDiscoveryModel(
             includeSnapshotCandidate: includeSnapshotDiscoveredApplicationCandidate
@@ -1989,6 +2008,8 @@ struct DashboardView: View {
         _expandedProjectResourceRoots = State(initialValue: includeSnapshotProjectCandidate
             ? ["/synthetic/QA/DemoProject"] : [])
         _expandedApplicationDiscoveryDataPaths = State(initialValue: includeSnapshotDiscoveredApplicationCandidate
+            ? ["/synthetic/Applications/DemoApp.app"] : [])
+        _expandedApplicationDiscoveryRelatedLocations = State(initialValue: includeSnapshotDiscoveredApplicationCandidate
             ? ["/synthetic/Applications/DemoApp.app"] : [])
         self.suppressSpotlightDiscovery = suppressSpotlightDiscovery
         self.expandFirstSavedApplicationForSnapshot = expandFirstSavedApplicationForSnapshot
@@ -4634,15 +4655,21 @@ struct DashboardView: View {
     ) -> some View {
         let paths = model.relatedFolders(for: candidate.path)
         let titleFormat = NSLocalizedString(
-            "Measured related locations · %ld",
-            comment: "Count of separately measured folders linked to a discovered application"
+            "Associated locations · %ld",
+            comment: "Count of user-associated paths for a discovered application, which may not all be measured yet"
         )
         let title = String.localizedStringWithFormat(titleFormat, paths.count)
         return Group {
             if !paths.isEmpty {
-                DisclosureGroup {
+                DisclosureGroup(isExpanded: Binding(
+                    get: { expandedApplicationDiscoveryRelatedLocations.contains(candidate.path) },
+                    set: { isExpanded in
+                        if isExpanded { expandedApplicationDiscoveryRelatedLocations.insert(candidate.path) }
+                        else { expandedApplicationDiscoveryRelatedLocations.remove(candidate.path) }
+                    }
+                )) {
                     VStack(alignment: .leading, spacing: 9) {
-                        Text("Each selected location keeps its own measurement. Paths may overlap, so Disker does not add these values or infer exclusive ownership.")
+                        Text("Each measured location keeps its own observation. A link may have no measurement yet. Paths may overlap, so Disker does not add these values or infer exclusive ownership.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -4738,9 +4765,19 @@ struct DashboardView: View {
                                     Text(path)
                                         .font(.caption2.monospaced())
                                         .textSelection(.enabled)
-                                    Text("No saved measurement for this location.")
+                                    Text("No saved measurement · size unknown")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
+                                    Button {
+                                        model.rescanAssociatedFolder(path)
+                                    } label: {
+                                        Text(hasSavedAccess
+                                             ? NSLocalizedString("Measure…", comment: "Start a first measurement using a saved location")
+                                             : NSLocalizedString("Select to measure…", comment: "Select an exact unmeasured app-associated location"))
+                                    }
+                                    .controlSize(.small)
+                                    .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
+                                    .help("Measure only this exact associated file or folder; saved size and access status remain unknown until then")
                                 }
                             }
                         }

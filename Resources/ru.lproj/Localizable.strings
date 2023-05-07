@@ -259,12 +259,14 @@
 "Related locations · review suggested" = "Связанные расположения · требуется проверка";
 "The last exact-path check did not confirm the app bundle location. It may have moved, its volume may be disconnected, access may be restricted, or the path may have changed type. This does not establish that the app was removed. Saved location associations were selected manually; their presence, ownership, and safety are unknown." = "Последняя проверка точного пути не подтвердила расположение пакета приложения. Он мог быть перемещён, том мог отключиться, доступ мог быть ограничен или тип пути мог измениться. Это не доказывает удаление приложения. Связанные расположения выбраны вручную; их наличие, принадлежность и безопасность неизвестны.";
 "Check only the exact associated paths. Disker does not scan file contents in this check, follow symlinks, or decide whether anything can be removed." = "Проверяются только точные связанные пути. Disker не сканирует содержимое файлов, не переходит по символическим ссылкам и не решает, можно ли что-либо удалить.";
-"Measured related locations · %ld" = "Измеренные связанные папки · %ld";
-"Each selected location keeps its own measurement. Paths may overlap, so Disker does not add these values or infer exclusive ownership." = "Для каждого выбранного расположения сохраняется отдельное измерение. Пути могут пересекаться, поэтому Disker не складывает значения и не делает вывод об исключительной принадлежности.";
+"Associated locations · %ld" = "Связанные расположения · %ld";
+"Each measured location keeps its own observation. A link may have no measurement yet. Paths may overlap, so Disker does not add these values or infer exclusive ownership." = "Для каждого измеренного расположения сохраняется отдельное наблюдение. Связанный путь может быть ещё не измерен. Пути могут пересекаться, поэтому Disker не складывает значения и не делает вывод об исключительной принадлежности.";
 "Complete measurement" = "Полное измерение";
 "Cancelled scan" = "Сканирование отменено";
 "The last scan was cancelled; this location remains incomplete." = "Последнее сканирование отменено; измерение этой папки остаётся неполным.";
 "No saved measurement for this location." = "Для этой папки нет сохранённого измерения.";
+"Select to measure…" = "Выбрать для измерения…";
+"Measure only this exact associated file or folder; saved size and access status remain unknown until then" = "Измеряется только этот точный связанный файл или папка; размер и состояние доступа остаются неизвестными до измерения";
 "Rescan…" = "Сканировать повторно…";
 "Checking exact path…" = "Проверка точного пути…";
 "Choose to measure…" = "Выбрать для измерения…";
