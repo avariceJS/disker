@@ -1229,8 +1229,12 @@ private struct DiskerCoreChecks {
                    && suggestions[5].evidence == .probableSavedApplicationState
                    && suggestions[6].evidence == .declaredSharedGroupClaim,
                    "suggested paths should retain probable and shared-claim evidence without overstating ownership")
-        try expect(suggestions.allSatisfy({ $0.explanation.contains("not been checked")
-                                           || $0.explanation.contains("shared by design") }),
+        let hintsRemainUnverified = suggestions.dropLast().allSatisfy({
+            $0.explanation.contains("not been checked") || $0.explanation.contains("не провер")
+        })
+        let groupRemainsShared = suggestions.last?.explanation.contains("shared by design") == true
+            || suggestions.last?.explanation.contains("путь общий по назначению") == true
+        try expect(hintsRemainUnverified && groupRemainsShared,
                    "location suggestions should explicitly remain unmeasured and confidence-limited")
         try expect(ApplicationDataLocationCandidates.suggestion(
             matchingExactPath: appSupport, bundleIdentifier: identifier,
@@ -1506,6 +1510,18 @@ private struct DiskerCoreChecks {
             )
             let outside = root.appendingPathComponent("outside", isDirectory: true)
             try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: false)
+            let preferenceFile = URL(fileURLWithPath: preferences.path)
+            try FileManager.default.createDirectory(
+                at: preferenceFile.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
+            let preferenceContents = Data("synthetic private settings".utf8)
+            try preferenceContents.write(to: preferenceFile)
+            let outsideFile = outside.appendingPathComponent("outside.plist")
+            try Data("outside fixture".utf8).write(to: outsideFile)
+            let preferenceLink = root.appendingPathComponent("preference-link.plist")
+            try FileManager.default.createSymbolicLink(at: preferenceLink, withDestinationURL: outsideFile)
+            let symlinkAncestor = root.appendingPathComponent("linked-parent", isDirectory: true)
+            try FileManager.default.createSymbolicLink(at: symlinkAncestor, withDestinationURL: outside)
             let cacheURL = URL(fileURLWithPath: cache.path, isDirectory: true)
             try FileManager.default.createDirectory(
                 at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true
@@ -1524,6 +1540,21 @@ private struct DiskerCoreChecks {
             try expect(preferences.path.hasSuffix("com.example.Probe.plist")
                        && preferences.evidence == .probablePreferencesFile,
                        "the preferences candidate should identify only its exact conventional plist filename")
+            try expect(SelectedRegularFilePathProbe.probe(selectedURL: preferenceFile) == .availableRegularFile,
+                       "an explicitly selected Preferences plist should pass a metadata-only regular-file probe")
+            try expect(SelectedRegularFilePathProbe.probe(selectedURL: preferenceLink) == .symbolicLink
+                       && SelectedRegularFilePathProbe.probe(
+                           selectedURL: symlinkAncestor.appendingPathComponent("outside.plist")
+                       ) == .symbolicLink,
+                       "selected Preferences paths must reject final and ancestor symlinks before association")
+            try expect(SelectedRegularFilePathProbe.probe(selectedURL: outside) == .notRegularFile
+                       && SelectedRegularFilePathProbe.probe(
+                           selectedURL: preferenceFile.deletingLastPathComponent().appendingPathComponent("missing.plist")
+                       ) == .missingOrUnreachable,
+                       "a selected Preferences candidate must be a present regular file, not a folder or missing path")
+            let preferenceContentsAfterProbe = try Data(contentsOf: preferenceFile)
+            try expect(preferenceContentsAfterProbe == preferenceContents,
+                       "probing the selected Preferences file must not read or alter its contents")
         }
     }
 

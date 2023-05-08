@@ -760,6 +760,20 @@ final class DashboardModel {
             )
             return
         }
+        let selectedRootIsValid: Bool
+        if selectedSuggestion?.evidence == .probablePreferencesFile {
+            selectedRootIsValid = SelectedRegularFilePathProbe.probe(selectedURL: selectedURL)
+                == .availableRegularFile
+        } else {
+            selectedRootIsValid = SelectedScopePathProbe.probe(selectedURL: selectedURL).isAvailableDirectory
+        }
+        guard selectedRootIsValid else {
+            errorMessage = NSLocalizedString(
+                "Disker could not confirm this exact location as a regular file or folder without following symbolic links. No association or scan was created.",
+                comment: "Rejects a missing, inaccessible, wrong-type, or symlink suggested application data root before saving its association"
+            )
+            return
+        }
 
         do {
             history = try ObservationStore.associateApplicationFolders(

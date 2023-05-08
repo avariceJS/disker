@@ -224,6 +224,7 @@
 "Associate and Measure" = "Связать и измерить";
 "Spotlight's bundle ID is an unverified hint. Choose this exact file or folder to associate it with the discovered app and start a metadata-only scan. Disker will not follow symlinks or read file contents." = "Идентификатор пакета из Spotlight не проверен. Выберите именно этот файл или папку, чтобы связать их с найденным приложением и начать сканирование метаданных. Disker не переходит по символическим ссылкам и не читает содержимое файлов.";
 "Choose the same suggested location to measure it. No scan was started." = "Чтобы выполнить измерение, выберите именно предложенный путь. Сканирование не запускалось.";
+"Disker could not confirm this exact location as a regular file or folder without following symbolic links. No association or scan was created." = "Disker не удалось подтвердить, что это точное расположение является файлом или папкой, не переходя по символическим ссылкам. Связь не сохранена, сканирование не запускалось.";
 "The location was selected, but its app association could not be saved: %@" = "Расположение выбрано, но связать его с приложением не удалось: %@";
 "Choose exact location to measure…" = "Выбрать точное расположение для измерения…";
 "Choose location to measure…" = "Выбрать расположение для измерения…";
