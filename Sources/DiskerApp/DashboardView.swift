@@ -747,27 +747,21 @@ final class DashboardModel {
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
         guard panel.runModal() == .OK, let selectedURL = panel.url else { return }
-        let selectedSuggestion = ApplicationDataLocationCandidates.suggestion(
-            matchingExactPath: selectedURL.path,
+        let selectionValidation = ApplicationDataLocationCandidates.validateSelectedLocation(
+            selectedURL, expectedPath: expectedPath,
             bundleIdentifier: spotlightBundleIdentifier,
             homeDirectoryPath: CurrentUserHomeDirectory.path ?? ""
         )
-        guard SelectedScopeBookmarkStore.isSameSelectedPath(selectedURL, as: expectedPath),
-              selectedSuggestion?.path == expectedPath else {
+        guard selectionValidation != .cancelled else { return }
+        guard selectionValidation != .differentPath,
+              selectionValidation != .notSuggested else {
             errorMessage = NSLocalizedString(
                 "Choose the same suggested location to measure it. No scan was started.",
                 comment: "Error shown when the user chooses a different path than the suggested app data location"
             )
             return
         }
-        let selectedRootIsValid: Bool
-        if selectedSuggestion?.evidence == .probablePreferencesFile {
-            selectedRootIsValid = SelectedRegularFilePathProbe.probe(selectedURL: selectedURL)
-                == .availableRegularFile
-        } else {
-            selectedRootIsValid = SelectedScopePathProbe.probe(selectedURL: selectedURL).isAvailableDirectory
-        }
-        guard selectedRootIsValid else {
+        guard selectionValidation == .accepted else {
             errorMessage = NSLocalizedString(
                 "Disker could not confirm this exact location as a regular file or folder without following symbolic links. No association or scan was created.",
                 comment: "Rejects a missing, inaccessible, wrong-type, or symlink suggested application data root before saving its association"

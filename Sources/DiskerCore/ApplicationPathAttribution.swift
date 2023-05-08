@@ -348,6 +348,14 @@ public struct ApplicationDataLocationCandidate: Equatable, Sendable, Identifiabl
 }
 
 public enum ApplicationDataLocationCandidates {
+    public enum SelectionValidation: Equatable, Sendable {
+        case accepted
+        case cancelled
+        case notSuggested
+        case differentPath
+        case invalidRoot
+    }
+
     /// Builds conventional paths from a supplied bounded bundle-ID hint.
     /// Signature and group evidence refine labels when available; this performs
     /// no filesystem lookup and grants no access.
@@ -430,5 +438,36 @@ public enum ApplicationDataLocationCandidates {
             bundleIdentifier: bundleIdentifier,
             homeDirectoryPath: homeDirectoryPath
         ).first(where: { $0.path == normalizedPath })
+    }
+
+    /// Validates a picker result against one generated hint before callers
+    /// persist an association or start a selected-root scan.
+    public static func validateSelectedLocation(
+        _ selectedURL: URL?, expectedPath: String,
+        bundleIdentifier: String?, homeDirectoryPath: String
+    ) -> SelectionValidation {
+        guard let selectedURL else { return .cancelled }
+        guard let expected = suggestion(
+            matchingExactPath: expectedPath,
+            bundleIdentifier: bundleIdentifier,
+            homeDirectoryPath: homeDirectoryPath
+        ) else { return .notSuggested }
+        guard SelectedScopeBookmarkStore.isSameSelectedPath(selectedURL, as: expected.path),
+              suggestion(
+                matchingExactPath: selectedURL.path,
+                bundleIdentifier: bundleIdentifier,
+                homeDirectoryPath: homeDirectoryPath
+              )?.path == expected.path else {
+            return .differentPath
+        }
+
+        let rootIsValid: Bool
+        if expected.evidence == .probablePreferencesFile {
+            rootIsValid = SelectedRegularFilePathProbe.probe(selectedURL: selectedURL)
+                == .availableRegularFile
+        } else {
+            rootIsValid = SelectedScopePathProbe.probe(selectedURL: selectedURL).isAvailableDirectory
+        }
+        return rootIsValid ? .accepted : .invalidRoot
     }
 }

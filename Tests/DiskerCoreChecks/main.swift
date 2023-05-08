@@ -1555,6 +1555,35 @@ private struct DiskerCoreChecks {
             let preferenceContentsAfterProbe = try Data(contentsOf: preferenceFile)
             try expect(preferenceContentsAfterProbe == preferenceContents,
                        "probing the selected Preferences file must not read or alter its contents")
+            try expect(ApplicationDataLocationCandidates.validateSelectedLocation(
+                URL(fileURLWithPath: support.path, isDirectory: true),
+                expectedPath: support.path, bundleIdentifier: "com.example.Probe",
+                homeDirectoryPath: home.path
+            ) == .accepted && ApplicationDataLocationCandidates.validateSelectedLocation(
+                preferenceFile, expectedPath: preferences.path,
+                bundleIdentifier: "com.example.Probe", homeDirectoryPath: home.path
+            ) == .accepted,
+                       "the selection gate should accept only existing exact suggested roots of the expected file type")
+            try expect(ApplicationDataLocationCandidates.validateSelectedLocation(
+                nil, expectedPath: support.path, bundleIdentifier: "com.example.Probe",
+                homeDirectoryPath: home.path
+            ) == .cancelled && ApplicationDataLocationCandidates.validateSelectedLocation(
+                outsideFile, expectedPath: support.path,
+                bundleIdentifier: "com.example.Probe", homeDirectoryPath: home.path
+            ) == .differentPath && ApplicationDataLocationCandidates.validateSelectedLocation(
+                outside, expectedPath: root.appendingPathComponent("arbitrary").path,
+                bundleIdentifier: "com.example.Probe", homeDirectoryPath: home.path
+            ) == .notSuggested,
+                       "cancellation, a neighboring selection, and an ungenerated expected path must fail before association")
+            try expect(ApplicationDataLocationCandidates.validateSelectedLocation(
+                cacheURL, expectedPath: cache.path,
+                bundleIdentifier: "com.example.Probe", homeDirectoryPath: home.path
+            ) == .invalidRoot && ApplicationDataLocationCandidates.validateSelectedLocation(
+                URL(fileURLWithPath: logs.path, isDirectory: true),
+                expectedPath: logs.path, bundleIdentifier: "com.example.Probe",
+                homeDirectoryPath: home.path
+            ) == .invalidRoot,
+                       "an exact suggested path must still reject symlink and missing roots before association")
         }
     }
 
