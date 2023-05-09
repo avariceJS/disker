@@ -30,6 +30,16 @@ private struct DiskerCoreChecks {
             )
             return
         }
+        if CommandLine.arguments.count == 8,
+           CommandLine.arguments[1] == "--verify-app-data-relaunch" {
+            do {
+                try verifyAssociatedAppDataRelaunch(Array(CommandLine.arguments.dropFirst(2)))
+            } catch {
+                fputs("APP DATA RELAUNCH FAILED: \(error.localizedDescription)\n", stderr)
+                exit(EXIT_FAILURE)
+            }
+            return
+        }
 
         let checks: [(String, () throws -> Void)] = [
             ("capacity math", testCapacityMath),
@@ -1390,6 +1400,39 @@ private struct DiskerCoreChecks {
             _ = try ObservationStore.associateApplicationFolders(
                 [suggestion.path], with: candidate.path, to: storeURL
             )
+            let bookmarkURL = root.appendingPathComponent("Disker/selected-scopes.json")
+            _ = try SelectedScopeBookmarkStore.remember(
+                [URL(fileURLWithPath: suggestion.path, isDirectory: true)], at: bookmarkURL
+            )
+            let relaunchResultURL = root.appendingPathComponent("Disker/app-data-relaunch-result")
+            let relaunch = Process()
+            relaunch.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+            relaunch.arguments = [
+                "--verify-app-data-relaunch", suggestion.path, candidate.path,
+                bookmarkURL.path, storeURL.path, fileInventoryURL.path, relaunchResultURL.path,
+            ]
+            try relaunch.run()
+            relaunch.waitUntilExit()
+            guard relaunch.terminationStatus == 0,
+                  let relaunchedResult = try? String(contentsOf: relaunchResultURL, encoding: .utf8) else {
+                throw CheckFailure.assertion("the new process could not restore and rescan the associated app-data bookmark")
+            }
+            let historyAfterRelaunch = try ObservationStore.load(from: storeURL)
+            let relaunchedObservation = historyAfterRelaunch.observations.last?.folders.first
+            let previousRelaunchObservation = relaunchedObservation.flatMap {
+                ObservationComparison.previousCompleteFolder(for: $0, in: historyAfterRelaunch)
+            }
+            let relaunchedInventoryReport = try FileInventoryStore.loadReports(at: fileInventoryURL)[suggestion.path]
+            try expect(relaunchedResult == "\(suggestion.path)\n\(stateContents.count)"
+                       && historyAfterRelaunch.observations.count == 2
+                       && relaunchedObservation?.path == suggestion.path
+                       && relaunchedObservation?.complete == true
+                       && previousRelaunchObservation?.id == measured.id
+                       && relaunchedInventoryReport?.folderObservationID == relaunchedObservation?.id
+                       && relaunchedInventoryReport?.hasBaseline == true
+                       && relaunchedInventoryReport?.changedPathCount == 0
+                       && historyAfterRelaunch.applicationAssociations.first?.relatedFolderPaths == [suggestion.path],
+                       "a fresh process should restore the exact app association and bookmark, then append a comparable complete baseline without changing contents")
 
             let fifo = container.appendingPathComponent("synthetic-stream.sqlite")
             let fifoResult = fifo.path.withCString {
@@ -1412,7 +1455,7 @@ private struct DiskerCoreChecks {
             let rejectedPartialInventory = try FileInventoryStore.record(partialInventory, at: fileInventoryURL)
             let retainedFileInventoryReport = try FileInventoryStore.loadReports(at: fileInventoryURL)[suggestion.path]
             try expect(rejectedPartialInventory == nil
-                       && retainedFileInventoryReport == baselineReport,
+                       && retainedFileInventoryReport == relaunchedInventoryReport,
                        "a partial app-data scan should not replace the prior exact-path file inventory baseline")
             _ = try ObservationStore.append(partialScan.observation, to: storeURL)
 
@@ -1439,29 +1482,30 @@ private struct DiskerCoreChecks {
             _ = try ObservationStore.append(finalScan.observation, to: storeURL)
 
             let saved = try ObservationStore.load(from: storeURL)
-            let firstComplete = saved.observations.first?.folders.first
             let lastComplete = saved.observations.last?.folders.first
             let previousComplete = lastComplete.flatMap {
                 ObservationComparison.previousCompleteFolder(for: $0, in: saved)
             }
             let logicalDelta = lastComplete.flatMap { current in
-                firstComplete.map { current.logicalBytes - $0.logicalBytes }
+                previousComplete.map { current.logicalBytes - $0.logicalBytes }
             }
             let allocatedDelta = lastComplete.flatMap { current in
                 previousComplete.flatMap {
                     ObservationComparison.allocatedByteDelta(current: current, previous: $0)
                 }
             }
-            try expect(saved.observations.count == 3
+            try expect(saved.observations.count == 4
                        && saved.observations[0].folders.map(\.path) == [suggestion.path]
                        && saved.observations[0].folders[0].complete
                        && saved.observations[1].folders.map(\.path) == [suggestion.path]
-                       && !saved.observations[1].folders[0].complete
-                       && saved.observations[1].folders[0].excludedSpecialFileCount == 1
-                       && saved.observations[1].folders[0].logicalBytes == Int64(stateContents.count)
+                       && saved.observations[1].folders[0].complete
                        && saved.observations[2].folders.map(\.path) == [suggestion.path]
-                       && saved.observations[2].folders[0].complete
-                       && previousComplete == firstComplete
+                       && !saved.observations[2].folders[0].complete
+                       && saved.observations[2].folders[0].excludedSpecialFileCount == 1
+                       && saved.observations[2].folders[0].logicalBytes == Int64(stateContents.count)
+                       && saved.observations[3].folders.map(\.path) == [suggestion.path]
+                       && saved.observations[3].folders[0].complete
+                       && previousComplete?.id == saved.observations[1].folders.first?.id
                        && logicalDelta == Int64(changedStateContents.count - stateContents.count)
                        && allocatedDelta != nil
                        && saved.applicationAssociations.count == 1
@@ -1470,6 +1514,47 @@ private struct DiskerCoreChecks {
                        && saved.applicationAssociations[0].bundleIdentifier == nil,
                        "complete-partial-complete app-data history should retain the last complete baseline and never turn the Spotlight hint into verified bundle identity")
         }
+    }
+
+    private static func verifyAssociatedAppDataRelaunch(_ arguments: [String]) throws {
+        guard arguments.count == 6 else {
+            throw CheckFailure.assertion("the app-data relaunch child received an invalid argument list")
+        }
+        let rootPath = arguments[0]
+        let bundlePath = arguments[1]
+        let bookmarkURL = URL(fileURLWithPath: arguments[2])
+        let historyURL = URL(fileURLWithPath: arguments[3])
+        let inventoryURL = URL(fileURLWithPath: arguments[4])
+        let resultURL = URL(fileURLWithPath: arguments[5])
+
+        let savedHistory = try ObservationStore.load(from: historyURL)
+        guard savedHistory.applicationAssociations.contains(where: {
+            $0.bundlePath == bundlePath && $0.relatedFolderPaths.contains(rootPath)
+        }) else {
+            throw CheckFailure.assertion("the app association did not survive into the relaunched process")
+        }
+        let bookmarks = try SelectedScopeBookmarkStore.load(from: bookmarkURL)
+        guard let bookmark = bookmarks.first(where: { $0.path == rootPath }) else {
+            throw CheckFailure.assertion("the exact selected app-data bookmark did not survive relaunch")
+        }
+        let resolvedURL = try SelectedScopeBookmarkStore.resolve(bookmark, at: bookmarkURL)
+        guard resolvedURL.standardizedFileURL.path == rootPath,
+              SelectedScopePathProbe.probe(at: rootPath, using: bookmark).isAvailableDirectory else {
+            throw CheckFailure.assertion("the relaunched bookmark did not restore the exact selected app-data directory")
+        }
+
+        let scan = FolderScanner.scanWithFileInventories(roots: [resolvedURL])
+        guard scan.observation.folders.count == 1,
+              let folder = scan.observation.folders.first,
+              folder.path == rootPath, folder.complete,
+              let inventory = scan.fileInventories.first, inventory.complete else {
+            throw CheckFailure.assertion("the relaunched exact app-data root did not produce a complete metadata observation")
+        }
+        _ = try FileInventoryStore.record(inventory, at: inventoryURL)
+        _ = try ObservationStore.append(scan.observation, to: historyURL)
+        try "\(folder.path)\n\(folder.logicalBytes)".write(
+            to: resultURL, atomically: true, encoding: .utf8
+        )
     }
 
     private static func testCurrentUserHomeDirectory() throws {
