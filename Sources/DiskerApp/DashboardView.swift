@@ -4492,67 +4492,28 @@ struct DashboardView: View {
                             let candidatePath = URL(fileURLWithPath: suggestion.path, isDirectory: true)
                                 .standardizedFileURL.path
                             let candidateStatus = model.applicationDataLocationStatuses[candidatePath]
-                            HStack(alignment: .top, spacing: 12) {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(suggestion.title)
-                                        .font(.caption.weight(.medium))
-                                    Text(suggestion.path)
-                                        .font(.caption2.monospaced())
-                                        .textSelection(.enabled)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                    Text(suggestion.explanation)
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                    if let candidateStatus {
-                                        Label(
-                                            applicationDataLocationStatusText(candidateStatus),
-                                            systemImage: associatedPathStatusSymbol(candidateStatus)
-                                        )
-                                        .font(.caption2)
-                                        .foregroundStyle(associatedPathStatusColor(candidateStatus))
-                                        .fixedSize(horizontal: false, vertical: true)
-                                    }
+                            ApplicationDataLocationSuggestionRow(
+                                suggestion: suggestion,
+                                statusText: candidateStatus.map(applicationDataLocationStatusText),
+                                statusSymbol: candidateStatus.map(associatedPathStatusSymbol),
+                                statusColor: candidateStatus.map(associatedPathStatusColor),
+                                isChecking: model.checkingApplicationDataLocationPaths.contains(candidatePath),
+                                canCheck: suggestion.evidence != .probablePreferencesFile,
+                                isMeasurementDisabled: model.isScanning,
+                                measurementTitle: "Choose location to measure…",
+                                onCheck: {
+                                    model.checkApplicationDataLocation(suggestion.path, for: bundle)
+                                },
+                                onMeasure: {
+                                    let startingPath = candidateStatus?.isAvailableDirectory == true
+                                        ? suggestion.path
+                                        : URL(fileURLWithPath: suggestion.path).deletingLastPathComponent().path
+                                    model.chooseRelatedFolders(
+                                        for: bundle.path,
+                                        startingAt: URL(fileURLWithPath: startingPath, isDirectory: true)
+                                    )
                                 }
-                                Spacer(minLength: 4)
-                                HStack(spacing: 8) {
-                                    if suggestion.evidence != .probablePreferencesFile {
-                                        Button {
-                                            model.checkApplicationDataLocation(suggestion.path, for: bundle)
-                                        } label: {
-                                            if model.checkingApplicationDataLocationPaths.contains(candidatePath) {
-                                                ProgressView()
-                                                    .controlSize(.small)
-                                            } else {
-                                                Label(
-                                                    candidateStatus == nil ? "Check exact path" : "Check again",
-                                                    systemImage: "magnifyingglass"
-                                                )
-                                            }
-                                        }
-                                        .controlSize(.small)
-                                        .disabled(model.checkingApplicationDataLocationPaths.contains(candidatePath))
-                                        .help("Check only this exact folder path; no descendants or file contents are read")
-                                        .accessibilityLabel(
-                                            model.checkingApplicationDataLocationPaths.contains(candidatePath)
-                                                ? "Checking exact path…"
-                                                : candidateStatus == nil ? "Check exact path" : "Check again"
-                                        )
-                                    }
-                                    Button("Choose location to measure…") {
-                                        let startingPath = candidateStatus?.isAvailableDirectory == true
-                                            ? suggestion.path
-                                            : URL(fileURLWithPath: suggestion.path).deletingLastPathComponent().path
-                                        model.chooseRelatedFolders(
-                                            for: bundle.path,
-                                            startingAt: URL(fileURLWithPath: startingPath, isDirectory: true)
-                                        )
-                                    }
-                                    .controlSize(.small)
-                                    .disabled(model.isScanning)
-                                }
-                            }
-                            if suggestion.id != suggestions.last?.id { Divider() }
+                            )
                         }
                     }
                     .padding(.top, 6)
@@ -4590,63 +4551,24 @@ struct DashboardView: View {
                             let candidatePath = URL(fileURLWithPath: suggestion.path, isDirectory: true)
                                 .standardizedFileURL.path
                             let candidateStatus = model.applicationDataLocationStatuses[candidatePath]
-                            HStack(alignment: .top, spacing: 10) {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(suggestion.title)
-                                        .font(.caption.weight(.medium))
-                                    Text(suggestion.path)
-                                        .font(.caption2.monospaced())
-                                        .textSelection(.enabled)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                    Text(suggestion.explanation)
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                    if let candidateStatus {
-                                        Label(
-                                            applicationDataLocationStatusText(candidateStatus),
-                                            systemImage: associatedPathStatusSymbol(candidateStatus)
-                                        )
-                                        .font(.caption2)
-                                        .foregroundStyle(associatedPathStatusColor(candidateStatus))
-                                        .fixedSize(horizontal: false, vertical: true)
-                                    }
+                            ApplicationDataLocationSuggestionRow(
+                                suggestion: suggestion,
+                                statusText: candidateStatus.map(applicationDataLocationStatusText),
+                                statusSymbol: candidateStatus.map(associatedPathStatusSymbol),
+                                statusColor: candidateStatus.map(associatedPathStatusColor),
+                                isChecking: model.checkingApplicationDataLocationPaths.contains(candidatePath),
+                                canCheck: suggestion.evidence != .probablePreferencesFile,
+                                isMeasurementDisabled: model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates,
+                                measurementTitle: "Choose exact location to measure…",
+                                onCheck: {
+                                    model.checkDiscoveredApplicationDataLocation(
+                                        suggestion.path, for: candidate
+                                    )
+                                },
+                                onMeasure: {
+                                    model.chooseDiscoveredApplicationDataLocation(suggestion.path, for: candidate)
                                 }
-                                Spacer(minLength: 4)
-                                VStack(alignment: .trailing, spacing: 6) {
-                                    if suggestion.evidence != .probablePreferencesFile {
-                                        Button {
-                                            model.checkDiscoveredApplicationDataLocation(
-                                                suggestion.path, for: candidate
-                                            )
-                                        } label: {
-                                            if model.checkingApplicationDataLocationPaths.contains(candidatePath) {
-                                                ProgressView()
-                                                    .controlSize(.small)
-                                            } else {
-                                                Label(
-                                                    candidateStatus == nil ? "Check exact path" : "Check again",
-                                                    systemImage: "magnifyingglass"
-                                                )
-                                            }
-                                        }
-                                        .controlSize(.small)
-                                        .disabled(model.checkingApplicationDataLocationPaths.contains(candidatePath))
-                                        .help("Check only this exact folder path; no descendants or file contents are read")
-                                        .accessibilityLabel(
-                                            model.checkingApplicationDataLocationPaths.contains(candidatePath)
-                                                ? "Checking exact path…"
-                                                : candidateStatus == nil ? "Check exact path" : "Check again"
-                                        )
-                                    }
-                                    Button("Choose exact location to measure…") {
-                                        model.chooseDiscoveredApplicationDataLocation(suggestion.path, for: candidate)
-                                    }
-                                    .controlSize(.small)
-                                    .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
-                                }
-                            }
-                            if suggestion.id != suggestions.last?.id { Divider() }
+                            )
                         }
                     }
                     .padding(.top, 6)

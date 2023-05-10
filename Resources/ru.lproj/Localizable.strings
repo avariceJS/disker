@@ -186,6 +186,8 @@
 "These conventional paths come from the selected app's bundle ID and embedded group claims. Disker checks only the exact path when asked; this does not scan its contents or establish ownership. Choose a path to open the picker, and only the exact files or folders you select will be measured." = "Стандартные пути предложены по bundle ID выбранного приложения и встроенным заявлениям о группах. По запросу Disker проверяет только точный путь: содержимое не сканируется, принадлежность не устанавливается. Выберите путь, чтобы открыть диалог; измеряются только точно выбранные вами файлы или папки.";
 "Check exact path" = "Проверить точный путь";
 "Check again" = "Проверить снова";
+"Not checked" = "Не проверено";
+"Why this path is suggested" = "Почему предложен этот путь";
 "Possible related data locations" = "Возможные связанные данные";
 "Spotlight returned bundle ID · %@ · unverified" = "Spotlight сообщил идентификатор пакета · %@ · не проверен";
 "These conventional paths are hints only. Spotlight's bundle ID is not verified against the app signature or data ownership. Check inspects only the exact suggested path and does not list descendants or read file contents. A metadata-only measurement starts only after you choose the exact file or folder in the picker." = "Эти стандартные пути — только подсказки. Bundle ID из Spotlight не сверяется с подписью приложения и не доказывает принадлежность данных. Проверка затрагивает только точный предложенный путь, не перечисляет вложенные элементы и не читает содержимое файлов. Измерение метаданных начинается лишь после выбора точного файла или папки в диалоге.";
