@@ -71,6 +71,45 @@
 "Available (GiB)" = "Доступно (ГиБ)";
 "About these measurements" = "Об этих измерениях";
 "The capacity figure comes from macOS. Folder totals are a separate file-tree estimate: snapshots, clones and system-managed storage can make them differ. Unmeasured items are reported as incomplete, never as zero." = "Ёмкость сообщает macOS. Размер папок — отдельная оценка по дереву файлов; снимки, клоны и системные данные могут объяснять расхождение. Неизмеренные элементы отмечаются как неизвестные, а не как нулевые.";
+"Git metadata marker detected" = "Обнаружен маркер метаданных Git";
+
+/* Overview growth and selected-folder details. */
+"Capacity unavailable" = "Данные о ёмкости недоступны";
+"macOS did not provide capacity information for this volume." = "macOS не предоставила сведения о ёмкости этого тома.";
+"Changes inside selected folders" = "Изменения в выбранных папках";
+"Disker compares regular files only inside the exact selected folders. It cannot name changes elsewhere on the Mac, reconstruct earlier growth, or catch files created and removed between scans. Overlapping roots are not additive; allocated bytes are estimates, not reclaimable space." = "Disker сравнивает обычные файлы только внутри точно выбранных папок. Он не определяет изменения в других местах Mac, не восстанавливает рост до первого замера и не замечает файлы, созданные и удалённые между сканированиями. Перекрывающиеся корни нельзя складывать; оценка выделенных байтов не равна освобождаемому месту.";
+"No complete file-level baseline exists for this selected folder. Record a baseline now to show exact path changes after a later complete scan; earlier growth cannot be reconstructed." = "Для этой папки нет полной базовой инвентаризации файлов. Запишите её сейчас: следующее полное сканирование покажет изменения точных путей. Более ранний рост восстановить нельзя.";
+"No complete file-level baseline is stored for this folder. A later complete scan must establish one; earlier growth cannot be reconstructed." = "Для этой папки не сохранена полная базовая инвентаризация файлов. Её создаст последующее полное сканирование; более ранний рост восстановить нельзя.";
+"%@ No complete file-level baseline is stored for this folder. A later complete scan must establish one; earlier growth cannot be reconstructed." = "%@ Для этой папки не сохранена полная базовая инвентаризация файлов. Её создаст последующее полное сканирование; более ранний рост восстановить нельзя.";
+"%@ No file-level comparison was produced for this scan; the prior report remains stored but is not current." = "%@ В этом сканировании сравнение файлов не выполнено; прежний отчёт сохранён, но не относится к текущему сканированию.";
+"This scan did not produce a comparable full inventory. The prior complete report remains stored; a later complete scan can resume path-level comparisons." = "Это сканирование не создало полного сопоставимого списка файлов. Прежний полный отчёт сохранён; сравнение точных путей возобновится после следующего полного сканирования.";
+"Baseline recorded at %@; the next complete scan can show file-level changes." = "Базовый список сохранён %@; следующее полное сканирование покажет изменения файлов.";
+"No file-path or size changes measured." = "Изменений путей или размеров файлов не обнаружено.";
+"%ld additional paths are included in the net totals; open Folders for the bounded details." = "Дополнительных путей учтено в итоговых суммах: %ld. Ограниченный список подробностей доступен в разделе «Папки».";
+"+%@ allocated estimate" = "+%@ · оценка выделенного места";
+"Monitoring paused · review access" = "Мониторинг приостановлен · проверьте доступ";
+"Monitoring on · only while window open" = "Мониторинг включён только при открытом окне";
+"Monitoring off · changes appear after a scan" = "Мониторинг выключен · изменения видны после сканирования";
+"Choose folders and record a baseline" = "Выбрать папки и записать базовый список";
+"Open Folders for file details and monitoring" = "Открыть раздел «Папки» для подробностей и мониторинга";
+"Development data to review" = "Данные разработки для проверки";
+"Name and Git-marker clues identify places worth inspecting. They do not show that data is unused or safe to remove." = "Имена папок и маркер Git подсказывают, что стоит проверить. Это не доказывает, что данные не используются или их безопасно удалять.";
+"Showing 3 of %ld selected roots with candidates. Open Folders to review the rest." = "Показаны 3 из %ld выбранных папок с кандидатами. Остальные доступны в разделе «Папки».";
+"%ld measured candidates · %@" = "Измерено кандидатов: %ld · %@";
+"complete scan" = "полное сканирование";
+"partial scan" = "частичное сканирование";
+"Largest candidate: %@ · allocated estimate ~%@" = "Крупнейший кандидат: %@ · оценка выделенного места ~%@";
+"Review" = "Разобрать";
+"Partial scans can omit data; measured sizes are not reclaimable-space estimates." = "Частичные сканирования могут пропускать данные; измеренный размер не является оценкой освобождаемого места.";
+"Growing selected folders" = "Выбранные папки с ростом";
+"Largest positive allocated-byte changes between complete scans of the same selected path." = "Наибольший рост оценки выделенного места между полными сканированиями одного и того же пути.";
+"At latest scan · allocated estimate ~%@" = "По последнему сканированию · оценка выделенного места ~%@";
+"Observed pace %@/day" = "Наблюдаемый темп: %@ в день";
+"Largest selected folders" = "Крупнейшие выбранные папки";
+"Open Folders for the full breakdown" = "Открыть раздел «Папки» для полной разбивки";
+"Since %@: added or enlarged paths ~%@ allocated estimate · reduced paths ~%@ · net %@ · %ld changed paths" = "С %@: добавлено или увеличено на ~%@ по оценке выделенного места · уменьшено на ~%@ · итог %@ · изменённых путей: %ld";
+"unknown time" = "неизвестное время";
+"unknown" = "неизвестно";
 
 /* Application discovery and measured bundle inventory. */
 "Application bundles" = "Пакеты приложений";

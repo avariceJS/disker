@@ -2338,7 +2338,13 @@ struct DashboardView: View {
                     .font(.subheadline.weight(.semibold))
                 monitoringStatusLabel(for: folder.path)
                 if !report.hasBaseline {
-                    Text("Baseline recorded at \(report.observedAt.formatted(date: .abbreviated, time: .shortened)); the next complete scan can show file-level changes.")
+                    Text(String.localizedStringWithFormat(
+                        NSLocalizedString(
+                            "Baseline recorded at %@; the next complete scan can show file-level changes.",
+                            comment: "Time of the initial selected-folder file inventory baseline"
+                        ),
+                        report.observedAt.formatted(date: .abbreviated, time: .shortened)
+                    ))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
@@ -2354,7 +2360,10 @@ struct DashboardView: View {
                             .foregroundStyle(.secondary)
                     }
                     if report.omittedChangeCount > 0 {
-                        Text("\(report.omittedChangeCount) additional paths are included in the net totals; open Folders for the bounded details.")
+                        Text(String.localizedStringWithFormat(
+                            NSLocalizedString("%ld additional paths are included in the net totals; open Folders for the bounded details.", comment: "Number of file paths omitted from the bounded visible change list"),
+                            Int32(report.omittedChangeCount)
+                        ))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -2368,9 +2377,15 @@ struct DashboardView: View {
                 Group {
                     if !folder.complete || latest.cancelled {
                         if model.fileInventoryReports[folder.path] != nil {
-                            Text("\(fileInventoryIncompleteness(for: folder)) No file-level comparison was produced for this scan; the prior report remains stored but is not current.")
+                            Text(String.localizedStringWithFormat(
+                                NSLocalizedString("%@ No file-level comparison was produced for this scan; the prior report remains stored but is not current.", comment: "Partial selected-root file scan keeps its older report but withholds a current comparison"),
+                                fileInventoryIncompleteness(for: folder)
+                            ))
                         } else {
-                            Text("\(fileInventoryIncompleteness(for: folder)) No complete file-level baseline is stored for this folder. A later complete scan must establish one; earlier growth cannot be reconstructed.")
+                            Text(String.localizedStringWithFormat(
+                                NSLocalizedString("%@ No complete file-level baseline is stored for this folder. A later complete scan must establish one; earlier growth cannot be reconstructed.", comment: "Partial selected-root file scan has no baseline and requires a future complete scan"),
+                                fileInventoryIncompleteness(for: folder)
+                            ))
                         }
                     } else if model.fileInventoryReports[folder.path] != nil {
                         Text("This scan did not produce a comparable full inventory. The prior complete report remains stored; a later complete scan can resume path-level comparisons.")
@@ -2400,7 +2415,10 @@ struct DashboardView: View {
 
     private func fileInventoryGrowthRow(_ change: FileInventoryChange, folderName: String) -> some View {
         let path = change.relativePath.isEmpty ? folderName : change.relativePath
-        let amount = "+\(format(change.allocatedDelta)) allocated estimate"
+        let amount = String.localizedStringWithFormat(
+            NSLocalizedString("+%@ allocated estimate", comment: "Allocated-byte estimate increase for one file path"),
+            format(change.allocatedDelta)
+        )
         return HStack(spacing: 8) {
             Text(path)
                 .lineLimit(1)
@@ -2461,7 +2479,8 @@ struct DashboardView: View {
                 Label("Available-space history", systemImage: "chart.xyaxis.line")
                     .font(.headline)
                 Spacer()
-                Text(model.capacity.map { $0.observedAt.formatted(date: .abbreviated, time: .shortened) } ?? "Unavailable")
+                Text(model.capacity.map { $0.observedAt.formatted(date: .abbreviated, time: .shortened) }
+                    ?? NSLocalizedString("Unavailable", comment: "No stored capacity observation is available"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button {
@@ -2996,7 +3015,10 @@ struct DashboardView: View {
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if candidateFolders.count > 3 {
-                            Text("Showing 3 of \(candidateFolders.count) selected roots with candidates. Open Folders to review the rest.")
+                            Text(String.localizedStringWithFormat(
+                                NSLocalizedString("Showing 3 of %ld selected roots with candidates. Open Folders to review the rest.", comment: "Bounded number of selected roots with development-data candidates on Overview"),
+                                Int32(candidateFolders.count)
+                            ))
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -3006,11 +3028,22 @@ struct DashboardView: View {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(folder.displayName)
                                         .font(.subheadline.weight(.semibold))
-                                    Text("\(review.entries.count) measured candidates · \(folder.complete ? "complete scan" : "partial scan")")
+                                    Text(String.localizedStringWithFormat(
+                                        NSLocalizedString("%ld measured candidates · %@", comment: "Count of measured development-data candidates and selected-folder scan coverage"),
+                                        Int32(review.entries.count),
+                                        NSLocalizedString(
+                                            folder.complete ? "complete scan" : "partial scan",
+                                            comment: "Coverage state of the selected-folder scan"
+                                        )
+                                    ))
                                         .font(.caption)
                                         .foregroundStyle(folder.complete ? Color.secondary : Color.orange)
                                     if let largest = review.entries.max(by: { $0.allocatedBytesEstimate < $1.allocatedBytesEstimate }) {
-                                        Text("Largest: \(largest.relativePath) · ~\(format(largest.allocatedBytesEstimate)) allocated")
+                                        Text(String.localizedStringWithFormat(
+                                            NSLocalizedString("Largest candidate: %@ · allocated estimate ~%@", comment: "Largest measured development-data candidate and its allocated-byte estimate"),
+                                            largest.relativePath,
+                                            format(largest.allocatedBytesEstimate)
+                                        ))
                                             .font(.caption2)
                                             .foregroundStyle(.secondary)
                                             .lineLimit(1)
@@ -3066,11 +3099,17 @@ struct DashboardView: View {
                                 Text(formattedDelta(signal.growthBytes))
                                     .font(.subheadline.weight(.semibold).monospacedDigit())
                                     .foregroundStyle(.orange)
-                                Text("At latest scan ~\(format(signal.folder.allocatedBytes)) allocated")
+                                Text(String.localizedStringWithFormat(
+                                    NSLocalizedString("At latest scan · allocated estimate ~%@", comment: "Allocated-byte estimate for the latest complete selected-folder scan"),
+                                    format(signal.folder.allocatedBytes)
+                                ))
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                                 if let bytesPerDay = signal.observedBytesPerDay {
-                                    Text("Observed pace \(formattedByteRate(bytesPerDay))/day")
+                                    Text(String.localizedStringWithFormat(
+                                        NSLocalizedString("Observed pace %@/day", comment: "Observed allocated-byte change rate per day"),
+                                        formattedByteRate(bytesPerDay)
+                                    ))
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                 }
@@ -3129,11 +3168,17 @@ struct DashboardView: View {
                                 Text(formattedDelta(signal.growthBytes))
                                     .font(.subheadline.weight(.semibold).monospacedDigit())
                                     .foregroundStyle(.orange)
-                                Text("At latest scan ~\(format(signal.directory.allocatedBytes)) allocated")
+                                Text(String.localizedStringWithFormat(
+                                    NSLocalizedString("At latest scan · allocated estimate ~%@", comment: "Allocated-byte estimate for the latest complete selected-folder scan"),
+                                    format(signal.directory.allocatedBytes)
+                                ))
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                                 if let bytesPerDay = signal.observedBytesPerDay {
-                                    Text("Observed pace \(formattedByteRate(bytesPerDay))/day")
+                                    Text(String.localizedStringWithFormat(
+                                        NSLocalizedString("Observed pace %@/day", comment: "Observed allocated-byte change rate per day"),
+                                        formattedByteRate(bytesPerDay)
+                                    ))
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                 }
@@ -6820,11 +6865,18 @@ struct DashboardView: View {
     }
 
     private func fileInventorySummary(_ report: FileInventoryChangeSet) -> String {
-        let previousTime = report.previousObservedAt?.formatted(date: .abbreviated, time: .shortened) ?? "unknown time"
-        let growth = report.grossAllocatedGrowth.map { format($0) } ?? "unknown"
-        let reduction = report.grossAllocatedReduction.map { format($0) } ?? "unknown"
-        let net = report.netAllocatedDelta.map(formattedDelta) ?? "unknown"
-        return "Since \(previousTime): added or enlarged paths ~\(growth) allocated estimate · reduced paths ~\(reduction) · net \(net) · \(report.changedPathCount) changed paths"
+        let previousTime = report.previousObservedAt?.formatted(date: .abbreviated, time: .shortened)
+            ?? NSLocalizedString("unknown time", comment: "Missing prior complete file inventory time")
+        let growth = report.grossAllocatedGrowth.map { format($0) }
+            ?? NSLocalizedString("unknown", comment: "Unavailable byte estimate")
+        let reduction = report.grossAllocatedReduction.map { format($0) }
+            ?? NSLocalizedString("unknown", comment: "Unavailable byte estimate")
+        let net = report.netAllocatedDelta.map(formattedDelta)
+            ?? NSLocalizedString("unknown", comment: "Unavailable net byte change")
+        return String.localizedStringWithFormat(
+            NSLocalizedString("Since %@: added or enlarged paths ~%@ allocated estimate · reduced paths ~%@ · net %@ · %ld changed paths", comment: "Exact file-inventory change summary since the previous complete selected-path baseline"),
+            previousTime, growth, reduction, net, Int32(report.changedPathCount)
+        )
     }
 
     private func newlyObservedLargeFileSection(

@@ -29,6 +29,11 @@ struct DiskerSnapshotRequest {
         let includeDatabaseSidecarReview = arguments.contains("--snapshot-database-sidecars")
         let usePartialDatabaseSidecarFixture = arguments.contains("--snapshot-database-sidecars-partial")
         let useOmittedDatabaseChangeFixture = arguments.contains("--snapshot-database-sidecars-omitted")
+        let defaultHeight: CGFloat = includeProjectCandidate ? 1_200
+            : includeSnapshotDiscoveredApplicationCandidate ? 1_400
+            : includeDatabaseSidecarReview ? 540 : 900
+        let width = dimension(named: "--snapshot-width", in: arguments, fallback: 1_280, range: 760...2_560)
+        let height = dimension(named: "--snapshot-height", in: arguments, fallback: Int(defaultHeight), range: 540...2_400)
         let appearance = appearanceIndex.flatMap { arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil }
         let appearanceName: NSAppearance.Name?
         switch appearance?.lowercased() {
@@ -39,10 +44,8 @@ struct DiskerSnapshotRequest {
         return DiskerSnapshotRequest(
             outputURL: URL(fileURLWithPath: arguments[outputIndex + 1]),
             section: section,
-            width: 1_280,
-            height: includeProjectCandidate ? 1_200
-                : includeSnapshotDiscoveredApplicationCandidate ? 1_400
-                : includeDatabaseSidecarReview ? 540 : 900,
+            width: CGFloat(width),
+            height: CGFloat(height),
             appearanceName: appearanceName,
             suppressSpotlightDiscovery: suppressSpotlightDiscovery,
             includeProjectCandidate: includeProjectCandidate,
@@ -52,6 +55,14 @@ struct DiskerSnapshotRequest {
             usePartialDatabaseSidecarFixture: usePartialDatabaseSidecarFixture,
             useOmittedDatabaseChangeFixture: useOmittedDatabaseChangeFixture
         )
+    }
+
+    private static func dimension(
+        named name: String, in arguments: [String], fallback: Int, range: ClosedRange<Int>
+    ) -> Int {
+        guard let index = arguments.firstIndex(of: name), arguments.indices.contains(index + 1),
+              let value = Int(arguments[index + 1]) else { return fallback }
+        return min(max(value, range.lowerBound), range.upperBound)
     }
 }
 
