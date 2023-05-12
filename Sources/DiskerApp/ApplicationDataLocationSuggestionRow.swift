@@ -66,9 +66,8 @@ struct ApplicationDataLocationSuggestionRow: View {
                         .controlSize(.small)
                         .disabled(isChecking)
                         .help("Check only this exact folder path; no descendants or file contents are read")
-                        .accessibilityLabel(
-                            isChecking ? "Checking exact path…" : statusText == nil ? "Check exact path" : "Check again"
-                        )
+                        .accessibilityLabel(accessibilityCheckLabel)
+                        .accessibilityHint("Checks only this exact suggested path. It does not list descendants or read file contents.")
                     }
 
                     Button(action: onMeasure) {
@@ -78,6 +77,14 @@ struct ApplicationDataLocationSuggestionRow: View {
                     .controlSize(.small)
                     .disabled(isMeasurementDisabled)
                     .help("Measurement starts only after you confirm this exact file or folder in the picker")
+                    .accessibilityLabel(String.localizedStringWithFormat(
+                        NSLocalizedString(
+                            "Choose an exact location to measure: %@",
+                            comment: "VoiceOver label for selecting a specific suggested app-data location"
+                        ),
+                        suggestion.title
+                    ))
+                    .accessibilityHint("Opens a picker. Measurement starts only after you confirm this exact suggested path.")
                 }
             }
 
@@ -112,5 +119,20 @@ struct ApplicationDataLocationSuggestionRow: View {
         default:
             "folder"
         }
+    }
+
+    private var accessibilityCheckLabel: String {
+        let key: String
+        if isChecking {
+            key = "Checking exact path: %@"
+        } else if statusText == nil {
+            key = "Check exact path: %@"
+        } else {
+            key = "Check this path again: %@"
+        }
+        return String.localizedStringWithFormat(
+            NSLocalizedString(key, comment: "VoiceOver label for checking one exact suggested app-data path"),
+            suggestion.title
+        )
     }
 }
