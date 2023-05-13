@@ -502,17 +502,24 @@ final class DashboardModel {
     private var storageEventScanTask: Task<Void, Never>?
     private var storageEventWatchers: [String: SelectedRootEventWatcher] = [:]
     private var pendingStorageEventPaths = Set<String>()
+#if DEBUG
+    var activeStorageEventWatcherPathsForTesting: Set<String> { Set(storageEventWatchers.keys) }
+    var pendingStorageEventPathsForTesting: Set<String> { pendingStorageEventPaths }
+#endif
     private var historyGeneration = HistoryGeneration()
     private var ownFootprintTask: Task<ScanObservation, Never>?
     private var ownFootprintRequestID: UUID?
     private var ramSampleTask: Task<Void, Never>?
     private var duplicateTask: Task<DuplicateVerificationResult, Never>?
     private var memoryPressureSource: DispatchSourceMemoryPressure?
+    private let storageMonitoringPreferencesURL: URL?
 
     init(
         includeSnapshotProjectCandidate: Bool = false,
-        includeSnapshotDiscoveredApplicationCandidate: Bool = false
+        includeSnapshotDiscoveredApplicationCandidate: Bool = false,
+        storageMonitoringPreferencesURL: URL? = nil
     ) {
+        self.storageMonitoringPreferencesURL = storageMonitoringPreferencesURL
         if includeSnapshotProjectCandidate {
             history = Self.snapshotProjectCandidateHistory()
         } else if includeSnapshotDiscoveredApplicationCandidate {
@@ -540,10 +547,14 @@ final class DashboardModel {
                 errorMessage = "Saved scan locations could not be loaded: \(error.localizedDescription)"
             }
             do {
-                let savedMonitoringPaths = try StorageMonitoringPreferences.load()
+                let savedMonitoringPaths = try StorageMonitoringPreferences.load(
+                    from: storageMonitoringPreferencesURL
+                )
                 monitoredScopePaths = savedMonitoringPaths.intersection(Set(rememberedScopes.map(\.path)))
                 if monitoredScopePaths != savedMonitoringPaths {
-                    try StorageMonitoringPreferences.save(monitoredScopePaths)
+                    try StorageMonitoringPreferences.save(
+                        monitoredScopePaths, at: storageMonitoringPreferencesURL
+                    )
                 }
                 for path in monitoredScopePaths {
                     let lastCompleteScan = fileInventoryTrends[path]?.last?.observedAt
@@ -1514,7 +1525,7 @@ final class DashboardModel {
         if enabled { updatedPaths.insert(normalizedPath) }
         else { updatedPaths.remove(normalizedPath) }
         do {
-            try StorageMonitoringPreferences.save(updatedPaths)
+            try StorageMonitoringPreferences.save(updatedPaths, at: storageMonitoringPreferencesURL)
         } catch {
             errorMessage = "The monitoring choice could not be saved: \(error.localizedDescription)"
             return

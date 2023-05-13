@@ -5,7 +5,11 @@ struct DiskerApp: App {
     var body: some Scene {
         WindowGroup {
 #if DEBUG
-            if let request = DiskerSnapshotRequest.from(arguments: ProcessInfo.processInfo.arguments) {
+            if let resultURL = DashboardModelMonitoringCheckHost.resultURL(
+                from: ProcessInfo.processInfo.arguments
+            ) {
+                DashboardModelMonitoringCheckHost(resultURL: resultURL)
+            } else if let request = DiskerSnapshotRequest.from(arguments: ProcessInfo.processInfo.arguments) {
                 DiskerSnapshotHost(request: request)
             } else {
                 DashboardView()
