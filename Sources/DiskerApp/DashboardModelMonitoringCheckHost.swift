@@ -20,8 +20,14 @@ struct DashboardModelMonitoringCheckHost: View {
                 guard !hasStarted else { return }
                 hasStarted = true
                 do {
-                    try await Self.runChecks()
-                    try writeResult("PASS DashboardModel persists isolated opt-in, keeps the opted-in watcher active while the app is inactive and its window is open, stops it on close, honors opt-out, restores after opt-in, and blocks overlapping scans")
+                    let runDirectory = resultURL.deletingLastPathComponent()
+                    try await Self.runChecks(
+                        stateDirectory: runDirectory.appendingPathComponent("lifecycle", isDirectory: true)
+                    )
+                    try await Self.runEventTriggeredScanCheck(
+                        stateDirectory: runDirectory.appendingPathComponent("event-scan", isDirectory: true)
+                    )
+                    try writeResult("PASS DashboardModel monitor lifecycle, event-triggered growth scan, persisted same-path report, opt-out, re-opt-in baseline, and periodic scheduled scan")
                 } catch {
                     try? writeResult("FAIL \(error.localizedDescription)")
                 }
@@ -30,13 +36,13 @@ struct DashboardModelMonitoringCheckHost: View {
     }
 
     @MainActor
-    private static func runChecks() async throws {
-        let stateDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Disker-Dashboard-Monitoring-\(UUID().uuidString)", isDirectory: true)
+    private static func runChecks(stateDirectory: URL) async throws {
         let root = stateDirectory.appendingPathComponent("SelectedRoot", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: stateDirectory) }
 
+        let observationsURL = stateDirectory.appendingPathComponent("observations.json")
+        let inventoriesURL = stateDirectory.appendingPathComponent("file-inventory.plist")
         let bookmarkURL = stateDirectory.appendingPathComponent("selected-scopes.json")
         let preferencesURL = stateDirectory.appendingPathComponent("storage-monitoring.json")
         let bookmarks = try SelectedScopeBookmarkStore.remember([root], at: bookmarkURL)
@@ -45,6 +51,9 @@ struct DashboardModelMonitoringCheckHost: View {
         // Fixture mode skips Disker's real local stores; no scan is started by this check.
         let model = DashboardModel(
             includeSnapshotProjectCandidate: true,
+            observationStoreURL: observationsURL,
+            fileInventoryStoreURL: inventoriesURL,
+            selectedScopeBookmarkStoreURL: bookmarkURL,
             storageMonitoringPreferencesURL: preferencesURL
         )
         defer {
@@ -119,6 +128,148 @@ struct DashboardModelMonitoringCheckHost: View {
               model.scheduledScanPath == nil,
               model.eventTriggeredScanPath == nil else {
             throw failure("The reopened watcher did not queue an event without bypassing the active-scan gate.")
+        }
+
+        model.setStorageMonitoringSessionOpen(false)
+        model.isScanning = false
+    }
+
+    @MainActor
+    private static func runEventTriggeredScanCheck(stateDirectory: URL) async throws {
+        let root = stateDirectory.appendingPathComponent("SelectedRoot", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: stateDirectory) }
+
+        let baselinePath = root.appendingPathComponent("baseline.bin")
+        try Data(repeating: 0x42, count: 16).write(to: baselinePath)
+
+        let observationsURL = stateDirectory.appendingPathComponent("observations.json")
+        let inventoriesURL = stateDirectory.appendingPathComponent("file-inventory.plist")
+        let bookmarksURL = stateDirectory.appendingPathComponent("selected-scopes.json")
+        let preferencesURL = stateDirectory.appendingPathComponent("storage-monitoring.json")
+        let rootPath = root.standardizedFileURL.path
+
+        let baselineScan = FolderScanner.scanWithFileInventories(roots: [root])
+        let baselineFolder = baselineScan.observation.folders.first
+        let baselineSnapshot = baselineScan.fileInventories.first
+        let baselineRecord = try baselineSnapshot.flatMap {
+            try FileInventoryStore.recordWithTrendPoints($0, at: inventoriesURL)
+        }
+        let baselineHasBaseline = baselineRecord?.report.hasBaseline.description ?? "unknown"
+        guard baselineFolder?.complete == true, baselineSnapshot?.complete == true,
+              baselineRecord?.report.hasBaseline == false else {
+            throw failure(
+                "The selected synthetic root did not create a complete initial file-inventory baseline "
+                    + "(folderComplete: \(baselineFolder?.complete ?? false), "
+                    + "inventoryComplete: \(baselineSnapshot?.complete ?? false), "
+                    + "recorded: \(baselineRecord != nil), "
+                    + "hasBaseline: \(baselineHasBaseline))."
+            )
+        }
+        _ = try ObservationStore.append(baselineScan.observation, to: observationsURL)
+        _ = try SelectedScopeBookmarkStore.remember([root], at: bookmarksURL)
+
+        // Every on-disk dependency uses this test-owned directory.
+        let model = DashboardModel(
+            observationStoreURL: observationsURL,
+            fileInventoryStoreURL: inventoriesURL,
+            selectedScopeBookmarkStoreURL: bookmarksURL,
+            storageMonitoringPreferencesURL: preferencesURL
+        )
+        defer {
+            model.setStorageMonitoringSessionOpen(false)
+            model.isScanning = false
+        }
+        guard model.history.observations.contains(where: {
+                  $0.folders.contains(where: { $0.path == rootPath && $0.logicalBytes == 16 })
+              }),
+              model.fileInventoryReports[rootPath]?.hasBaseline == false,
+              model.rememberedScopes.contains(where: { $0.path == rootPath }) else {
+            throw failure("DashboardModel did not restore the complete synthetic baseline and exact selected-root bookmark from its injected stores.")
+        }
+        model.storageMonitoringInterval = StorageMonitoringPolicy.minimumInterval
+        model.toggleStorageMonitoring(rootPath, enabled: true)
+        model.setStorageMonitoringSessionOpen(true)
+        model.setStorageMonitoringAppActive(false)
+        guard model.activeStorageEventWatcherPathsForTesting == [rootPath] else {
+            throw failure("The opted-in synthetic root did not start an event watcher.")
+        }
+
+        model.setStorageMonitoringCooldownForTesting(
+            rootPath, lastScanAt: Date.now.addingTimeInterval(-StorageMonitoringPolicy.minimumEventScanInterval - 1)
+        )
+        let addedPath = "event-growth.bin"
+        try Data(repeating: 0x44, count: 8_192).write(to: root.appendingPathComponent(addedPath))
+        try await waitUntil(timeout: 18) {
+            !model.isScanning && model.fileInventoryReports[rootPath]?.changes.contains(where: {
+                $0.relativePath == addedPath && $0.kind == .added
+            }) == true
+        }
+
+        guard let eventReport = model.fileInventoryReports[rootPath],
+              eventReport.hasBaseline,
+              eventReport.netLogicalDelta == 8_192,
+              eventReport.grossAllocatedGrowth ?? 0 > 0,
+              let latestObservation = model.history.observations.last,
+              let latestFolder = latestObservation.folders.first(where: { $0.path == rootPath }),
+              latestFolder.complete,
+              latestFolder.logicalBytes == 8_208,
+              try FileInventoryStore.loadReports(at: inventoriesURL)[rootPath] == eventReport,
+              try ObservationStore.load(from: observationsURL).observations.contains(where: {
+                  $0.folders.contains(where: { $0.path == rootPath && $0.logicalBytes == 8_208 })
+              }) else {
+            throw failure("DashboardModel did not persist the exact complete event-triggered growth observation and report.")
+        }
+
+        model.setStorageMonitoringSessionOpen(false)
+        let closedHistoryCount = try ObservationStore.load(from: observationsURL).observations.count
+        try Data(repeating: 0x51, count: 64).write(to: root.appendingPathComponent("while-closed.bin"))
+        try await Task.sleep(for: .seconds(1.5))
+        guard model.activeStorageEventWatcherPathsForTesting.isEmpty,
+              model.pendingStorageEventPathsForTesting.isEmpty,
+              try ObservationStore.load(from: observationsURL).observations.count == closedHistoryCount else {
+            throw failure("Closing the monitoring session did not leave the event history unchanged.")
+        }
+
+        model.toggleStorageMonitoring(rootPath, enabled: false)
+        model.setStorageMonitoringSessionOpen(true)
+        try Data(repeating: 0x52, count: 64).write(to: root.appendingPathComponent("while-opted-out.bin"))
+        try await Task.sleep(for: .seconds(1.5))
+        guard model.activeStorageEventWatcherPathsForTesting.isEmpty,
+              model.pendingStorageEventPathsForTesting.isEmpty,
+              try ObservationStore.load(from: observationsURL).observations.count == closedHistoryCount else {
+            throw failure("Opt-out restored a watcher or recorded a scan of the synthetic root.")
+        }
+
+        model.toggleStorageMonitoring(rootPath, enabled: true)
+        try await waitUntil(timeout: 18) {
+            !model.isScanning && model.fileInventoryReports[rootPath]?.changes.contains(where: {
+                $0.relativePath == "while-closed.bin" && $0.kind == .added
+            }) == true && model.fileInventoryReports[rootPath]?.changes.contains(where: {
+                $0.relativePath == "while-opted-out.bin" && $0.kind == .added
+            }) == true
+        }
+        guard model.activeStorageEventWatcherPathsForTesting == [rootPath] else {
+            throw failure("Re-opt-in did not restore the watcher after recording a fresh manual baseline.")
+        }
+
+        let scansBeforeScheduledRun = try ObservationStore.load(from: observationsURL).observations.count
+        model.setStorageMonitoringCooldownForTesting(
+            rootPath, lastScanAt: Date.now.addingTimeInterval(-model.storageMonitoringInterval - 1)
+        )
+        model.evaluateStorageMonitoringForTesting(at: .now)
+        guard model.scheduledScanPath == rootPath else {
+            throw failure("The due periodic monitoring decision did not start a DashboardModel scheduled scan.")
+        }
+        try await waitUntil(timeout: 18) {
+            !model.isScanning && model.scheduledScanPath == nil
+                && ((try? ObservationStore.load(from: observationsURL).observations.count) ?? 0)
+                    > scansBeforeScheduledRun
+        }
+        guard let scheduledObservation = try ObservationStore.load(from: observationsURL).observations.last,
+              scheduledObservation.folders.first(where: { $0.path == rootPath })?.complete == true,
+              model.storageMonitoringLastAttempt[rootPath] != nil else {
+            throw failure("The scheduled selected-root scan did not finish and persist a complete observation.")
         }
 
         model.setStorageMonitoringSessionOpen(false)

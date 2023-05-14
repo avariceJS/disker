@@ -505,6 +505,12 @@ final class DashboardModel {
 #if DEBUG
     var activeStorageEventWatcherPathsForTesting: Set<String> { Set(storageEventWatchers.keys) }
     var pendingStorageEventPathsForTesting: Set<String> { pendingStorageEventPaths }
+    func setStorageMonitoringCooldownForTesting(_ path: String, lastScanAt: Date) {
+        storageMonitoringCooldownByPath[path] = lastScanAt
+    }
+    func evaluateStorageMonitoringForTesting(at date: Date) {
+        evaluateStorageMonitoring(at: date)
+    }
 #endif
     private var historyGeneration = HistoryGeneration()
     private var ownFootprintTask: Task<ScanObservation, Never>?
@@ -512,13 +518,22 @@ final class DashboardModel {
     private var ramSampleTask: Task<Void, Never>?
     private var duplicateTask: Task<DuplicateVerificationResult, Never>?
     private var memoryPressureSource: DispatchSourceMemoryPressure?
+    private let observationStoreURL: URL?
+    private let fileInventoryStoreURL: URL?
+    private let selectedScopeBookmarkStoreURL: URL?
     private let storageMonitoringPreferencesURL: URL?
 
     init(
         includeSnapshotProjectCandidate: Bool = false,
         includeSnapshotDiscoveredApplicationCandidate: Bool = false,
+        observationStoreURL: URL? = nil,
+        fileInventoryStoreURL: URL? = nil,
+        selectedScopeBookmarkStoreURL: URL? = nil,
         storageMonitoringPreferencesURL: URL? = nil
     ) {
+        self.observationStoreURL = observationStoreURL
+        self.fileInventoryStoreURL = fileInventoryStoreURL
+        self.selectedScopeBookmarkStoreURL = selectedScopeBookmarkStoreURL
         self.storageMonitoringPreferencesURL = storageMonitoringPreferencesURL
         if includeSnapshotProjectCandidate {
             history = Self.snapshotProjectCandidateHistory()
@@ -526,7 +541,7 @@ final class DashboardModel {
             history = Self.snapshotDiscoveredApplicationHistory()
         } else {
             do {
-                history = try ObservationStore.load()
+                history = try ObservationStore.load(from: observationStoreURL)
                 ram = history.ramObservations.last
             } catch {
                 errorMessage = error.localizedDescription
@@ -534,7 +549,7 @@ final class DashboardModel {
         }
         if !includeSnapshotProjectCandidate && !includeSnapshotDiscoveredApplicationCandidate {
             do {
-                let fileInventoryHistory = try FileInventoryStore.loadDashboardHistory()
+                let fileInventoryHistory = try FileInventoryStore.loadDashboardHistory(at: fileInventoryStoreURL)
                 fileInventoryReports = fileInventoryHistory.reports
                 fileInventoryTrends = fileInventoryHistory.trendPoints
                 sameSizeFileCandidates = fileInventoryHistory.sameSizeCandidates
@@ -542,7 +557,7 @@ final class DashboardModel {
                 errorMessage = "File change history could not be loaded: \(error.localizedDescription)"
             }
             do {
-                rememberedScopes = try SelectedScopeBookmarkStore.load()
+                rememberedScopes = try SelectedScopeBookmarkStore.load(from: selectedScopeBookmarkStoreURL)
             } catch {
                 errorMessage = "Saved scan locations could not be loaded: \(error.localizedDescription)"
             }
@@ -783,7 +798,8 @@ final class DashboardModel {
         do {
             history = try ObservationStore.associateApplicationFolders(
                 [selectedURL.path], with: candidate.path,
-                bundleIdentifier: applicationBundleIdentifier(for: candidate.path)
+                bundleIdentifier: applicationBundleIdentifier(for: candidate.path),
+                to: observationStoreURL
             )
             invalidateAssociatedPathProbe(for: candidate.path, clearing: [selectedURL.path])
             rememberFolders([selectedURL])
@@ -845,7 +861,7 @@ final class DashboardModel {
             let sample = try CapacityObservation.current()
             capacity = sample
             do {
-                history = try ObservationStore.append(sample)
+                history = try ObservationStore.append(sample, to: observationStoreURL)
             } catch {
                 errorMessage = "Capacity is current, but local history could not be saved: \(error.localizedDescription)"
             }
@@ -894,7 +910,7 @@ final class DashboardModel {
                 guard !Task.isCancelled else { return }
                 ram = sample
                 do {
-                    history = try ObservationStore.append(sample)
+                    history = try ObservationStore.append(sample, to: observationStoreURL)
                 } catch {
                     errorMessage = "RAM sample completed, but local history could not be saved: \(error.localizedDescription)"
                 }
@@ -934,7 +950,7 @@ final class DashboardModel {
         guard historyGeneration.accepts(generation) else { return }
         let observation = MemoryPressureObservation(observedAt: .now, level: level)
         do {
-            history = try ObservationStore.append(observation)
+            history = try ObservationStore.append(observation, to: observationStoreURL)
         } catch {
             errorMessage = "A system pressure transition was observed, but local history could not be saved: \(error.localizedDescription)"
         }
@@ -1027,7 +1043,8 @@ final class DashboardModel {
         do {
             history = try ObservationStore.associateApplicationFolders(
                 panel.urls.map(\.path), with: bundlePath,
-                bundleIdentifier: applicationBundleIdentifier(for: bundlePath)
+                bundleIdentifier: applicationBundleIdentifier(for: bundlePath),
+                to: observationStoreURL
             )
             invalidateAssociatedPathProbe(for: bundlePath, clearing: history.applicationAssociations
                 .first(where: { $0.bundlePath == bundlePath })?.relatedFolderPaths ?? [])
@@ -1040,7 +1057,9 @@ final class DashboardModel {
 
     func removeRelatedFolder(_ path: String, from bundlePath: String) {
         do {
-            history = try ObservationStore.removeApplicationFolderAssociation(path, from: bundlePath)
+            history = try ObservationStore.removeApplicationFolderAssociation(
+                path, from: bundlePath, at: observationStoreURL
+            )
             invalidateAssociatedPathProbe(for: bundlePath, clearing: [path])
         } catch {
             errorMessage = "The saved folder association could not be removed: \(error.localizedDescription)"
@@ -1095,7 +1114,7 @@ final class DashboardModel {
         }
         do {
             history = try ObservationStore.associateProjectFolders(
-                panel.urls.map(\.path), with: projectRootPath
+                panel.urls.map(\.path), with: projectRootPath, to: observationStoreURL
             )
             rememberFolders(panel.urls)
             scan(panel.urls)
@@ -1194,7 +1213,7 @@ final class DashboardModel {
 
         do {
             history = try ObservationStore.associateProjectFolders(
-                [chosenURL.standardizedFileURL.path], with: standardizedRoot
+                [chosenURL.standardizedFileURL.path], with: standardizedRoot, to: observationStoreURL
             )
         } catch {
             errorMessage = "The project link could not be saved: \(error.localizedDescription)"
@@ -1206,7 +1225,9 @@ final class DashboardModel {
 
     func removeProjectResourceFolder(_ path: String, from projectRootPath: String) {
         do {
-            history = try ObservationStore.removeProjectFolderAssociation(path, from: projectRootPath)
+            history = try ObservationStore.removeProjectFolderAssociation(
+                path, from: projectRootPath, at: observationStoreURL
+            )
             projectResourcePathCheckIDs.removeValue(forKey: path)
             checkingProjectResourcePaths.remove(path)
             projectResourcePathStatuses.removeValue(forKey: path)
@@ -1238,7 +1259,7 @@ final class DashboardModel {
 
     private func rememberFolders(_ urls: [URL]) {
         do {
-            rememberedScopes = try SelectedScopeBookmarkStore.remember(urls)
+            rememberedScopes = try SelectedScopeBookmarkStore.remember(urls, at: selectedScopeBookmarkStoreURL)
             let updatedPaths = Set(urls.map { $0.standardizedFileURL.path })
             for path in updatedPaths {
                 projectResourcePathCheckIDs.removeValue(forKey: path)
@@ -1295,9 +1316,9 @@ final class DashboardModel {
             return
         }
         do {
-            let url = try SelectedScopeBookmarkStore.resolve(bookmark)
+            let url = try SelectedScopeBookmarkStore.resolve(bookmark, at: selectedScopeBookmarkStoreURL)
             do {
-                rememberedScopes = try SelectedScopeBookmarkStore.load()
+                rememberedScopes = try SelectedScopeBookmarkStore.load(from: selectedScopeBookmarkStoreURL)
             } catch {
                 errorMessage = "The folder is available for this scan, but saved locations could not be refreshed: \(error.localizedDescription)"
             }
@@ -1314,9 +1335,9 @@ final class DashboardModel {
         guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
         if let bookmark = rememberedScopes.first(where: { $0.path == path }) {
             do {
-                let resolvedURL = try SelectedScopeBookmarkStore.resolve(bookmark)
+                let resolvedURL = try SelectedScopeBookmarkStore.resolve(bookmark, at: selectedScopeBookmarkStoreURL)
                 do {
-                    rememberedScopes = try SelectedScopeBookmarkStore.load()
+                    rememberedScopes = try SelectedScopeBookmarkStore.load(from: selectedScopeBookmarkStoreURL)
                 } catch {
                     errorMessage = "The location is available for this scan, but saved locations could not be refreshed: \(error.localizedDescription)"
                 }
@@ -1355,7 +1376,7 @@ final class DashboardModel {
 
     func forgetRememberedFolder(_ path: String) {
         do {
-            rememberedScopes = try SelectedScopeBookmarkStore.remove(path: path)
+            rememberedScopes = try SelectedScopeBookmarkStore.remove(path: path, at: selectedScopeBookmarkStoreURL)
             removeStorageMonitoringState(for: path)
             projectResourcePathCheckIDs.removeValue(forKey: path)
             checkingProjectResourcePaths.remove(path)
@@ -1422,14 +1443,15 @@ final class DashboardModel {
             let observation = result.observation
             if historyGeneration.accepts(generation) {
                 do {
-                    history = try ObservationStore.append(observation)
+                    history = try ObservationStore.append(observation, to: observationStoreURL)
                 } catch {
                     errorMessage = "Scan finished, but local history could not be saved: \(error.localizedDescription)"
                 }
                 if !result.fileInventories.isEmpty {
+                    let inventoryStoreURL = fileInventoryStoreURL
                     let inventoryTask = Task.detached(priority: .utility) {
                         try result.fileInventories.compactMap {
-                            try FileInventoryStore.recordWithTrendPoints($0)
+                            try FileInventoryStore.recordWithTrendPoints($0, at: inventoryStoreURL)
                         }
                     }
                     fileInventoryTask = inventoryTask
@@ -1650,7 +1672,7 @@ final class DashboardModel {
                 continue
             }
             do {
-                let url = try SelectedScopeBookmarkStore.resolve(bookmark)
+                let url = try SelectedScopeBookmarkStore.resolve(bookmark, at: selectedScopeBookmarkStoreURL)
                 let isSandboxed = try SelectedScopeBookmarkStore.requiresSecurityScopedAccess()
                 let accessGranted = url.startAccessingSecurityScopedResource()
                 guard !isSandboxed || accessGranted else {
@@ -1777,7 +1799,7 @@ final class DashboardModel {
     private func removeStorageMonitoringState(for path: String) {
         monitoredScopePaths.remove(path)
         do {
-            try StorageMonitoringPreferences.save(monitoredScopePaths)
+            try StorageMonitoringPreferences.save(monitoredScopePaths, at: storageMonitoringPreferencesURL)
         } catch {
             errorMessage = "The forgotten folder's monitoring choice could not be removed: \(error.localizedDescription)"
         }
@@ -1914,10 +1936,10 @@ final class DashboardModel {
         isSamplingRAM = false
         updateMemoryPressureMonitoring(enabled: false, appIsActive: false)
         do {
-            try ObservationStore.clear()
-            try FileInventoryStore.clear()
-            try SelectedScopeBookmarkStore.clear()
-            try StorageMonitoringPreferences.clear()
+            try ObservationStore.clear(at: observationStoreURL)
+            try FileInventoryStore.clear(at: fileInventoryStoreURL)
+            try SelectedScopeBookmarkStore.clear(at: selectedScopeBookmarkStoreURL)
+            try StorageMonitoringPreferences.clear(at: storageMonitoringPreferencesURL)
             history = LocalHistory()
             fileInventoryReports = [:]
             fileInventoryTrends = [:]
