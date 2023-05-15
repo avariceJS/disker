@@ -27,7 +27,7 @@ struct DashboardModelMonitoringCheckHost: View {
                     try await Self.runEventTriggeredScanCheck(
                         stateDirectory: runDirectory.appendingPathComponent("event-scan", isDirectory: true)
                     )
-                    try writeResult("PASS DashboardModel monitor lifecycle, event-triggered growth scan, persisted same-path report, opt-out, re-opt-in baseline, and periodic scheduled scan")
+                    try writeResult("PASS DashboardModel monitor lifecycle, event-triggered growth scan, persisted same-path report, opt-out, re-opt-in baseline, scheduled scan, and incomplete-root pause/resume")
                 } catch {
                     try? writeResult("FAIL \(error.localizedDescription)")
                 }
@@ -137,11 +137,17 @@ struct DashboardModelMonitoringCheckHost: View {
     @MainActor
     private static func runEventTriggeredScanCheck(stateDirectory: URL) async throws {
         let root = stateDirectory.appendingPathComponent("SelectedRoot", isDirectory: true)
+        let pausedRoot = stateDirectory.appendingPathComponent("PausedRoot", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: pausedRoot, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: stateDirectory) }
 
         let baselinePath = root.appendingPathComponent("baseline.bin")
         try Data(repeating: 0x42, count: 16).write(to: baselinePath)
+        let unmeasuredTarget = stateDirectory.appendingPathComponent("outside-scope.bin")
+        try Data(repeating: 0x4A, count: 256).write(to: unmeasuredTarget)
+        let rejectedLink = pausedRoot.appendingPathComponent("excluded-link")
+        try FileManager.default.createSymbolicLink(at: rejectedLink, withDestinationURL: unmeasuredTarget)
 
         let observationsURL = stateDirectory.appendingPathComponent("observations.json")
         let inventoriesURL = stateDirectory.appendingPathComponent("file-inventory.plist")
@@ -167,7 +173,7 @@ struct DashboardModelMonitoringCheckHost: View {
             )
         }
         _ = try ObservationStore.append(baselineScan.observation, to: observationsURL)
-        _ = try SelectedScopeBookmarkStore.remember([root], at: bookmarksURL)
+        _ = try SelectedScopeBookmarkStore.remember([root, pausedRoot], at: bookmarksURL)
 
         // Every on-disk dependency uses this test-owned directory.
         let model = DashboardModel(
@@ -270,6 +276,64 @@ struct DashboardModelMonitoringCheckHost: View {
               scheduledObservation.folders.first(where: { $0.path == rootPath })?.complete == true,
               model.storageMonitoringLastAttempt[rootPath] != nil else {
             throw failure("The scheduled selected-root scan did not finish and persist a complete observation.")
+        }
+
+        let pausedRootPath = pausedRoot.standardizedFileURL.path
+        model.toggleStorageMonitoring(pausedRootPath, enabled: true)
+        try await waitUntil(timeout: 18) {
+            !model.isScanning
+                && model.fileInventoryReports[pausedRootPath] != nil
+                && model.history.observations.contains(where: {
+                    $0.folders.contains(where: {
+                        $0.path == pausedRootPath && !$0.complete && $0.fileCount == 0
+                            && $0.logicalBytes == 0 && $0.excludedSymlinkCount == 1
+                    })
+                })
+        }
+        guard model.fileInventoryReports[pausedRootPath]?.hasBaseline == false,
+              model.activeStorageEventWatcherPathsForTesting.contains(pausedRootPath) else {
+            throw failure("The incomplete synthetic root did not save its isolated baseline and start opted-in monitoring.")
+        }
+
+        model.setStorageMonitoringCooldownForTesting(rootPath, lastScanAt: .now)
+        model.setStorageMonitoringCooldownForTesting(pausedRootPath, lastScanAt: .distantPast)
+        model.evaluateStorageMonitoringForTesting(at: .now)
+        guard model.scheduledScanPath == pausedRootPath else {
+            throw failure("The due incomplete synthetic root was not selected for its scheduled scan.")
+        }
+        try await waitUntil(timeout: 18) {
+            !model.isScanning && model.scheduledScanPath == nil
+                && model.pausedMonitoringReasons[pausedRootPath] != nil
+        }
+        guard !model.activeStorageEventWatcherPathsForTesting.contains(pausedRootPath) else {
+            throw failure("A scheduled scan with no measured files left an incomplete root watched instead of pausing it.")
+        }
+
+        try FileManager.default.removeItem(at: rejectedLink)
+        let resumedPath = "measured-after-resume.bin"
+        try Data(repeating: 0x53, count: 128).write(to: pausedRoot.appendingPathComponent(resumedPath))
+        model.resumeStorageMonitoring(pausedRootPath)
+        try await waitUntil(timeout: 18) {
+            !model.isScanning
+                && model.pausedMonitoringReasons[pausedRootPath] == nil
+                && model.activeStorageEventWatcherPathsForTesting.contains(pausedRootPath)
+                && model.fileInventoryReports[pausedRootPath]?.changes.contains(where: {
+                    $0.relativePath == resumedPath && $0.kind == .added
+                }) == true
+        }
+        guard let resumedReport = model.fileInventoryReports[pausedRootPath],
+              resumedReport.hasBaseline,
+              resumedReport.netLogicalDelta == 128,
+              resumedReport.symlinkExcludedCount == 0,
+              resumedReport.changes.contains(where: {
+                  $0.relativePath == resumedPath && $0.kind == .added
+              }),
+              model.history.observations.contains(where: {
+                  $0.folders.contains(where: {
+                      $0.path == pausedRootPath && $0.complete && $0.logicalBytes == 128
+                  })
+              }) else {
+            throw failure("Resume did not restore the exact same-root file comparison after the excluded symlink was removed.")
         }
 
         model.setStorageMonitoringSessionOpen(false)
