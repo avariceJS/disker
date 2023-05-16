@@ -444,6 +444,13 @@ private func folderAllocatedValue(_ observation: FolderObservation) -> String {
     return "~\(allocated) measured so far"
 }
 
+struct DashboardModelStoreURLs {
+    let observations: URL
+    let fileInventory: URL
+    let selectedScopeBookmarks: URL
+    let storageMonitoringPreferences: URL
+}
+
 @MainActor
 @Observable
 final class DashboardModel {
@@ -526,15 +533,12 @@ final class DashboardModel {
     init(
         includeSnapshotProjectCandidate: Bool = false,
         includeSnapshotDiscoveredApplicationCandidate: Bool = false,
-        observationStoreURL: URL? = nil,
-        fileInventoryStoreURL: URL? = nil,
-        selectedScopeBookmarkStoreURL: URL? = nil,
-        storageMonitoringPreferencesURL: URL? = nil
+        storeURLs: DashboardModelStoreURLs? = nil
     ) {
-        self.observationStoreURL = observationStoreURL
-        self.fileInventoryStoreURL = fileInventoryStoreURL
-        self.selectedScopeBookmarkStoreURL = selectedScopeBookmarkStoreURL
-        self.storageMonitoringPreferencesURL = storageMonitoringPreferencesURL
+        self.observationStoreURL = storeURLs?.observations
+        self.fileInventoryStoreURL = storeURLs?.fileInventory
+        self.selectedScopeBookmarkStoreURL = storeURLs?.selectedScopeBookmarks
+        self.storageMonitoringPreferencesURL = storeURLs?.storageMonitoringPreferences
         if includeSnapshotProjectCandidate {
             history = Self.snapshotProjectCandidateHistory()
         } else if includeSnapshotDiscoveredApplicationCandidate {

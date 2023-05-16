@@ -51,10 +51,12 @@ struct DashboardModelMonitoringCheckHost: View {
         // Fixture mode skips Disker's real local stores; no scan is started by this check.
         let model = DashboardModel(
             includeSnapshotProjectCandidate: true,
-            observationStoreURL: observationsURL,
-            fileInventoryStoreURL: inventoriesURL,
-            selectedScopeBookmarkStoreURL: bookmarkURL,
-            storageMonitoringPreferencesURL: preferencesURL
+            storeURLs: DashboardModelStoreURLs(
+                observations: observationsURL,
+                fileInventory: inventoriesURL,
+                selectedScopeBookmarks: bookmarkURL,
+                storageMonitoringPreferences: preferencesURL
+            )
         )
         defer {
             model.setStorageMonitoringSessionOpen(false)
@@ -177,10 +179,12 @@ struct DashboardModelMonitoringCheckHost: View {
 
         // Every on-disk dependency uses this test-owned directory.
         let model = DashboardModel(
-            observationStoreURL: observationsURL,
-            fileInventoryStoreURL: inventoriesURL,
-            selectedScopeBookmarkStoreURL: bookmarksURL,
-            storageMonitoringPreferencesURL: preferencesURL
+            storeURLs: DashboardModelStoreURLs(
+                observations: observationsURL,
+                fileInventory: inventoriesURL,
+                selectedScopeBookmarks: bookmarksURL,
+                storageMonitoringPreferences: preferencesURL
+            )
         )
         defer {
             model.setStorageMonitoringSessionOpen(false)
