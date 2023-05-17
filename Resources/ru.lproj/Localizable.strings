@@ -38,6 +38,9 @@
 "Local volume" = "Локальный том";
 "Network volume" = "Сетевой том";
 "Volume location unknown" = "Расположение тома неизвестно";
+"local volume" = "локальный том";
+"network volume" = "сетевой том";
+"volume location unknown" = "расположение тома неизвестно";
 "No folder scan recorded" = "Сканирование папок не записывалось";
 "Complete selected roots · latest scan" = "Полностью измерено папок · последнее сканирование";
 "%ld%% available" = "Доступно: %ld%%";
