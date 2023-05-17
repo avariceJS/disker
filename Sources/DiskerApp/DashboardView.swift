@@ -7209,9 +7209,10 @@ struct DashboardView: View {
                 }
             }
             .chartYScale(domain: max(0, minimum - padding)...(maximum + padding))
-            .chartYAxisLabel(
-                NSLocalizedString("Allocated (\(unitLabel))", comment: "Allocated-size chart axis unit")
-            )
+            .chartYAxisLabel(String.localizedStringWithFormat(
+                NSLocalizedString("Allocated size (%@)", comment: "Allocated-size chart axis unit"),
+                unitLabel
+            ))
             .chartXSelection(value: selection)
             .frame(height: 112)
             .accessibilityLabel("Allocated-size history from \(visibleSamples.count) complete scans of \(folder.path)")
