@@ -444,6 +444,13 @@ private func folderAllocatedValue(_ observation: FolderObservation) -> String {
     return "~\(allocated) measured so far"
 }
 
+private func formattedFileCountLabel(_ count: Int) -> String {
+    String.localizedStringWithFormat(
+        NSLocalizedString("Files: %ld", comment: "File count in a selected-folder detail row"),
+        Int64(count)
+    )
+}
+
 struct DashboardModelStoreURLs {
     let observations: URL
     let fileInventory: URL
@@ -6019,14 +6026,20 @@ struct DashboardView: View {
                     VStack(alignment: .leading, spacing: 7) {
                         Label("Git metadata in this selected folder", systemImage: "chevron.left.forwardslash.chevron.right")
                             .font(.subheadline.weight(.semibold))
-                        Text("Measured at \(gitUsage.rootRelativePath). The marker identifies Git metadata here; Disker does not read repository configuration or infer ownership of other files.")
+                        Text(String.localizedStringWithFormat(
+                            NSLocalizedString(
+                                "Measured at %@. The marker identifies Git metadata here; Disker does not read repository configuration or infer ownership of other files.",
+                                comment: "Evidence and limits for a measured Git metadata directory"
+                            ),
+                            gitUsage.rootRelativePath
+                        ))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         HStack(spacing: 9) {
                             Text(directoryMeasurementSummary(gitUsage))
                                 .help("Allocated-byte estimate from filesystem metadata")
-                            Text("\(gitUsage.fileCount) files")
+                            Text(formattedFileCountLabel(gitUsage.fileCount))
                             if !gitUsage.complete {
                                 Text(coverageSummary(
                                     inaccessible: gitUsage.incompleteCount,
@@ -6106,7 +6119,7 @@ struct DashboardView: View {
                                     }
                                     HStack(spacing: 8) {
                                         Text(directoryMeasurementSummary(directory))
-                                        Text("\(directory.fileCount) files")
+                                        Text(formattedFileCountLabel(directory.fileCount))
                                         if directory.gitMetadataEntryDetected {
                                             Text("Git metadata marker detected")
                                                 .foregroundStyle(.blue)
@@ -6308,7 +6321,7 @@ struct DashboardView: View {
                         }
                         HStack(spacing: 8) {
                             Text(directoryMeasurementSummary(directory))
-                            Text("\(directory.fileCount) files")
+                            Text(formattedFileCountLabel(directory.fileCount))
                             if !directory.complete {
                                 Text(coverageSummary(
                                     inaccessible: directory.incompleteCount,

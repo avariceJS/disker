@@ -408,6 +408,13 @@
 "Also linked from another selected project" = "Также связана с другим выбранным проектом";
 "Overlaps another selected path; keep measurements separate" = "Пересекается с другим выбранным путём; измерения нужно рассматривать отдельно";
 "First complete measurement" = "Первое полное измерение";
+"Git metadata in this selected folder" = "Метаданные Git в этой выбранной папке";
+"Measured at %@. The marker identifies Git metadata here; Disker does not read repository configuration or infer ownership of other files." = "Измерено в %@. Маркер указывает на метаданные Git в этом месте; Disker не читает настройки репозитория и не выводит принадлежность других файлов.";
+"Files: %ld" = "Файлы: %ld";
+"Project and development-data candidates" = "Кандидаты проектов и данных разработки";
+"Direct `.git` marker · candidate" = "Прямой маркер .git · кандидат";
+"Entries have a direct `.git` marker or a recognized development-data directory-name pattern. These are candidates, not verified project ownership or safe cleanup targets. Name matches do not inspect contents; nested folder totals overlap." = "Папки с прямым маркером .git или распознанным именем данных разработки показаны только как кандидаты. Это не подтверждает принадлежность проекту и не является рекомендацией по очистке. Содержимое по имени не проверяется; размеры вложенных папок пересекаются.";
+"Showing the 20 largest candidates; additional matching paths were omitted." = "Показаны 20 самых крупных кандидатов; остальные совпавшие пути скрыты.";
 "No measurement saved · total unknown" = "Измерений нет · общий размер неизвестен";
 "Select exact folders to associate with this selected project root and scan only those folders" = "Выбрать точные папки для связи с этим корнем проекта и измерить только их";
 "Select this exact folder before scanning it again" = "Повторно выберите эту папку перед сканированием";
