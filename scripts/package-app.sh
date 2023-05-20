@@ -37,6 +37,11 @@ mkdir -p "$CONTENTS/Resources"
 mkdir -p "$CONTENTS/Resources/ru.lproj"
 cp "$PROJECT_ROOT/Resources/ru.lproj/Localizable.strings" \
     "$CONTENTS/Resources/ru.lproj/Localizable.strings"
+mkdir -p "$CONTENTS/Resources/en.lproj"
+cp "$PROJECT_ROOT/Resources/en.lproj/Localizable.stringsdict" \
+    "$CONTENTS/Resources/en.lproj/Localizable.stringsdict"
+cp "$PROJECT_ROOT/Resources/ru.lproj/Localizable.stringsdict" \
+    "$CONTENTS/Resources/ru.lproj/Localizable.stringsdict"
 cat > "$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

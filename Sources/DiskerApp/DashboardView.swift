@@ -278,7 +278,7 @@ private struct SWFileExtensionBreakdownChart: View {
                                         }
                                         .font(.caption2.monospacedDigit())
                                     }
-                                    Text("\(category.fileCount) files")
+                                    Text(localizedFileCount(category.fileCount))
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                 }
@@ -331,11 +331,11 @@ private struct SWFileExtensionBreakdownChart: View {
 
     private func categoryAccessibilityLabel(for category: FileExtensionUsage) -> String {
         let format = NSLocalizedString(
-            "%@, %d files, logical %@, allocated estimate %@",
+            "%@, %@, logical %@, allocated estimate %@",
             comment: "Accessible label for a filename category in the storage chart"
         )
         return String.localizedStringWithFormat(
-            format, categoryTitle(category), category.fileCount,
+            format, categoryTitle(category), localizedFileCount(category.fileCount),
             formatLogical(category.logicalBytes), formatAllocated(category.allocatedBytes)
         )
     }
@@ -444,9 +444,16 @@ private func folderAllocatedValue(_ observation: FolderObservation) -> String {
     return "~\(allocated) measured so far"
 }
 
-private func formattedFileCountLabel(_ count: Int) -> String {
+private func localizedFileCount(_ count: Int) -> String {
     String.localizedStringWithFormat(
-        NSLocalizedString("Files: %ld", comment: "File count in a selected-folder detail row"),
+        NSLocalizedString("%#@fileCount@", comment: "A localized file count"),
+        Int64(count)
+    )
+}
+
+private func localizedMatchingFileCount(_ count: Int) -> String {
+    String.localizedStringWithFormat(
+        NSLocalizedString("%#@matchingFileCount@ matching files", comment: "A count of confirmed matching files"),
         Int64(count)
     )
 }
@@ -3448,7 +3455,7 @@ struct DashboardView: View {
                             }
                             HStack(spacing: 12) {
                                 Text(folderMeasurementSummary(bundle))
-                                Text("\(bundle.fileCount) files")
+                                Text(localizedFileCount(bundle.fileCount))
                                 if let previous = model.previousCompleteObservation(for: bundle),
                                    let delta = ObservationComparison.allocatedByteDelta(current: bundle, previous: previous) {
                                     Text(changeDescription(delta))
@@ -4191,7 +4198,7 @@ struct DashboardView: View {
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2)
                                     .truncationMode(.middle)
-                                Text("\(folderMeasurementSummary(folder)) · \(folder.fileCount) files")
+                                Text("\(folderMeasurementSummary(folder)) · \(localizedFileCount(folder.fileCount))")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                 if !folder.complete {
@@ -4346,7 +4353,7 @@ struct DashboardView: View {
                         ForEach(result.groups) { group in
                             VStack(alignment: .leading, spacing: 11) {
                                 HStack {
-                                    Text("\(group.files.count) matching files")
+                                    Text(localizedMatchingFileCount(group.files.count))
                                         .font(.headline)
                                     Spacer()
                                     Text(format(group.files[0].logicalBytes))
@@ -6039,7 +6046,7 @@ struct DashboardView: View {
                         HStack(spacing: 9) {
                             Text(directoryMeasurementSummary(gitUsage))
                                 .help("Allocated-byte estimate from filesystem metadata")
-                            Text(formattedFileCountLabel(gitUsage.fileCount))
+                            Text(localizedFileCount(gitUsage.fileCount))
                             if !gitUsage.complete {
                                 Text(coverageSummary(
                                     inaccessible: gitUsage.incompleteCount,
@@ -6119,7 +6126,7 @@ struct DashboardView: View {
                                     }
                                     HStack(spacing: 8) {
                                         Text(directoryMeasurementSummary(directory))
-                                        Text(formattedFileCountLabel(directory.fileCount))
+                                        Text(localizedFileCount(directory.fileCount))
                                         if directory.gitMetadataEntryDetected {
                                             Text("Git metadata marker detected")
                                                 .foregroundStyle(.blue)
@@ -6321,7 +6328,7 @@ struct DashboardView: View {
                         }
                         HStack(spacing: 8) {
                             Text(directoryMeasurementSummary(directory))
-                            Text(formattedFileCountLabel(directory.fileCount))
+                            Text(localizedFileCount(directory.fileCount))
                             if !directory.complete {
                                 Text(coverageSummary(
                                     inaccessible: directory.incompleteCount,
@@ -7092,7 +7099,7 @@ struct DashboardView: View {
                                 .foregroundStyle(.blue)
                                 .help("Filename-based clue only; file contents and purpose are not verified.")
                         }
-                        Text("\(item.fileCount) files")
+                        Text(localizedFileCount(item.fileCount))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                         Spacer(minLength: 4)
@@ -7717,7 +7724,7 @@ private struct DeveloperArtifactReviewSheet: View {
                 Text("Logical \(format(entry.logicalBytes))")
                 Text("Allocated ~\(format(entry.allocatedBytesEstimate))")
                     .help("Filesystem allocation estimate; not reclaimable bytes")
-                Text("\(entry.fileCount.formatted()) files")
+                Text(localizedFileCount(entry.fileCount))
                 Text(entry.subtreeComplete ? "Subtree complete" : "Subtree partial")
                     .foregroundStyle(entry.subtreeComplete ? Color.secondary : Color.orange)
             }
@@ -8206,7 +8213,7 @@ private struct ApplicationFootprintReviewSheet: View {
                     .font(.caption.weight(.medium))
                 VStack(alignment: .leading, spacing: 3) {
                     Text(folderMeasurementSummary(observation))
-                    Text("\(observation.fileCount) files")
+                    Text(localizedFileCount(observation.fileCount))
                 }
                 .font(.caption.monospacedDigit())
                 if observation.complete {

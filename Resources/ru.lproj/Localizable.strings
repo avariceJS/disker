@@ -704,6 +704,7 @@
 "Choose exact folders to associate with this selected project root and scan only those folders" = "Выберите точные папки для связи с этим корнем проекта; будут отсканированы только они.";
 "Choose this subfolder as a new scan root" = "Выбрать эту вложенную папку как новый корень сканирования";
 "Filesystem allocation estimate; not reclaimable bytes" = "Оценка выделенного места по данным файловой системы; это не объём, который можно освободить.";
+"%@, %@, logical %@, allocated estimate %@" = "%@, %@, логический размер %@, оценка выделенного места %@";
 "Filesystem modification time from metadata; it does not indicate last use or cleanup safety." = "Дата изменения по метаданным файловой системы не показывает последнее использование и безопасность удаления.";
 "History chart range" = "Диапазон графика истории";
 "Local static signature integrity only; this does not verify notarization, publisher trust, or current use." = "Только локальная проверка целостности подписи; она не подтверждает нотариализацию, доверие к издателю или текущее использование.";

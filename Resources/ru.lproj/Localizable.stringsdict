@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>%#@fileCount@</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@fileCount@</string>
+        <key>fileCount</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>ld</string>
+            <key>one</key>
+            <string>%ld файл</string>
+            <key>few</key>
+            <string>%ld файла</string>
+            <key>many</key>
+            <string>%ld файлов</string>
+            <key>other</key>
+            <string>%ld файла</string>
+        </dict>
+    </dict>
+    <key>%#@matchingFileCount@ matching files</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@matchingFileCount@</string>
+        <key>matchingFileCount</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>ld</string>
+            <key>one</key>
+            <string>%ld совпадающий файл</string>
+            <key>few</key>
+            <string>%ld совпадающих файла</string>
+            <key>many</key>
+            <string>%ld совпадающих файлов</string>
+            <key>other</key>
+            <string>%ld совпадающего файла</string>
+        </dict>
+    </dict>
+</dict>
+</plist>
