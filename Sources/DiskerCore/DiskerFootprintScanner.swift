@@ -29,7 +29,7 @@ public enum DiskerFootprintScanner {
         shouldCancel: () -> Bool = { Task.isCancelled },
         progress: (ScanProgress) -> Void = { _ in }
     ) -> ScanObservation {
-        FolderScanner.scan(
+        FolderScanner.scanAppOwnedRoots(
             roots: selectedRoots(bundleURL: bundleURL, supportDirectory: supportDirectory),
             shouldCancel: shouldCancel,
             progress: progress

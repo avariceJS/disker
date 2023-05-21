@@ -1,5 +1,6 @@
 #if DEBUG
 import AppKit
+import Darwin
 import DiskerCore
 import SwiftUI
 
@@ -8,6 +9,15 @@ struct DashboardModelMonitoringCheckHost: View {
     @State private var hasStarted = false
 
     static func resultURL(from arguments: [String]) -> URL? {
+        if let index = arguments.firstIndex(of: "--sandboxed-app-footprint-check"),
+           arguments.indices.contains(index + 1),
+           let runID = UUID(uuidString: arguments[index + 1]),
+           let cachesDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
+            return cachesDirectory
+                .appendingPathComponent("DiskerAppFootprintQA", isDirectory: true)
+                .appendingPathComponent(runID.uuidString.lowercased(), isDirectory: true)
+                .appendingPathComponent("result.txt")
+        }
         guard let index = arguments.firstIndex(of: "--dashboard-model-monitoring-check"),
               arguments.indices.contains(index + 1) else { return nil }
         return URL(fileURLWithPath: arguments[index + 1])
@@ -20,19 +30,80 @@ struct DashboardModelMonitoringCheckHost: View {
                 guard !hasStarted else { return }
                 hasStarted = true
                 do {
-                    let runDirectory = resultURL.deletingLastPathComponent()
-                    try await Self.runChecks(
-                        stateDirectory: runDirectory.appendingPathComponent("lifecycle", isDirectory: true)
-                    )
-                    try await Self.runEventTriggeredScanCheck(
-                        stateDirectory: runDirectory.appendingPathComponent("event-scan", isDirectory: true)
-                    )
-                    try writeResult("PASS DashboardModel monitor lifecycle, event-triggered growth scan, persisted same-path report, opt-out, re-opt-in baseline, scheduled scan, and incomplete-root pause/resume")
+                    if let index = ProcessInfo.processInfo.arguments.firstIndex(of: "--sandboxed-app-footprint-check"),
+                       ProcessInfo.processInfo.arguments.indices.contains(index + 1),
+                       let runID = UUID(uuidString: ProcessInfo.processInfo.arguments[index + 1]) {
+                        try await Self.runSandboxedAppFootprintCheck(runID: runID)
+                        try writeResult("PASS sandboxed app-bundle and isolated Application Support footprint scan")
+                    } else {
+                        let runDirectory = resultURL.deletingLastPathComponent()
+                        try await Self.runChecks(
+                            stateDirectory: runDirectory.appendingPathComponent("lifecycle", isDirectory: true)
+                        )
+                        try await Self.runEventTriggeredScanCheck(
+                            stateDirectory: runDirectory.appendingPathComponent("event-scan", isDirectory: true)
+                        )
+                        try writeResult("PASS DashboardModel monitor lifecycle, event-triggered growth scan, persisted same-path report, opt-out, re-opt-in baseline, scheduled scan, and incomplete-root pause/resume")
+                    }
                 } catch {
                     try? writeResult("FAIL \(error.localizedDescription)")
                 }
                 NSApplication.shared.terminate(nil)
             }
+    }
+
+    @MainActor
+    private static func runSandboxedAppFootprintCheck(runID: UUID) async throws {
+        guard let supportRoot = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            throw failure("The sandbox did not provide an Application Support location.")
+        }
+        let supportDirectory = supportRoot
+            .appendingPathComponent("DiskerAppFootprintQA", isDirectory: true)
+            .appendingPathComponent(runID.uuidString.lowercased(), isDirectory: true)
+        try FileManager.default.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: supportDirectory.deletingLastPathComponent()) }
+        try Data(repeating: 0x44, count: 128).write(to: supportDirectory.appendingPathComponent("fixture.bin"))
+
+        let bundleURL = Bundle.main.bundleURL
+        let observation = await Task.detached(priority: .utility) {
+            DiskerFootprintScanner.scan(bundleURL: bundleURL, supportDirectory: supportDirectory)
+        }.value
+        let incompleteRoots = observation.folders.filter { !$0.complete }
+        guard incompleteRoots.isEmpty else {
+            let sandboxed = (try? SelectedScopeBookmarkStore.requiresSecurityScopedAccess()) ?? false
+            let details = incompleteRoots.map { result in
+                "\(result.path) (inaccessible: \(result.inaccessibleCount), symlinks: \(result.excludedSymlinkCount), direct: \(Self.directPathDiagnostics(result.path)))"
+            }.joined(separator: "; ")
+            throw failure(
+                "Sandboxed app-owned roots were not measured completely "
+                    + "(sandbox entitlement: \(sandboxed)): \(details)."
+            )
+        }
+        guard let support = observation.folders.first(where: {
+                  $0.path == supportDirectory.standardizedFileURL.path
+              }), support.complete, support.fileCount == 1, support.logicalBytes == 128 else {
+            let result = observation.folders.first(where: { $0.path == supportDirectory.standardizedFileURL.path })
+            throw failure(
+                "The sandboxed synthetic support root was not measured exactly "
+                    + "(complete: \(result?.complete ?? false), "
+                    + "files: \(result?.fileCount ?? -1), logical: \(result?.logicalBytes ?? -1))."
+            )
+        }
+    }
+
+    private static func directPathDiagnostics(_ path: String) -> String {
+        var components = ""
+        var ancestors: [String] = []
+        for component in path.split(separator: "/") {
+            components += "/" + component
+            var metadata = stat()
+            let status = components.withCString { lstat($0, &metadata) }
+            ancestors.append("\(components)=\(status == 0 ? "ok" : String(errno))")
+        }
+        let descriptor = path.withCString { open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
+        let opened = descriptor >= 0 ? "ok" : String(errno)
+        if descriptor >= 0 { close(descriptor) }
+        return "lstat[\(ancestors.joined(separator: ","))],open=\(opened)"
     }
 
     @MainActor

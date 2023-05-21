@@ -133,6 +133,26 @@ public enum FolderScanner {
         )
     }
 
+    /// Scans exact paths supplied by Disker's own bundle and support-directory
+    /// resolver. These paths are already app-owned; sandbox traversal still
+    /// opens only each exact root and continues to reject symlinks.
+    static func scanAppOwnedRoots(
+        roots: [URL],
+        shouldCancel: () -> Bool = { Task.isCancelled },
+        progress: (ScanProgress) -> Void = { _ in }
+    ) -> ScanObservation {
+        var inventories: [FileInventorySnapshot] = []
+        return scanInternal(
+            roots: roots,
+            simulatedDeviceIDsByPath: [:],
+            rootsTrustedWithinSandbox: Set(roots.map { $0.standardizedFileURL.path }),
+            shouldCancel: shouldCancel,
+            progress: progress,
+            collectFileInventories: false,
+            fileInventories: &inventories
+        )
+    }
+
     public static func scanWithFileInventories(
         roots: [URL], shouldCancel: () -> Bool = { Task.isCancelled },
         progress: (ScanProgress) -> Void = { _ in }
@@ -166,6 +186,7 @@ public enum FolderScanner {
     private static func scanInternal(
         roots: [URL], simulatedDeviceIDsByPath: [String: UInt64],
         sandboxedRootAccessOverride: Bool? = nil,
+        rootsTrustedWithinSandbox: Set<String> = [],
         shouldCancel: () -> Bool,
         progress: (ScanProgress) -> Void,
         directoryDidFinish: (String) -> Void = { _ in },
@@ -186,6 +207,8 @@ public enum FolderScanner {
             }
 
             let accessGranted = root.startAccessingSecurityScopedResource()
+            let rootAccessIsScoped = sandboxedProcess
+                && (accessGranted || rootsTrustedWithinSandbox.contains(root.standardizedFileURL.path))
             defer {
                 if accessGranted { root.stopAccessingSecurityScopedResource() }
             }
@@ -193,7 +216,8 @@ public enum FolderScanner {
             let directoryRootDescriptor: Int32?
             let rootType: UInt32
             switch openSelectedRootWithoutFollowingLinks(
-                root.path, scopedAccessGranted: sandboxedProcess && accessGranted
+                root.path,
+                scopedAccessGranted: rootAccessIsScoped
             ) {
             case .openedDirectory(let descriptor, let metadata):
                 directoryRootDescriptor = descriptor
@@ -661,7 +685,7 @@ public enum FolderScanner {
 
             if rootType == S_IFDIR {
                 switch openSelectedRootWithoutFollowingLinks(
-                    root.path, scopedAccessGranted: sandboxedProcess && accessGranted
+                    root.path, scopedAccessGranted: rootAccessIsScoped
                 ) {
                 case .openedDirectory(let finalRootFD, let finalRootMetadata):
                     close(finalRootFD)
