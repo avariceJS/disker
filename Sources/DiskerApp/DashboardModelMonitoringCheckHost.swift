@@ -34,7 +34,7 @@ struct DashboardModelMonitoringCheckHost: View {
                        ProcessInfo.processInfo.arguments.indices.contains(index + 1),
                        let runID = UUID(uuidString: ProcessInfo.processInfo.arguments[index + 1]) {
                         try await Self.runSandboxedAppFootprintCheck(runID: runID)
-                        try writeResult("PASS sandboxed app-bundle and isolated Application Support footprint scan")
+                        try writeResult("PASS sandboxed app bundle and app-owned support no-follow boundary")
                     } else {
                         let runDirectory = resultURL.deletingLastPathComponent()
                         try await Self.runChecks(
@@ -60,32 +60,46 @@ struct DashboardModelMonitoringCheckHost: View {
         let supportDirectory = supportRoot
             .appendingPathComponent("DiskerAppFootprintQA", isDirectory: true)
             .appendingPathComponent(runID.uuidString.lowercased(), isDirectory: true)
+        let symlinkTarget = supportDirectory.deletingLastPathComponent()
+            .appendingPathComponent("outside-support", isDirectory: true)
         try FileManager.default.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: supportDirectory.deletingLastPathComponent()) }
         try Data(repeating: 0x44, count: 128).write(to: supportDirectory.appendingPathComponent("fixture.bin"))
+        try FileManager.default.createDirectory(at: symlinkTarget, withIntermediateDirectories: true)
+        try Data(repeating: 0x55, count: 4096).write(to: symlinkTarget.appendingPathComponent("must-not-count.bin"))
+        try FileManager.default.createSymbolicLink(
+            at: supportDirectory.appendingPathComponent("linked-outside"),
+            withDestinationURL: symlinkTarget
+        )
 
         let bundleURL = Bundle.main.bundleURL
         let observation = await Task.detached(priority: .utility) {
             DiskerFootprintScanner.scan(bundleURL: bundleURL, supportDirectory: supportDirectory)
         }.value
-        let incompleteRoots = observation.folders.filter { !$0.complete }
-        guard incompleteRoots.isEmpty else {
+        guard let bundle = observation.folders.first(where: {
+                  $0.path == bundleURL.standardizedFileURL.path
+              }), bundle.complete else {
+            let result = observation.folders.first(where: { $0.path == bundleURL.standardizedFileURL.path })
             let sandboxed = (try? SelectedScopeBookmarkStore.requiresSecurityScopedAccess()) ?? false
-            let details = incompleteRoots.map { result in
-                "\(result.path) (inaccessible: \(result.inaccessibleCount), symlinks: \(result.excludedSymlinkCount), direct: \(Self.directPathDiagnostics(result.path)))"
-            }.joined(separator: "; ")
             throw failure(
-                "Sandboxed app-owned roots were not measured completely "
-                    + "(sandbox entitlement: \(sandboxed)): \(details)."
+                "The sandboxed QA app bundle was not measured completely "
+                    + "(inaccessible: \(result?.inaccessibleCount ?? -1), "
+                    + "symlinks: \(result?.excludedSymlinkCount ?? -1), "
+                    + "sandbox entitlement: \(sandboxed), path: \(bundleURL.path), "
+                    + "direct: \(Self.directPathDiagnostics(bundleURL.path)))."
             )
         }
         guard let support = observation.folders.first(where: {
                   $0.path == supportDirectory.standardizedFileURL.path
-              }), support.complete, support.fileCount == 1, support.logicalBytes == 128 else {
+              }), !support.complete, support.inaccessibleCount == 0,
+              support.excludedSymlinkCount == 1, support.fileCount == 1,
+              support.logicalBytes == 128 else {
             let result = observation.folders.first(where: { $0.path == supportDirectory.standardizedFileURL.path })
             throw failure(
-                "The sandboxed synthetic support root was not measured exactly "
+                "The sandboxed synthetic support root did not preserve the no-follow boundary "
                     + "(complete: \(result?.complete ?? false), "
+                    + "inaccessible: \(result?.inaccessibleCount ?? -1), "
+                    + "symlinks: \(result?.excludedSymlinkCount ?? -1), "
                     + "files: \(result?.fileCount ?? -1), logical: \(result?.logicalBytes ?? -1))."
             )
         }

@@ -50,4 +50,4 @@ else
     echo "Sandboxed footprint QA app exited $APP_STATUS without writing its result." >&2
 fi
 [ "$APP_STATUS" -eq 0 ]
-grep -q '^PASS sandboxed app-bundle and isolated Application Support footprint scan$' "$RESULT"
+grep -q '^PASS sandboxed app bundle and app-owned support no-follow boundary$' "$RESULT"
