@@ -34,7 +34,7 @@ struct DashboardModelMonitoringCheckHost: View {
                        ProcessInfo.processInfo.arguments.indices.contains(index + 1),
                        let runID = UUID(uuidString: ProcessInfo.processInfo.arguments[index + 1]) {
                         try await Self.runSandboxedAppFootprintCheck(runID: runID)
-                        try writeResult("PASS sandboxed app bundle and app-owned support no-follow boundary")
+                        try writeResult("PASS sandboxed app-owned footprint, no-follow scan, and path probes")
                     } else {
                         let runDirectory = resultURL.deletingLastPathComponent()
                         try await Self.runChecks(
@@ -101,6 +101,24 @@ struct DashboardModelMonitoringCheckHost: View {
                     + "inaccessible: \(result?.inaccessibleCount ?? -1), "
                     + "symlinks: \(result?.excludedSymlinkCount ?? -1), "
                     + "files: \(result?.fileCount ?? -1), logical: \(result?.logicalBytes ?? -1))."
+            )
+        }
+        let unselectedPath = SelectedScopePathProbe.probe(at: supportDirectory.path)
+        let presentPath = SelectedScopePathProbe.probe(selectedURL: supportDirectory)
+        let missingPath = SelectedScopePathProbe.probe(
+            selectedURL: supportDirectory.appendingPathComponent("not-present", isDirectory: true)
+        )
+        let symlinkPath = SelectedScopePathProbe.probe(
+            selectedURL: supportDirectory.appendingPathComponent("linked-outside", isDirectory: true)
+        )
+        guard unselectedPath == .permissionOrAccessUnknown,
+              presentPath.isAvailableDirectory,
+              missingPath == .missingOrUnreachable,
+              symlinkPath == .symbolicLink else {
+            throw failure(
+                "Sandboxed app-data path probes returned unexpected presence-only statuses "
+                    + "(unselected: \(unselectedPath), present: \(presentPath), "
+                    + "missing: \(missingPath), symlink: \(symlinkPath))."
             )
         }
     }

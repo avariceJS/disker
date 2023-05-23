@@ -177,6 +177,16 @@ public enum SelectedScopePathProbe {
     /// preserves the selection and rejects a final symlink; it cannot verify
     /// inaccessible ancestors or inspect descendants.
     private static func probeExactSelectedDirectory(_ url: URL) -> Status {
+        var selectedMetadata = stat()
+        let metadataResult = url.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return lstat(path, &selectedMetadata)
+        }
+        guard metadataResult == 0 else { return status(forErrno: errno) }
+        let selectedType = selectedMetadata.st_mode & S_IFMT
+        if selectedType == S_IFLNK { return .symbolicLink }
+        guard selectedType == S_IFDIR else { return .notDirectory }
+
         let descriptor = url.withUnsafeFileSystemRepresentation { path -> Int32 in
             guard let path else { return -1 }
             return open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
@@ -186,7 +196,11 @@ public enum SelectedScopePathProbe {
 
         var opened = stat()
         guard fstat(descriptor, &opened) == 0 else { return status(forErrno: errno) }
-        guard opened.st_mode & S_IFMT == S_IFDIR else { return .notDirectory }
+        guard opened.st_mode & S_IFMT == S_IFDIR,
+              opened.st_dev == selectedMetadata.st_dev,
+              opened.st_ino == selectedMetadata.st_ino else {
+            return .permissionOrAccessUnknown
+        }
         return .availableDirectoryWithinBookmarkScope
     }
 
