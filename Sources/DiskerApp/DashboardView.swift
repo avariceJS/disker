@@ -2740,13 +2740,25 @@ struct DashboardView: View {
                             .foregroundStyle(.secondary)
                     }
                 } else if !fullCapacitySeries.isEmpty {
-                    historyRangePicker
-                    Text(String.localizedStringWithFormat(
-                        NSLocalizedString("Fewer than two comparable capacity observations in %@.", comment: "Insufficient observations in selected storage history range"),
-                        historyRangeCaption(endingAt: latestCapacityDate)
-                    ))
+                    if fullCapacitySeries.count == 1 {
+                        Label(
+                            NSLocalizedString(
+                                "One capacity observation is saved. A later check can show change.",
+                                comment: "A first system capacity observation is saved but does not establish a trend"
+                            ),
+                            systemImage: "clock"
+                        )
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    } else {
+                        historyRangePicker
+                        Text(String.localizedStringWithFormat(
+                            NSLocalizedString("Fewer than two comparable capacity observations in %@.", comment: "Insufficient observations in selected storage history range"),
+                            historyRangeCaption(endingAt: latestCapacityDate)
+                        ))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 if let previous = ObservationComparison.previousComparableCapacity(for: capacity, in: model.history),
                    let delta = ObservationComparison.availableCapacityDelta(current: capacity, previous: previous) {
@@ -2763,37 +2775,11 @@ struct DashboardView: View {
                     ) {
                         capacityIntervalGrowthCard(interval)
                     }
-                } else {
+                } else if fullCapacitySeries.count > 1 {
                         Text("No earlier comparable measurement for this volume and availability method is available.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                VStack(spacing: 3) {
-                    HStack(alignment: .top, spacing: 24) {
-                        Text("Capacity minus available")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Text("Volume capacity")
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    HStack(alignment: .firstTextBaseline, spacing: 24) {
-                        Text(format(capacity.notAvailableBytes))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Text(format(capacity.totalBytes))
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                    }
-                    .font(.system(.title3, design: .rounded).weight(.medium))
-                }
-                    Text(NSLocalizedString(
-                        capacity.availabilityBasis == .importantUsage
-                            ? "Available space uses macOS’s estimate for important usage. Capacity minus available is a difference between system-reported values, not a measurement of physical file usage."
-                            : "macOS’s standard available-capacity value is shown because its important-usage estimate was zero or unavailable. Capacity minus available is not a measurement of physical file usage.",
-                        comment: "Clarifies the system-reported capacity measurement basis"
-                    ))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
             } else {
                 ContentUnavailableView("Capacity unavailable", systemImage: "internaldrive", description: Text("macOS did not provide capacity information for this volume."))
                     .frame(height: 140)
@@ -3257,10 +3243,31 @@ struct DashboardView: View {
 
     private var methodologyNote: some View {
         DisclosureGroup {
-            Text("The capacity figure comes from macOS. Folder totals are a separate file-tree estimate: snapshots, clones and system-managed storage can make them differ. Unmeasured items are reported as incomplete, never as zero.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 10) {
+                if let capacity = model.capacity {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text("Capacity minus available")
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        Text(format(capacity.notAvailableBytes))
+                            .monospacedDigit()
+                    }
+                    .font(.caption)
+                    Text(NSLocalizedString(
+                        capacity.availabilityBasis == .importantUsage
+                            ? "Available space uses macOS’s estimate for important usage. Capacity minus available is a difference between system-reported values, not a measurement of physical file usage."
+                            : "macOS’s standard available-capacity value is shown because its important-usage estimate was zero or unavailable. Capacity minus available is not a measurement of physical file usage.",
+                        comment: "Clarifies the system-reported capacity measurement basis"
+                    ))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                Text("The capacity figure comes from macOS. Folder totals are a separate file-tree estimate: snapshots, clones and system-managed storage can make them differ. Unmeasured items are reported as incomplete, never as zero.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         } label: {
             Label("About these measurements", systemImage: "info.circle")
                 .font(.caption)

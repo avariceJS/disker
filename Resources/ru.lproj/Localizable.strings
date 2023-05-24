@@ -51,6 +51,7 @@
 "History range" = "Период истории";
 "%@ ending %@" = "%@ · по %@";
 "Fewer than two comparable capacity observations in %@." = "Менее двух сопоставимых наблюдений ёмкости за период %@.";
+"One capacity observation is saved. A later check can show change." = "Сохранено одно наблюдение ёмкости. Последующая проверка покажет изменение.";
 "No earlier comparable measurement for this volume and availability method is available." = "Для этого тома и метода расчёта свободного места нет более раннего сопоставимого измерения.";
 "Available space uses macOS’s estimate for important usage. Capacity minus available is a difference between system-reported values, not a measurement of physical file usage." = "Свободное место показано по оценке macOS для важных данных. Разница между ёмкостью и свободным местом вычислена из показателей системы и не измеряет фактический объём файлов.";
 "macOS’s standard available-capacity value is shown because its important-usage estimate was zero or unavailable. Capacity minus available is not a measurement of physical file usage." = "Показано стандартное значение свободного места macOS, поскольку оценка для важных данных была нулевой или недоступной. Разница между ёмкостью и свободным местом не измеряет фактический объём файлов.";
