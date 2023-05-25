@@ -2357,10 +2357,13 @@ struct DashboardView: View {
                     ForEach(latest.folders) { folder in
                         fileInventoryOverviewRow(folder, latest: latest)
                     }
-                    Text("Disker compares regular files only inside the exact selected folders. It cannot name changes elsewhere on the Mac, reconstruct earlier growth, or catch files created and removed between scans. Overlapping roots are not additive; allocated bytes are estimates, not reclaimable space.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    DisclosureGroup("About these file comparisons") {
+                        Text("Disker compares regular files only inside the exact selected folders. It cannot name changes elsewhere on the Mac, reconstruct earlier growth, or catch files created and removed between scans. Overlapping roots are not additive; allocated bytes are estimates, not reclaimable space.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .font(.caption2)
                     if latest.folders.contains(where: { folder in
                         guard let report = model.fileInventoryReports[folder.path] else { return true }
                         return report.folderObservationID != folder.id
