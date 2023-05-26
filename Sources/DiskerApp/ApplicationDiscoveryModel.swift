@@ -7,6 +7,8 @@ import Observation
 @Observable
 final class ApplicationDiscoveryModel {
     private static let launchServicesLastOpenedAttribute = "kMDItemLastUsedDate"
+    private let historyStoreURL: URL?
+    private let bookmarkStoreOverrideURL: URL?
 
     private(set) var candidates: [ApplicationDiscoveryCandidate] = []
     private(set) var searchableCandidates: [ApplicationDiscoveryCandidate] = []
@@ -27,7 +29,13 @@ final class ApplicationDiscoveryModel {
     @ObservationIgnored private var securityScopedPaths = Set<String>()
     @ObservationIgnored private var savedScopeRestoreFailed = false
 
-    init(includeSnapshotCandidate: Bool = false) {
+    init(
+        includeSnapshotCandidate: Bool = false,
+        historyStoreURL: URL? = nil,
+        bookmarkStoreURL: URL? = nil
+    ) {
+        self.historyStoreURL = historyStoreURL
+        self.bookmarkStoreOverrideURL = bookmarkStoreURL
 #if DEBUG
         if includeSnapshotCandidate {
             let candidate = ApplicationDiscoveryCandidate(
@@ -42,7 +50,7 @@ final class ApplicationDiscoveryModel {
             return
         }
 #endif
-        history = (try? ObservationStore.load().discoveredApplications) ?? []
+        history = (try? ObservationStore.load(from: historyStoreURL).discoveredApplications) ?? []
     }
 
     func start() {
@@ -104,7 +112,7 @@ final class ApplicationDiscoveryModel {
             )
             return
         }
-        guard let bookmarkURL = Self.bookmarkStoreURL() else {
+        guard let bookmarkURL = bookmarkStoreURL() else {
             if didStartAccess { url.stopAccessingSecurityScopedResource() }
             statusMessage = NSLocalizedString(
                 "Disker could not prepare local storage for this discovery folder. No Spotlight query was started.",
@@ -128,7 +136,7 @@ final class ApplicationDiscoveryModel {
     }
 
     func removeUserSelectedScope(path: String) {
-        guard userSelectedScopePaths.contains(path), let bookmarkURL = Self.bookmarkStoreURL() else { return }
+        guard userSelectedScopePaths.contains(path), let bookmarkURL = bookmarkStoreURL() else { return }
         do {
             let bookmarks = try SelectedScopeBookmarkStore.remove(path: path, at: bookmarkURL)
             userSelectedScopePaths = bookmarks.map(\.path)
@@ -158,7 +166,7 @@ final class ApplicationDiscoveryModel {
         history = []
         userSelectedScopePaths = []
         savedScopeRestoreFailed = false
-        if let bookmarkURL = Self.bookmarkStoreURL() {
+        if let bookmarkURL = bookmarkStoreURL() {
             do {
                 try SelectedScopeBookmarkStore.clear(at: bookmarkURL)
             } catch {
@@ -169,7 +177,7 @@ final class ApplicationDiscoveryModel {
     }
 
     private func restoreUserSelectedScopes() {
-        guard let bookmarkURL = Self.bookmarkStoreURL() else {
+        guard let bookmarkURL = bookmarkStoreURL() else {
             savedScopeRestoreFailed = true
             return
         }
@@ -325,7 +333,9 @@ final class ApplicationDiscoveryModel {
         let updatedHistory = ApplicationBundleIndex.updatingDiscoveryHistory(history, with: searchable)
         if updatedHistory != history {
             do {
-                history = try ObservationStore.updateDiscoveredApplications(updatedHistory).discoveredApplications
+                history = try ObservationStore.updateDiscoveredApplications(
+                    updatedHistory, to: historyStoreURL
+                ).discoveredApplications
             } catch {
                 history = updatedHistory
                 statusMessage = NSLocalizedString(
@@ -356,8 +366,9 @@ final class ApplicationDiscoveryModel {
         return message.isEmpty ? warning : "\(message) \(warning)"
     }
 
-    private static func bookmarkStoreURL() -> URL? {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+    private func bookmarkStoreURL() -> URL? {
+        if let bookmarkStoreOverrideURL { return bookmarkStoreOverrideURL }
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first?
             .appendingPathComponent("Disker", isDirectory: true)
             .appendingPathComponent("application-discovery-scopes.json")

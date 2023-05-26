@@ -15,6 +15,7 @@ struct DiskerSnapshotRequest {
     let includeDatabaseSidecarReview: Bool
     let usePartialDatabaseSidecarFixture: Bool
     let useOmittedDatabaseChangeFixture: Bool
+    let storeURLs: DashboardModelStoreURLs
 
     static func from(arguments: [String]) -> DiskerSnapshotRequest? {
         guard let outputIndex = arguments.firstIndex(of: "--snapshot-output"),
@@ -41,6 +42,9 @@ struct DiskerSnapshotRequest {
         case "dark": appearanceName = .darkAqua
         default: appearanceName = nil
         }
+        let snapshotStoreDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Disker-Offscreen-Snapshot-\(UUID().uuidString)", isDirectory: true)
+        // Debug snapshots must never load or update the user's shared Application Support history.
         return DiskerSnapshotRequest(
             outputURL: URL(fileURLWithPath: arguments[outputIndex + 1]),
             section: section,
@@ -53,7 +57,16 @@ struct DiskerSnapshotRequest {
             includeDatabaseSidecarReview: includeDatabaseSidecarReview || usePartialDatabaseSidecarFixture
                 || useOmittedDatabaseChangeFixture,
             usePartialDatabaseSidecarFixture: usePartialDatabaseSidecarFixture,
-            useOmittedDatabaseChangeFixture: useOmittedDatabaseChangeFixture
+            useOmittedDatabaseChangeFixture: useOmittedDatabaseChangeFixture,
+            storeURLs: DashboardModelStoreURLs(
+                observations: snapshotStoreDirectory.appendingPathComponent("observations.json"),
+                fileInventory: snapshotStoreDirectory.appendingPathComponent("file-inventory.plist"),
+                selectedScopeBookmarks: snapshotStoreDirectory.appendingPathComponent("selected-scopes.json"),
+                storageMonitoringPreferences: snapshotStoreDirectory.appendingPathComponent("storage-monitoring.json"),
+                applicationDiscoveryScopes: snapshotStoreDirectory.appendingPathComponent(
+                    "application-discovery-scopes.json"
+                )
+            )
         )
     }
 
@@ -85,7 +98,8 @@ struct DiskerSnapshotHost: View {
                     suppressSpotlightDiscovery: request.suppressSpotlightDiscovery,
                     expandFirstSavedApplicationForSnapshot: true,
                     includeSnapshotProjectCandidate: request.includeProjectCandidate,
-                    includeSnapshotDiscoveredApplicationCandidate: request.includeSnapshotDiscoveredApplicationCandidate
+                    includeSnapshotDiscoveredApplicationCandidate: request.includeSnapshotDiscoveredApplicationCandidate,
+                    storeURLs: request.storeURLs
                 )
             }
         }

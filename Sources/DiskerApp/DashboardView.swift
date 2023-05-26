@@ -463,6 +463,7 @@ struct DashboardModelStoreURLs {
     let fileInventory: URL
     let selectedScopeBookmarks: URL
     let storageMonitoringPreferences: URL
+    var applicationDiscoveryScopes: URL? = nil
 }
 
 @MainActor
@@ -2053,14 +2054,18 @@ struct DashboardView: View {
         suppressSpotlightDiscovery: Bool = false,
         expandFirstSavedApplicationForSnapshot: Bool = false,
         includeSnapshotProjectCandidate: Bool = false,
-        includeSnapshotDiscoveredApplicationCandidate: Bool = false
+        includeSnapshotDiscoveredApplicationCandidate: Bool = false,
+        storeURLs: DashboardModelStoreURLs? = nil
     ) {
         _model = State(initialValue: DashboardModel(
             includeSnapshotProjectCandidate: includeSnapshotProjectCandidate,
-            includeSnapshotDiscoveredApplicationCandidate: includeSnapshotDiscoveredApplicationCandidate
+            includeSnapshotDiscoveredApplicationCandidate: includeSnapshotDiscoveredApplicationCandidate,
+            storeURLs: storeURLs
         ))
         _applicationDiscovery = State(initialValue: ApplicationDiscoveryModel(
-            includeSnapshotCandidate: includeSnapshotDiscoveredApplicationCandidate
+            includeSnapshotCandidate: includeSnapshotDiscoveredApplicationCandidate,
+            historyStoreURL: storeURLs?.observations,
+            bookmarkStoreURL: storeURLs?.applicationDiscoveryScopes
         ))
         _selectedSection = State(initialValue: initialSection)
         _isSavedApplicationHistoryExpanded = State(initialValue: expandSavedApplicationHistory)
