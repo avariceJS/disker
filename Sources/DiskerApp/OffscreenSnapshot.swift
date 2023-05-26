@@ -220,6 +220,7 @@ struct DiskerSnapshotHost: View {
             )
             try data.write(to: request.outputURL, options: .atomic)
             print("Disker snapshot saved: \(request.outputURL.path) (\(bitmap.pixelsWide)×\(bitmap.pixelsHigh))")
+            removeIsolatedSnapshotStore()
             NSApp.terminate(nil)
         } catch {
             retryOrFail(attempt: attempt, reason: "Snapshot write failed: \(error.localizedDescription)")
@@ -230,12 +231,22 @@ struct DiskerSnapshotHost: View {
     private func retryOrFail(attempt: Int, reason: String) {
         guard attempt < 10 else {
             fputs("Disker snapshot failed: \(reason)\n", stderr)
+            removeIsolatedSnapshotStore()
             NSApp.terminate(nil)
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             captureWhenReady(attempt: attempt + 1)
         }
+    }
+
+    private func removeIsolatedSnapshotStore() {
+        let directory = request.storeURLs.observations.deletingLastPathComponent().standardizedFileURL
+        let temporaryDirectory = FileManager.default.temporaryDirectory.standardizedFileURL
+        guard directory.deletingLastPathComponent().standardizedFileURL == temporaryDirectory,
+              directory.lastPathComponent.hasPrefix("Disker-Offscreen-Snapshot-")
+        else { return }
+        try? FileManager.default.removeItem(at: directory)
     }
 }
 #endif
