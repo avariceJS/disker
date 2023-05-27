@@ -114,11 +114,15 @@ private struct SWFileExtensionBreakdownChart: View {
             }
         }
 
-        func bytes(in category: FileExtensionUsage) -> Int64 {
+        var coreBasis: FileExtensionBreakdown.SizeBasis {
             switch self {
-            case .allocated: category.allocatedBytes
-            case .logical: category.logicalBytes
+            case .allocated: .allocated
+            case .logical: .logical
             }
+        }
+
+        func bytes(in category: FileExtensionUsage) -> Int64 {
+            coreBasis.bytes(in: category)
         }
     }
 
@@ -132,8 +136,12 @@ private struct SWFileExtensionBreakdownChart: View {
 
     private let palette: [Color] = [.blue, .purple, .teal, .orange, .indigo, .pink]
 
+    private var orderedCategories: [FileExtensionUsage] {
+        FileExtensionBreakdown.ranked(categories, by: sizeBasis.coreBasis)
+    }
+
     private var chartCategories: [FileExtensionUsage] {
-        categories.filter { sizeBasis.bytes(in: $0) > 0 }
+        orderedCategories.filter { sizeBasis.bytes(in: $0) > 0 }
     }
 
     private var selectedCategory: FileExtensionUsage? {
@@ -239,7 +247,10 @@ private struct SWFileExtensionBreakdownChart: View {
                 }
 
                 VStack(alignment: .leading, spacing: 3) {
-                    ForEach(Array(categories.enumerated()), id: \.element.extensionName) { index, category in
+                    ForEach(orderedCategories) { category in
+                        let paletteIndex = categories.firstIndex {
+                            $0.extensionName == category.extensionName
+                        } ?? 0
                         Button {
                             let nextID = selectedCategoryID == category.extensionName
                                 ? nil : category.extensionName
@@ -251,7 +262,7 @@ private struct SWFileExtensionBreakdownChart: View {
                         } label: {
                             HStack(spacing: 7) {
                                 Circle()
-                                    .fill(palette[index % palette.count])
+                                    .fill(palette[paletteIndex % palette.count])
                                     .frame(width: 7, height: 7)
                                 VStack(alignment: .leading, spacing: 1) {
                                     HStack(spacing: 5) {
@@ -307,6 +318,7 @@ private struct SWFileExtensionBreakdownChart: View {
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
+        .animation(.snappy(duration: 0.22), value: sizeBasis)
     }
 
     private func categoryID(forCumulativeAngle angle: Int) -> String? {

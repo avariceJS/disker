@@ -6,6 +6,18 @@ import Foundation
 public enum FileExtensionBreakdown {
     public static let otherCategoryName = "other extensions"
 
+    public enum SizeBasis: Sendable {
+        case allocated
+        case logical
+
+        public func bytes(in category: FileExtensionUsage) -> Int64 {
+            switch self {
+            case .allocated: category.allocatedBytes
+            case .logical: category.logicalBytes
+            }
+        }
+    }
+
     /// Returns nil when the persisted summaries cannot support a complete,
     /// non-overflowed allocation breakdown. A partial folder observation may
     /// still return categories; callers must disclose that coverage is partial.
@@ -57,5 +69,19 @@ public enum FileExtensionBreakdown {
             allocatedBytes: allocatedBytes,
             fileCount: fileCount
         )]
+    }
+
+    /// Ranks the same bounded categories by the metric currently shown by a
+    /// chart or list. Ties use the stable filename-category key.
+    public static func ranked(
+        _ categories: [FileExtensionUsage],
+        by sizeBasis: SizeBasis
+    ) -> [FileExtensionUsage] {
+        categories.sorted { left, right in
+            let leftBytes = sizeBasis.bytes(in: left)
+            let rightBytes = sizeBasis.bytes(in: right)
+            if leftBytes != rightBytes { return leftBytes > rightBytes }
+            return left.extensionName < right.extensionName
+        }
     }
 }

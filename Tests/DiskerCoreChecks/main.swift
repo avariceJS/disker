@@ -3923,6 +3923,17 @@ private struct DiskerCoreChecks {
     }
 
     private static func testFileExtensionBreakdown() throws {
+        let rankingFixture = [
+            FileExtensionUsage(extensionName: "archive", logicalBytes: 80, allocatedBytes: 16_384, fileCount: 1),
+            FileExtensionUsage(extensionName: "model", logicalBytes: 16_384, allocatedBytes: 8_192, fileCount: 1),
+            FileExtensionUsage(extensionName: "cache", logicalBytes: 8_192, allocatedBytes: 8_192, fileCount: 1),
+        ]
+        let logicalRanking = FileExtensionBreakdown.ranked(rankingFixture, by: .logical)
+        let allocatedRanking = FileExtensionBreakdown.ranked(rankingFixture, by: .allocated)
+        try expect(logicalRanking.map(\.extensionName) == ["model", "cache", "archive"]
+                   && allocatedRanking.map(\.extensionName) == ["archive", "cache", "model"],
+                   "the visible category ranking should follow the active byte metric and break ties stably")
+
         try withTemporaryDirectory { root in
             let selected = root.appendingPathComponent("selected", isDirectory: true)
             try FileManager.default.createDirectory(at: selected, withIntermediateDirectories: false)
