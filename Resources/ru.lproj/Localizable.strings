@@ -620,6 +620,15 @@
 "Kernel page counts are a point-in-time view. Inactive pages may be reclaimable cache; these values are not a single additive ‘used’ total and are not macOS memory pressure." = "Число страниц памяти ядра — моментальный снимок. Неактивные страницы могут быть освобождаемым кешем; эти значения нельзя складывать в единый показатель «использовано», и это не показатель давления на память macOS.";
 "Largest positive allocated-estimate changes for the same subfolder within the same selected root. Paths missing from a retained summary are not treated as zero." = "Наибольшие положительные изменения оценки выделенного места для одной и той же вложенной папки внутри одного выбранного корня. Пути, отсутствующие в сохранённой сводке, не считаются нулевыми.";
 "Largest subfolders" = "Самые большие вложенные папки";
+"Immediate subfolder sizes" = "Размеры вложенных папок первого уровня";
+"Choose the subfolder chart size basis" = "Выбрать показатель для графика вложенных папок";
+"Shows up to eight immediate children ranked by the selected measure. Nested folder totals are excluded, and files directly inside the selected root are not shown." = "Показано до восьми папок первого уровня в порядке выбранного показателя. Вложенные итоги не суммируются; файлы непосредственно в выбранной папке не показаны.";
+"Only completely measured subfolders are ranked; other content remains unknown." = "В список вошли только полностью измеренные вложенные папки; остальные данные остаются неизвестными.";
+"The scanner retained a bounded directory list; some subfolders may be omitted from this ranking." = "Сканер сохранил ограниченный список папок; некоторые папки могут отсутствовать в этом рейтинге.";
+"Size in bytes" = "Размер в байтах";
+"Subfolder" = "Вложенная папка";
+"Interactive comparison of immediate subfolder sizes" = "Интерактивное сравнение размеров папок первого уровня";
+"Select a bar to review its exact path and both size measurements." = "Выберите столбец, чтобы посмотреть точный путь и оба измеренных размера.";
 "Local history" = "Локальная история";
 "Low available capacity" = "Мало свободного места";
 "Measure only Disker’s installed app bundle and its own Application Support folder. This metadata-only check does not include the folders you selected for storage scans and is not saved in history." = "Измеряется только установленный пакет Disker и его папка Application Support. Проверка читает только метаданные, не включает выбранные вами папки и не сохраняется в истории.";

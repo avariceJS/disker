@@ -90,6 +90,7 @@ private struct DiskerCoreChecks {
             ("special filesystem entries remain partial and uncounted", testSpecialFileExclusion),
             ("metadata-only filename extension summaries", testFileExtensionSummaries),
             ("bounded file-extension chart breakdown preserves measured totals", testFileExtensionBreakdown),
+            ("directory breakdown ranks only complete immediate children", testDirectoryBreakdown),
             ("Disker own-footprint scan stays in app-owned scope", testDiskerFootprintScope),
             ("selected-scope duplicate verification", testDuplicateVerification),
             ("duplicate reads stay inside selected root volumes", testDuplicateVolumeBoundary),
@@ -3990,6 +3991,77 @@ private struct DiskerCoreChecks {
             try expect(FileExtensionBreakdown.categories(for: malformedFolder, visibleLimit: 1) == nil,
                        "overflow while combining visible remainder categories must fail closed")
         }
+    }
+
+    private static func testDirectoryBreakdown() throws {
+        let directories = [
+            DirectoryUsage(
+                rootRelativePath: "Models", logicalBytes: 1_600, allocatedBytes: 400,
+                fileCount: 3, incompleteCount: 0, excludedSymlinkCount: 0, complete: true
+            ),
+            DirectoryUsage(
+                rootRelativePath: "Cache", logicalBytes: 900, allocatedBytes: 1_000,
+                fileCount: 2, incompleteCount: 0, excludedSymlinkCount: 0, complete: true
+            ),
+            DirectoryUsage(
+                rootRelativePath: "Archive", logicalBytes: 500, allocatedBytes: 400,
+                fileCount: 1, incompleteCount: 0, excludedSymlinkCount: 0, complete: true
+            ),
+            DirectoryUsage(
+                rootRelativePath: "Models/Weights", logicalBytes: 9_000, allocatedBytes: 9_000,
+                fileCount: 8, incompleteCount: 0, excludedSymlinkCount: 0, complete: true
+            ),
+            DirectoryUsage(
+                rootRelativePath: "Partial", logicalBytes: 99_000, allocatedBytes: 99_000,
+                fileCount: 9, incompleteCount: 1, excludedSymlinkCount: 0, complete: false
+            ),
+            DirectoryUsage(
+                rootRelativePath: "StaleCompleteFlag", logicalBytes: 77_000, allocatedBytes: 77_000,
+                fileCount: 9, incompleteCount: 1, excludedSymlinkCount: 0, complete: true
+            ),
+            DirectoryUsage(
+                rootRelativePath: "Negative", logicalBytes: -1, allocatedBytes: 99_000,
+                fileCount: 9, incompleteCount: 0, excludedSymlinkCount: 0, complete: true
+            ),
+            DirectoryUsage(
+                rootRelativePath: "../outside", logicalBytes: 88_000, allocatedBytes: 88_000,
+                fileCount: 9, incompleteCount: 0, excludedSymlinkCount: 0, complete: true
+            ),
+        ]
+
+        let logical = DirectoryBreakdown.ranked(directories, by: .logical)
+        let allocated = DirectoryBreakdown.ranked(directories, by: .allocated)
+        try expect(logical.map(\.rootRelativePath) == ["Models", "Cache", "Archive"]
+                   && allocated.map(\.rootRelativePath) == ["Cache", "Archive", "Models"],
+                   "the ranking should follow the active metric while excluding nested, partial, and escaped paths")
+
+        let ties = DirectoryBreakdown.ranked([
+            DirectoryUsage(
+                rootRelativePath: "Zulu", logicalBytes: 4, allocatedBytes: 4,
+                fileCount: 1, incompleteCount: 0, excludedSymlinkCount: 0, complete: true
+            ),
+            DirectoryUsage(
+                rootRelativePath: "Alpha", logicalBytes: 4, allocatedBytes: 4,
+                fileCount: 1, incompleteCount: 0, excludedSymlinkCount: 0, complete: true
+            ),
+        ], by: .allocated)
+        try expect(ties.map(\.rootRelativePath) == ["Alpha", "Zulu"]
+                   && DirectoryBreakdown.ranked(directories, by: .logical, limit: 2).count == 2
+                   && DirectoryBreakdown.ranked(directories, by: .logical, limit: 0).isEmpty,
+                   "directory ordering should break ties deterministically and honor the visible bound")
+
+        let manyDirectories = (0..<12).map { index in
+            DirectoryUsage(
+                rootRelativePath: "folder-\(index)", logicalBytes: Int64(index + 1),
+                allocatedBytes: Int64(index + 1), fileCount: 1, incompleteCount: 0,
+                excludedSymlinkCount: 0, complete: true
+            )
+        }
+        let bounded = DirectoryBreakdown.ranked(manyDirectories, by: .logical)
+        try expect(bounded.count == DirectoryBreakdown.maximumDisplayedDirectories
+                   && bounded.first?.rootRelativePath == "folder-11"
+                   && bounded.last?.rootRelativePath == "folder-4",
+                   "directory chart input should remain bounded to the largest eight immediate children")
     }
 
     private static func testDiskerFootprintScope() throws {

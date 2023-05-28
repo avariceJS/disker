@@ -637,11 +637,20 @@ final class DashboardModel {
             rootRelativePath: "models", logicalBytes: 268_435_456, allocatedBytes: 281_018_368,
             fileCount: 4, incompleteCount: 0, excludedSymlinkCount: 0, complete: true
         )
+        let cacheUsage = DirectoryUsage(
+            rootRelativePath: "cache", logicalBytes: 46_137_344, allocatedBytes: 48_234_496,
+            fileCount: 2, incompleteCount: 0, excludedSymlinkCount: 0, complete: true
+        )
+        let sourceUsage = DirectoryUsage(
+            rootRelativePath: "src", logicalBytes: 11_010_048, allocatedBytes: 12_582_912,
+            fileCount: 3, incompleteCount: 0, excludedSymlinkCount: 0, complete: true
+        )
         let project = FolderObservation(
             path: root, volumeDeviceID: 42, displayName: "DemoProject",
-            logicalBytes: 268_443_648, allocatedBytes: 281_030_656, fileCount: 6,
+            logicalBytes: 325_591_040, allocatedBytes: 341_848_064, fileCount: 11,
             inaccessibleCount: 0, finishedAt: now.addingTimeInterval(-600), complete: true,
             gitMetadataEntryDetected: true, gitMetadataUsage: gitUsage,
+            subdirectorySummaries: [gitUsage, modelUsage, cacheUsage, sourceUsage],
             projectDirectorySummaries: [gitUsage, modelUsage]
         )
         let candidateBefore = FolderObservation(
@@ -6134,6 +6143,8 @@ struct DashboardView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+
+                        SWDirectoryBreakdownChart(folder: folder)
 
                         ForEach(rankedSubdirectories, id: \.rootRelativePath) { directory in
                             let directoryURL = URL(fileURLWithPath: folder.path)
