@@ -4233,12 +4233,32 @@ private struct DiskerCoreChecks {
             try FileManager.default.createDirectory(at: uniqueRoot, withIntermediateDirectories: false)
             try Data("one unique file".utf8).write(to: uniqueRoot.appendingPathComponent("only.bin"))
             var unnecessaryAuthorizationRequested = false
-            let uniqueOnly = DuplicateVerifier.verify(roots: [uniqueRoot], authorizeContentRead: { _ in
-                unnecessaryAuthorizationRequested = true
-                return true
-            })
+            var uniqueProgress: [DuplicateVerificationProgress] = []
+            let uniqueOnly = DuplicateVerifier.verify(
+                roots: [uniqueRoot], progress: { uniqueProgress.append($0) },
+                authorizeContentRead: { _ in
+                    unnecessaryAuthorizationRequested = true
+                    return true
+                }
+            )
             try expect(!unnecessaryAuthorizationRequested && uniqueOnly.complete && uniqueOnly.checkedFileCount == 0,
                        "verification without size-matched candidates should finish without requesting file-read consent")
+            try expect(!uniqueProgress.contains(where: { $0.phase == .readingContents }),
+                       "verification with no candidate files should not announce that content reading started")
+
+            let aliasedRoot = root.appendingPathComponent("selected-root-alias", isDirectory: true)
+            try FileManager.default.createSymbolicLink(at: aliasedRoot, withDestinationURL: uniqueRoot)
+            let aliasedRootResult = DuplicateVerifier.verify(
+                roots: [aliasedRoot], simulatedDeviceIDsByPath: [:],
+                scopedAccessGrantedByPath: [aliasedRoot.standardizedFileURL.path],
+                authorizeContentRead: { _ in
+                    unnecessaryAuthorizationRequested = true
+                    return true
+                }
+            )
+            try expect(!aliasedRootResult.complete && aliasedRootResult.excludedSymlinkCount == 1
+                       && aliasedRootResult.checkedFileCount == 0 && aliasedRootResult.groups.isEmpty,
+                       "the scoped-root fallback should reject a selected symlink without traversing its target")
             let firstAfterVerification = try Data(contentsOf: first)
             let secondAfterVerification = try Data(contentsOf: second)
             try expect(firstAfterVerification == sharedBytes && secondAfterVerification == sharedBytes, "verification must leave all selected files unchanged")

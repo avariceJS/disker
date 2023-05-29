@@ -1,7 +1,8 @@
 #if DEBUG
 import AppKit
+import CryptoKit
 import Darwin
-import DiskerCore
+@_spi(DiskerTesting) import DiskerCore
 import SwiftUI
 
 struct DashboardModelMonitoringCheckHost: View {
@@ -9,6 +10,15 @@ struct DashboardModelMonitoringCheckHost: View {
     @State private var hasStarted = false
 
     static func resultURL(from arguments: [String]) -> URL? {
+        if let index = arguments.firstIndex(of: "--sandboxed-duplicate-verification-check"),
+           arguments.indices.contains(index + 1),
+           let runID = UUID(uuidString: arguments[index + 1]),
+           let cachesDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
+            return cachesDirectory
+                .appendingPathComponent("DiskerDuplicateVerificationQA", isDirectory: true)
+                .appendingPathComponent(runID.uuidString.lowercased(), isDirectory: true)
+                .appendingPathComponent("result.txt")
+        }
         if let index = arguments.firstIndex(of: "--sandboxed-app-footprint-check"),
            arguments.indices.contains(index + 1),
            let runID = UUID(uuidString: arguments[index + 1]),
@@ -30,7 +40,12 @@ struct DashboardModelMonitoringCheckHost: View {
                 guard !hasStarted else { return }
                 hasStarted = true
                 do {
-                    if let index = ProcessInfo.processInfo.arguments.firstIndex(of: "--sandboxed-app-footprint-check"),
+                    if let index = ProcessInfo.processInfo.arguments.firstIndex(of: "--sandboxed-duplicate-verification-check"),
+                       ProcessInfo.processInfo.arguments.indices.contains(index + 1),
+                       let runID = UUID(uuidString: ProcessInfo.processInfo.arguments[index + 1]) {
+                        try await Self.runSandboxedDuplicateVerificationCheck(runID: runID)
+                        try writeResult("PASS sandboxed duplicate verification, explicit content-read gate, and no-follow boundary")
+                    } else if let index = ProcessInfo.processInfo.arguments.firstIndex(of: "--sandboxed-app-footprint-check"),
                        ProcessInfo.processInfo.arguments.indices.contains(index + 1),
                        let runID = UUID(uuidString: ProcessInfo.processInfo.arguments[index + 1]) {
                         try await Self.runSandboxedAppFootprintCheck(runID: runID)
@@ -120,6 +135,112 @@ struct DashboardModelMonitoringCheckHost: View {
                     + "(unselected: \(unselectedPath), present: \(presentPath), "
                     + "missing: \(missingPath), symlink: \(symlinkPath))."
             )
+        }
+    }
+
+    @MainActor
+    private static func runSandboxedDuplicateVerificationCheck(runID: UUID) async throws {
+        guard let cachesDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
+            throw failure("The sandbox did not provide a Caches location for synthetic duplicate fixtures.")
+        }
+        let fixtureDirectory = cachesDirectory
+            .appendingPathComponent("DiskerDuplicateVerificationFixtures", isDirectory: true)
+            .appendingPathComponent(runID.uuidString.lowercased(), isDirectory: true)
+        let selectedRoot = fixtureDirectory.appendingPathComponent("SelectedRoot", isDirectory: true)
+        let outsideRoot = fixtureDirectory.appendingPathComponent("OutsideRoot", isDirectory: true)
+        try FileManager.default.createDirectory(at: selectedRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outsideRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: fixtureDirectory) }
+
+        let duplicateContents = Data("Disker synthetic sandbox duplicate fixture".utf8)
+        let uniqueContents = Data("unique".utf8)
+        let firstPath = selectedRoot.appendingPathComponent("first.bin").path
+        let secondPath = selectedRoot.appendingPathComponent("second.bin").path
+        try duplicateContents.write(to: URL(fileURLWithPath: firstPath))
+        try duplicateContents.write(to: URL(fileURLWithPath: secondPath))
+        try uniqueContents.write(to: selectedRoot.appendingPathComponent("unique.bin"))
+        try duplicateContents.write(to: outsideRoot.appendingPathComponent("outside-copy.bin"))
+        try FileManager.default.createSymbolicLink(
+            at: selectedRoot.appendingPathComponent("outside-link.bin"),
+            withDestinationURL: outsideRoot.appendingPathComponent("outside-copy.bin")
+        )
+
+        let originalContents = try Data(contentsOf: URL(fileURLWithPath: firstPath))
+        var declinedEstimate: DuplicateVerificationReadEstimate?
+        var declinedReadStarted = false
+        let declined = DuplicateVerifier.verify(
+            roots: [selectedRoot],
+            simulatedDeviceIDsByPath: [:],
+            scopedAccessGrantedByPath: [selectedRoot.standardizedFileURL.path],
+            progress: { progress in
+                if progress.phase == .readingContents { declinedReadStarted = true }
+            },
+            authorizeContentRead: { estimate in
+                declinedEstimate = estimate
+                return false
+            }
+        )
+        guard declined.cancelled, declined.groups.isEmpty, declined.checkedFileCount == 0,
+              !declinedReadStarted,
+              let declinedEstimate,
+              declinedEstimate.selectedRootPaths == [selectedRoot.standardizedFileURL.path],
+              declinedEstimate.candidateFileCount == 2,
+              declinedEstimate.candidateBytes == UInt64(duplicateContents.count * 2),
+              declinedEstimate.excludedSymlinkCount == 1,
+              !declinedEstimate.metadataCoverageComplete else {
+            throw failure(
+                "Declining synthetic content-read consent did not stop before hashing with honest coverage "
+                    + "(cancelled: \(declined.cancelled), groups: \(declined.groups.count), "
+                    + "checked: \(declined.checkedFileCount), readStarted: \(declinedReadStarted), "
+                    + "roots: \(declinedEstimate?.selectedRootPaths ?? []), "
+                    + "candidates: \(declinedEstimate?.candidateFileCount ?? -1), "
+                    + "bytes: \(declinedEstimate?.candidateBytes ?? 0), "
+                    + "symlinks: \(declinedEstimate?.excludedSymlinkCount ?? -1), "
+                    + "coverage: \(declinedEstimate?.metadataCoverageComplete ?? true), "
+                    + "entries: \(declinedEstimate?.entriesVisited ?? declined.checkedFileCount), "
+                    + "inaccessible: \(declined.inaccessibleCount), symlinksFound: \(declined.excludedSymlinkCount), "
+                    + "special: \(declined.excludedSpecialFileCount), volumes: \(declined.excludedVolumeBoundaryCount), "
+                    + "rootExists: \(FileManager.default.fileExists(atPath: selectedRoot.path)), root: \(selectedRoot.path))."
+            )
+        }
+
+        var authorizedEstimate: DuplicateVerificationReadEstimate?
+        var contentReadStarted = false
+        let verified = DuplicateVerifier.verify(
+            roots: [selectedRoot],
+            simulatedDeviceIDsByPath: [:],
+            scopedAccessGrantedByPath: [selectedRoot.standardizedFileURL.path],
+            progress: { progress in
+                if progress.phase == .readingContents && progress.bytesHashed > 0 {
+                    contentReadStarted = true
+                }
+            },
+            authorizeContentRead: { estimate in
+                authorizedEstimate = estimate
+                return estimate.selectedRootPaths == [selectedRoot.standardizedFileURL.path]
+                    && estimate.candidateFileCount == 2
+                    && estimate.candidateBytes == UInt64(duplicateContents.count * 2)
+                    && estimate.excludedSymlinkCount == 1
+            }
+        )
+        let expectedHash = SHA256.hash(data: duplicateContents)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        guard contentReadStarted,
+              authorizedEstimate?.candidateFileCount == 2,
+              verified.cancelled == false, verified.complete == false,
+              verified.checkedFileCount == 2,
+              verified.inaccessibleCount == 0, verified.excludedSymlinkCount == 1,
+              verified.excludedSpecialFileCount == 0,
+              verified.excludedVolumeBoundaryCount == 0, verified.changedDuringCheckCount == 0,
+              verified.groups.count == 1,
+              verified.groups[0].sha256 == expectedHash,
+              Set(verified.groups[0].files.map(\.path)) == Set([firstPath, secondPath]),
+              verified.groups[0].files.allSatisfy({ $0.logicalBytes == Int64(duplicateContents.count) }),
+              try Data(contentsOf: URL(fileURLWithPath: firstPath)) == originalContents,
+              try Data(contentsOf: URL(fileURLWithPath: secondPath)) == originalContents,
+              try Data(contentsOf: outsideRoot.appendingPathComponent("outside-copy.bin")) == originalContents else {
+            throw failure("Sandboxed duplicate hashing failed, escaped the selected root, altered a fixture, or overstated coverage.")
         }
     }
 

@@ -190,7 +190,7 @@ public enum DuplicateVerifier {
         authorizeContentRead: (DuplicateVerificationReadEstimate) -> Bool
     ) -> DuplicateVerificationResult {
         verifyInternal(
-            roots: roots, simulatedDeviceIDsByPath: [:], shouldCancel: shouldCancel,
+            roots: roots, simulatedDeviceIDsByPath: [:], scopedAccessGrantedByPath: [], shouldCancel: shouldCancel,
             progress: progress, authorizeContentRead: authorizeContentRead
         )
     }
@@ -199,18 +199,21 @@ public enum DuplicateVerifier {
     @_spi(DiskerTesting)
     public static func verify(
         roots: [URL], simulatedDeviceIDsByPath: [String: UInt64],
+        scopedAccessGrantedByPath: Set<String> = [],
         shouldCancel: () -> Bool = { Task.isCancelled },
         progress: (DuplicateVerificationProgress) -> Void = { _ in },
         authorizeContentRead: (DuplicateVerificationReadEstimate) -> Bool
     ) -> DuplicateVerificationResult {
         verifyInternal(
             roots: roots, simulatedDeviceIDsByPath: simulatedDeviceIDsByPath,
+            scopedAccessGrantedByPath: scopedAccessGrantedByPath,
             shouldCancel: shouldCancel, progress: progress, authorizeContentRead: authorizeContentRead
         )
     }
 
     private static func verifyInternal(
         roots: [URL], simulatedDeviceIDsByPath: [String: UInt64],
+        scopedAccessGrantedByPath: Set<String>,
         shouldCancel: () -> Bool,
         progress: (DuplicateVerificationProgress) -> Void,
         authorizeContentRead: (DuplicateVerificationReadEstimate) -> Bool
@@ -226,6 +229,7 @@ public enum DuplicateVerifier {
         var rootDescriptors: [Int32] = []
         var scopedURLs: [URL] = []
         var rootIdentityByPath: [String: FileIdentity] = [:]
+        var rootsWithScopedAccess = Set<String>()
         defer {
             rootDescriptors.forEach { close($0) }
             scopedURLs.forEach { $0.stopAccessingSecurityScopedResource() }
@@ -245,10 +249,15 @@ public enum DuplicateVerifier {
 
         for root in roots {
             if shouldCancel() { cancelled = true; break }
-            if root.startAccessingSecurityScopedResource() { scopedURLs.append(root) }
+            let startedSecurityScope = root.startAccessingSecurityScopedResource()
+            if startedSecurityScope { scopedURLs.append(root) }
+            let scopedAccessGranted = startedSecurityScope
+                || scopedAccessGrantedByPath.contains(root.path)
+                || scopedAccessGrantedByPath.contains(root.standardizedFileURL.path)
+            if scopedAccessGranted { rootsWithScopedAccess.insert(root.path) }
             let rootDescriptor: Int32
             let metadata: stat
-            switch openSelectedRootWithoutFollowingLinks(root.path) {
+            switch openSelectedRootWithoutFollowingLinks(root.path, scopedAccessGranted: scopedAccessGranted) {
             case .opened(let descriptor, let openedMetadata):
                 rootDescriptor = descriptor
                 metadata = openedMetadata
@@ -426,7 +435,7 @@ public enum DuplicateVerifier {
         )) {
             cancelled = true
         }
-        if !cancelled {
+        if !cancelled && candidateFileCount > 0 {
             progress(DuplicateVerificationProgress(
                 phase: .readingContents, currentPath: "", entriesVisited: entriesVisited,
                 bytesHashed: 0, candidateFileCount: candidateFileCount, candidateBytes: candidateBytes
@@ -514,7 +523,9 @@ public enum DuplicateVerifier {
 
         var selectedRootPathsStable = true
         for (path, expectedIdentity) in rootIdentityByPath {
-            switch openSelectedRootWithoutFollowingLinks(path) {
+            switch openSelectedRootWithoutFollowingLinks(
+                path, scopedAccessGranted: rootsWithScopedAccess.contains(path)
+            ) {
             case .opened(let descriptor, let metadata):
                 close(descriptor)
                 if fileIdentity(metadata) != expectedIdentity {
@@ -649,11 +660,68 @@ public enum DuplicateVerifier {
     /// Opens a selected directory root without following symlinks in any path
     /// component. The returned descriptor is pinned to the metadata identity
     /// that will seed the traversal.
-    private static func openSelectedRootWithoutFollowingLinks(_ path: String) -> SelectedRootOpenResult {
+    private static func openSelectedRootWithoutFollowingLinks(
+        _ path: String, scopedAccessGranted: Bool = false
+    ) -> SelectedRootOpenResult {
         let rawComponents = path.split(separator: "/", omittingEmptySubsequences: true)
         guard path.hasPrefix("/"),
               !rawComponents.contains("."), !rawComponents.contains("..") else {
             return .unavailable
+        }
+
+        // A security-scoped URL authorizes the selected root and its descendants,
+        // but not a descriptor walk from `/` through every parent directory.
+        // Open only that exact URL while the scope is active, reject symlinked
+        // ancestors with `lstat`, and recheck their identities after opening.
+        if scopedAccessGranted {
+            let components = Array(URL(fileURLWithPath: path).standardizedFileURL.pathComponents.dropFirst())
+            guard !components.isEmpty else { return .unavailable }
+            var checkedAncestors: [(path: String, identity: FileIdentity)] = []
+            var currentPath = ""
+            var selectedMetadata = stat()
+            for (index, component) in components.enumerated() {
+                currentPath += "/" + component
+                var componentMetadata = stat()
+                let lookup = currentPath.withCString { lstat($0, &componentMetadata) }
+                guard lookup == 0 else { return .unavailable }
+                let type = componentMetadata.st_mode & S_IFMT
+                if type == S_IFLNK { return .symbolicLink }
+                if index < components.count - 1, type != S_IFDIR { return .changed }
+                checkedAncestors.append((currentPath, fileIdentity(componentMetadata)))
+                if index == components.count - 1 { selectedMetadata = componentMetadata }
+            }
+            guard selectedMetadata.st_mode & S_IFMT == S_IFDIR else { return .unavailable }
+            let selectedDescriptor = path.withCString {
+                open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            }
+            guard selectedDescriptor >= 0 else {
+                if errno == ELOOP { return .symbolicLink }
+                if errno == ENOENT || errno == ENOTDIR { return .changed }
+                return .unavailable
+            }
+            var openedMetadata = stat()
+            guard fstat(selectedDescriptor, &openedMetadata) == 0 else {
+                close(selectedDescriptor)
+                return .unavailable
+            }
+            guard sameIdentity(selectedMetadata, openedMetadata), openedMetadata.st_mode & S_IFMT == S_IFDIR else {
+                close(selectedDescriptor)
+                return .changed
+            }
+            for ancestor in checkedAncestors {
+                var currentMetadata = stat()
+                let recheck = ancestor.path.withCString { lstat($0, &currentMetadata) }
+                guard recheck == 0 else {
+                    close(selectedDescriptor)
+                    return .unavailable
+                }
+                guard currentMetadata.st_mode & S_IFMT != S_IFLNK,
+                      fileIdentity(currentMetadata) == ancestor.identity else {
+                    close(selectedDescriptor)
+                    return .changed
+                }
+            }
+            return .opened(selectedDescriptor, openedMetadata)
         }
 
         var descriptor = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
