@@ -4243,8 +4243,9 @@ private struct DiskerCoreChecks {
             )
             try expect(!unnecessaryAuthorizationRequested && uniqueOnly.complete && uniqueOnly.checkedFileCount == 0,
                        "verification without size-matched candidates should finish without requesting file-read consent")
-            try expect(!uniqueProgress.contains(where: { $0.phase == .readingContents }),
-                       "verification with no candidate files should not announce that content reading started")
+            try expect(!uniqueProgress.contains(where: {
+                $0.phase == .awaitingContentAuthorization || $0.phase == .readingContents
+            }), "verification with no candidates should not announce a confirmation or content-reading phase")
 
             let aliasedRoot = root.appendingPathComponent("selected-root-alias", isDirectory: true)
             try FileManager.default.createSymbolicLink(at: aliasedRoot, withDestinationURL: uniqueRoot)

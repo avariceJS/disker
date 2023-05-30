@@ -418,10 +418,12 @@ public enum DuplicateVerifier {
             }
         }
         byteAccountingOverflowed = byteAccountingOverflowed || candidateByteOverflowed
-        progress(DuplicateVerificationProgress(
-            phase: .awaitingContentAuthorization, currentPath: "", entriesVisited: entriesVisited,
-            bytesHashed: 0, candidateFileCount: candidateFileCount, candidateBytes: candidateBytes
-        ))
+        if candidateFileCount > 0 {
+            progress(DuplicateVerificationProgress(
+                phase: .awaitingContentAuthorization, currentPath: "", entriesVisited: entriesVisited,
+                bytesHashed: 0, candidateFileCount: candidateFileCount, candidateBytes: candidateBytes
+            ))
+        }
         if shouldCancel() {
             cancelled = true
         } else if candidateFileCount > 0 && !authorizeContentRead(DuplicateVerificationReadEstimate(
