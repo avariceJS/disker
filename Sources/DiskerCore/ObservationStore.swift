@@ -211,6 +211,48 @@ public enum ObservationStore {
         return history
     }
 
+    /// Records a user-confirmed project root before any related folders have
+    /// been identified. A Git marker is discovery evidence, not ownership.
+    @discardableResult
+    public static func trackProjectRoot(
+        _ projectRootPath: String, at fileURL: URL? = nil
+    ) throws -> LocalHistory {
+        var history = try load(from: fileURL)
+        let association = try ProjectResourceAssociation(
+            projectRootPath: projectRootPath, relatedFolderPaths: []
+        )
+        guard !history.projectResourceAssociations.contains(where: {
+            $0.projectRootPath == association.projectRootPath
+        }) else { return history }
+        guard history.projectResourceAssociations.count < maximumProjectResourceAssociationCount else {
+            throw ProjectResourceAssociationError.tooManyProjectRoots
+        }
+        history.projectResourceAssociations.append(association)
+        try save(history, fileURL: fileURL)
+        return history
+    }
+
+    /// Removes an empty tracked root only. Existing explicit resource links
+    /// must be removed individually so a tracking toggle cannot discard them.
+    @discardableResult
+    public static func untrackEmptyProjectRoot(
+        _ projectRootPath: String, at fileURL: URL? = nil
+    ) throws -> LocalHistory {
+        var history = try load(from: fileURL)
+        let standardizedRoot = try ProjectResourceAssociation(
+            projectRootPath: projectRootPath, relatedFolderPaths: []
+        ).projectRootPath
+        guard let index = history.projectResourceAssociations.firstIndex(where: {
+            $0.projectRootPath == standardizedRoot
+        }) else { return history }
+        guard history.projectResourceAssociations[index].relatedFolderPaths.isEmpty else {
+            throw ProjectResourceAssociationError.projectHasLinkedFolders
+        }
+        history.projectResourceAssociations.remove(at: index)
+        try save(history, fileURL: fileURL)
+        return history
+    }
+
     @discardableResult
     public static func removeProjectFolderAssociation(
         _ path: String, from projectRootPath: String, at fileURL: URL? = nil

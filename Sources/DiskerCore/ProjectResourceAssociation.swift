@@ -84,6 +84,7 @@ public enum ProjectResourceAssociationError: Error, LocalizedError {
     case invalidPath
     case tooManyRelatedFolders
     case tooManyProjectRoots
+    case projectHasLinkedFolders
 
     public var errorDescription: String? {
         switch self {
@@ -93,6 +94,8 @@ public enum ProjectResourceAssociationError: Error, LocalizedError {
             "A selected project root can have at most \(ProjectResourceAssociation.maximumRelatedFolderCount) explicitly linked folders."
         case .tooManyProjectRoots:
             "Disker can store at most \(ObservationStore.maximumProjectResourceAssociationCount) project roots."
+        case .projectHasLinkedFolders:
+            "Remove linked locations before stopping project tracking."
         }
     }
 }

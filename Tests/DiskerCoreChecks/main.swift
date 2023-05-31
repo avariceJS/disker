@@ -68,6 +68,8 @@ private struct DiskerCoreChecks {
             ("read-only application-removal review planner", testApplicationRemovalReviewPlanner),
             ("explicit app-folder associations", testApplicationFolderAssociations),
             ("bounded explicit project-resource associations", testProjectResourceAssociations),
+            ("project candidate inventory preserves provenance and incomplete coverage", testProjectCandidateInventory),
+            ("project root marker probe does not follow symbolic links", testProjectRootMarkerProbe),
             ("exact project data candidates link to separate measured history", testProjectCandidateLinkWorkflow),
             ("project resource review preserves scope and coverage evidence", testProjectResourceReview),
             ("project linked growth compares exact paths independently", testProjectResourceGrowthReview),
@@ -2518,6 +2520,29 @@ private struct DiskerCoreChecks {
                        && linkedPaths == linkedPaths.sorted(),
                        "project resource paths should be standardized, deduplicated, and deterministically ordered")
 
+            try ObservationStore.trackProjectRoot(selectedProject.path, at: fileURL)
+            try ObservationStore.trackProjectRoot(selectedProject.path + "/./", at: fileURL)
+            history = try ObservationStore.load(from: fileURL)
+            try expect(history.projectResourceAssociations.count == 1,
+                       "tracking an existing linked project root should be idempotent")
+            let emptyTrackedRoot = root.appendingPathComponent("empty-project", isDirectory: true).path
+            try ObservationStore.trackProjectRoot(emptyTrackedRoot, at: fileURL)
+            try ObservationStore.trackProjectRoot(emptyTrackedRoot, at: fileURL)
+            history = try ObservationStore.load(from: fileURL)
+            try expect(history.projectResourceAssociations.count == 2
+                       && history.projectResourceAssociations.contains(where: {
+                           $0.projectRootPath == emptyTrackedRoot && $0.relatedFolderPaths.isEmpty
+                       }), "an explicitly tracked empty project root should persist exactly once")
+            history = try ObservationStore.untrackEmptyProjectRoot(emptyTrackedRoot, at: fileURL)
+            try expect(history.projectResourceAssociations.count == 1,
+                       "stopping tracking should remove only the requested empty project root")
+            do {
+                try ObservationStore.untrackEmptyProjectRoot(selectedProject.path, at: fileURL)
+                throw CheckFailure.assertion("a project root with explicit linked locations must not be untracked")
+            } catch ProjectResourceAssociationError.projectHasLinkedFolders {
+                // Explicit relationships must remain intact until removed individually.
+            }
+
             history = try ObservationStore.removeProjectFolderAssociation(
                 resources.path, from: selectedProject.path, at: fileURL
             )
@@ -2527,6 +2552,15 @@ private struct DiskerCoreChecks {
             let fileAfterAssociation = try Data(contentsOf: sentinel)
             try expect(fileAfterAssociation == sentinelContents,
                        "creating or removing a relationship must leave linked-folder contents unchanged")
+            history = try ObservationStore.removeProjectFolderAssociation(
+                selectedProject.path + "/nested", from: selectedProject.path, at: fileURL
+            )
+            history = try ObservationStore.removeProjectFolderAssociation(
+                "/synthetic/second-resource", from: selectedProject.path, at: fileURL
+            )
+            history = try ObservationStore.untrackEmptyProjectRoot(selectedProject.path, at: fileURL)
+            try expect(history.projectResourceAssociations.isEmpty,
+                       "stopping tracking may remove only an empty project root after links are explicitly removed")
 
             let bounded = try ProjectResourceAssociation(
                 projectRootPath: "/synthetic/project",
@@ -2564,6 +2598,148 @@ private struct DiskerCoreChecks {
             } catch ProjectResourceAssociationError.tooManyProjectRoots {
                 // Expected: persisted project relationships must remain bounded.
             }
+            do {
+                try ObservationStore.trackProjectRoot("/synthetic/projects/overflow", at: boundedStoreURL)
+                throw CheckFailure.assertion("tracking an empty project root must enforce the same persisted root cap")
+            } catch ProjectResourceAssociationError.tooManyProjectRoots {
+                // Empty tracked roots must obey the shared project cap.
+            }
+        }
+    }
+
+    private static func testProjectCandidateInventory() throws {
+        let firstSeen = Date(timeIntervalSince1970: 100)
+        let latestSeen = Date(timeIntervalSince1970: 200)
+        let parentPath = "/Users/synthetic/Workspace"
+        let projectPath = "/Users/synthetic/Workspace/Project"
+        let directRoot = FolderObservation(
+            path: projectPath, displayName: "Project", logicalBytes: 500,
+            allocatedBytes: 700, fileCount: 4, inaccessibleCount: 0,
+            finishedAt: latestSeen, complete: true, gitMetadataEntryDetected: true
+        )
+        let nestedOld = DirectoryUsage(
+            rootRelativePath: "OldProject", logicalBytes: 1_000, allocatedBytes: 1_100,
+            fileCount: 10, incompleteCount: 0, excludedSymlinkCount: 0,
+            gitMetadataEntryDetected: true, complete: true
+        )
+        let nestedLatest = DirectoryUsage(
+            rootRelativePath: "Project", logicalBytes: 800, allocatedBytes: 900,
+            fileCount: 8, incompleteCount: 0, excludedSymlinkCount: 0,
+            gitMetadataEntryDetected: true, complete: true
+        )
+        let unsafeAbsolute = DirectoryUsage(
+            rootRelativePath: "/Users/synthetic/Outside", logicalBytes: 99, allocatedBytes: 99,
+            fileCount: 1, incompleteCount: 0, excludedSymlinkCount: 0,
+            gitMetadataEntryDetected: true, complete: true
+        )
+        let unsafeParent = DirectoryUsage(
+            rootRelativePath: "../Outside", logicalBytes: 88, allocatedBytes: 88,
+            fileCount: 1, incompleteCount: 0, excludedSymlinkCount: 0,
+            gitMetadataEntryDetected: true, complete: true
+        )
+        let oldParent = FolderObservation(
+            path: parentPath, displayName: "Workspace", logicalBytes: 2_000,
+            allocatedBytes: 2_200, fileCount: 20, inaccessibleCount: 0,
+            finishedAt: firstSeen, complete: true,
+            projectDirectorySummaries: [nestedOld]
+        )
+        let latestParent = FolderObservation(
+            path: parentPath, displayName: "Workspace", logicalBytes: 2_500,
+            allocatedBytes: 2_700, fileCount: 25, inaccessibleCount: 1,
+            finishedAt: latestSeen.addingTimeInterval(10), complete: false,
+            projectDirectorySummaries: [nestedLatest, unsafeAbsolute, unsafeParent],
+            projectDirectorySummariesTruncated: true
+        )
+        let trackedWithoutObservation = try ProjectResourceAssociation(
+            projectRootPath: "/Users/synthetic/TrackedOnly", relatedFolderPaths: []
+        )
+        // Reverse chronological input deliberately: projection chooses by the
+        // observation timestamps, not array order or a stale candidate record.
+        let history = LocalHistory(
+            observations: [
+                ScanObservation(startedAt: latestSeen, folders: [latestParent, directRoot], cancelled: false),
+                ScanObservation(startedAt: firstSeen, folders: [oldParent], cancelled: false)
+            ],
+            projectResourceAssociations: [trackedWithoutObservation]
+        )
+        let inventory = ProjectCandidateInventory.make(from: history)
+        guard let nested = inventory.entries.first(where: { $0.path == projectPath }),
+              let trackedOnly = inventory.entries.first(where: { $0.path == trackedWithoutObservation.projectRootPath }) else {
+            throw CheckFailure.assertion("the latest nested Git marker and explicitly tracked root should both be projected")
+        }
+        try expect(nested.sources.count == 2 && nested.sources.contains(where: \.isSelectedRoot),
+                   "the same exact project found directly and below a selected root should retain two provenances without adding sizes")
+        try expect(nested.latestSource?.scopePath == parentPath
+                   && nested.displaySource?.scopePath == projectPath,
+                   "the newest parent estimate and exact selected-root measurement should remain distinguishable")
+        try expect(nested.sources.contains(where: {
+            $0.scopePath == parentPath && $0.logicalBytes == 800 && !$0.coverageComplete
+        }), "only the latest nested summary should be shown, with partial parent coverage preserved")
+        try expect(inventory.partialSelectedRootCount == 1
+                   && inventory.truncatedProjectCandidateScopeCount == 1,
+                   "incomplete and truncated latest selected-root scopes should be visible as coverage limits")
+        try expect(trackedOnly.isTracked && trackedOnly.sources.isEmpty,
+                   "an explicit tracked root without a current observation must not be described as absent or zero")
+        try expect(!inventory.entries.contains(where: { $0.path == "/Users/synthetic/Workspace/OldProject" })
+                   && !inventory.entries.contains(where: { $0.path == "/Users/synthetic/Outside" }),
+                   "superseded and unsafe relative-path summaries must not appear as current project candidates")
+
+        let manyRoots = (0...ProjectCandidateInventory.maximumDisplayedCandidates).map { index in
+            FolderObservation(
+                path: "/Users/synthetic/Projects/Project-\(index)", displayName: "Project \(index)",
+                logicalBytes: 1, allocatedBytes: 1, fileCount: 1, inaccessibleCount: 0,
+                finishedAt: latestSeen, complete: true, gitMetadataEntryDetected: true
+            )
+        }
+        let bounded = ProjectCandidateInventory.make(
+            from: LocalHistory(observations: [ScanObservation(
+                startedAt: latestSeen, folders: manyRoots, cancelled: false
+            )]), limit: 2
+        )
+        try expect(bounded.entries.count == 2 && bounded.hasMoreCandidates,
+                   "the inventory must disclose when its display cap hides additional candidates")
+        let zeroLimit = ProjectCandidateInventory.make(from: history, limit: 0)
+        try expect(zeroLimit.entries.isEmpty && zeroLimit.hasMoreCandidates,
+                   "an empty requested page must preserve inventory counts and disclose omitted rows")
+    }
+
+    private static func testProjectRootMarkerProbe() throws {
+        try withTemporaryDirectory { base in
+            let project = base.appendingPathComponent("project", isDirectory: true)
+            try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+            try expect(!ProjectRootMarkerProbe.hasDirectGitMarker(at: project),
+                       "a plain directory must not be treated as a Git-marked project")
+
+            let gitDirectory = project.appendingPathComponent(".git", isDirectory: true)
+            try FileManager.default.createDirectory(at: gitDirectory, withIntermediateDirectories: false)
+            try expect(ProjectRootMarkerProbe.hasDirectGitMarker(at: project),
+                       "a real direct .git directory is a metadata-only project marker")
+            try FileManager.default.removeItem(at: gitDirectory)
+
+            let gitFile = project.appendingPathComponent(".git")
+            try Data("gitdir: ../metadata".utf8).write(to: gitFile)
+            try expect(ProjectRootMarkerProbe.hasDirectGitMarker(at: project),
+                       "a regular .git worktree marker is detected without reading its contents")
+            try FileManager.default.removeItem(at: gitFile)
+
+            let target = base.appendingPathComponent("target", isDirectory: true)
+            try FileManager.default.createDirectory(at: target.appendingPathComponent(".git"), withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(at: gitDirectory, withDestinationURL: target.appendingPathComponent(".git"))
+            try expect(!ProjectRootMarkerProbe.hasDirectGitMarker(at: project),
+                       "a symlink named .git must never establish project marker evidence")
+            try expect(!ProjectRootMarkerProbe.hasDirectGitMarker(at: gitDirectory),
+                       "a selected project root that is itself a symlink must be rejected")
+
+            let realParent = base.appendingPathComponent("real-parent", isDirectory: true)
+            let realProject = realParent.appendingPathComponent("project", isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: realProject.appendingPathComponent(".git"), withIntermediateDirectories: true
+            )
+            let linkedParent = base.appendingPathComponent("linked-parent", isDirectory: true)
+            try FileManager.default.createSymbolicLink(at: linkedParent, withDestinationURL: realParent)
+            try expect(!ProjectRootMarkerProbe.hasDirectGitMarker(
+                at: linkedParent.appendingPathComponent("project", isDirectory: true)
+            ), "an intermediate symlink in a selected root path must not be traversed")
         }
     }
 

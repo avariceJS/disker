@@ -626,6 +626,7 @@ final class DashboardModel {
 
     private static func snapshotProjectCandidateHistory() -> LocalHistory {
         let root = "/synthetic/QA/DemoProject"
+        let parentRoot = "/synthetic/QA"
         let models = root + "/models"
         let now = Date()
         let gitUsage = DirectoryUsage(
@@ -645,13 +646,29 @@ final class DashboardModel {
             rootRelativePath: "src", logicalBytes: 11_010_048, allocatedBytes: 12_582_912,
             fileCount: 3, incompleteCount: 0, excludedSymlinkCount: 0, complete: true
         )
+        let nestedProjectUsage = DirectoryUsage(
+            rootRelativePath: "experiments/trainer", logicalBytes: 67_108_864,
+            allocatedBytes: 70_254_592, fileCount: 6, incompleteCount: 0,
+            excludedSymlinkCount: 0, gitMetadataEntryDetected: true, complete: true
+        )
+        let nestedRootUsage = DirectoryUsage(
+            rootRelativePath: "DemoProject", logicalBytes: 325_591_040,
+            allocatedBytes: 341_848_064, fileCount: 11, incompleteCount: 0,
+            excludedSymlinkCount: 0, gitMetadataEntryDetected: true, complete: true
+        )
+        let parentObservation = FolderObservation(
+            path: parentRoot, volumeDeviceID: 42, displayName: "QA",
+            logicalBytes: 325_591_040, allocatedBytes: 341_848_064, fileCount: 11,
+            inaccessibleCount: 0, finishedAt: now.addingTimeInterval(-700), complete: true,
+            projectDirectorySummaries: [nestedRootUsage]
+        )
         let project = FolderObservation(
             path: root, volumeDeviceID: 42, displayName: "DemoProject",
             logicalBytes: 325_591_040, allocatedBytes: 341_848_064, fileCount: 11,
             inaccessibleCount: 0, finishedAt: now.addingTimeInterval(-600), complete: true,
             gitMetadataEntryDetected: true, gitMetadataUsage: gitUsage,
             subdirectorySummaries: [gitUsage, modelUsage, cacheUsage, sourceUsage],
-            projectDirectorySummaries: [gitUsage, modelUsage]
+            projectDirectorySummaries: [nestedProjectUsage, modelUsage]
         )
         let candidateBefore = FolderObservation(
             path: models, volumeDeviceID: 42, displayName: "models",
@@ -675,6 +692,10 @@ final class DashboardModel {
             ScanObservation(
                 startedAt: candidateLatest.finishedAt, finishedAt: candidateLatest.finishedAt,
                 folders: [candidateLatest], cancelled: false
+            ),
+            ScanObservation(
+                startedAt: parentObservation.finishedAt, finishedAt: parentObservation.finishedAt,
+                folders: [parentObservation], cancelled: false
             ),
             ScanObservation(
                 startedAt: project.finishedAt, finishedAt: project.finishedAt,
@@ -1189,6 +1210,66 @@ final class DashboardModel {
         }
         rememberFolders([chosenURL])
         scan([chosenURL])
+    }
+
+    func trackAndMeasureProjectCandidate(at path: String) {
+        guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
+        let expectedURL = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+        guard ProjectCandidateInventory.make(from: history).entries.contains(where: {
+            $0.path == expectedURL.path && !$0.sources.isEmpty
+        }) else {
+            errorMessage = NSLocalizedString(
+                "This project candidate is no longer present in the latest saved scan. Scan its selected parent again before tracking it.",
+                comment: "Rejects stale or no-longer-listed Git project candidates"
+            )
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.title = NSLocalizedString("Confirm Project Root", comment: "Exact project root selection title")
+        panel.prompt = NSLocalizedString("Track and Measure", comment: "Track a Git-marked folder and measure it")
+        panel.message = NSLocalizedString(
+            "Choose this exact Git-marked folder. Disker will save it as a selected project root and run a separate metadata-only scan. The parent scan estimate remains separate.",
+            comment: "Explains exact-path project selection and separate measurement scope"
+        )
+        panel.directoryURL = expectedURL.deletingLastPathComponent()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        guard panel.runModal() == .OK, let chosenURL = panel.urls.first else { return }
+        guard SelectedScopeBookmarkStore.isSameSelectedPath(chosenURL, as: expectedURL.path) else {
+            errorMessage = NSLocalizedString(
+                "Choose the same project folder to keep its identity exact. No project was tracked and no scan was started.",
+                comment: "Rejects a different path selected while confirming a project root"
+            )
+            return
+        }
+        guard SelectedScopePathProbe.probe(selectedURL: chosenURL).isAvailableDirectory,
+              ProjectRootMarkerProbe.hasDirectGitMarker(at: chosenURL) else {
+            errorMessage = NSLocalizedString(
+                "Disker could not confirm a real directory with a direct .git marker without following symbolic links. No project was tracked and no scan was started.",
+                comment: "Rejects unavailable, symlink, or stale Git project root candidates"
+            )
+            return
+        }
+
+        do {
+            history = try ObservationStore.trackProjectRoot(expectedURL.path, at: observationStoreURL)
+        } catch {
+            errorMessage = "The project root could not be tracked: \(error.localizedDescription)"
+            return
+        }
+        rememberFolders([chosenURL])
+        scan([chosenURL])
+    }
+
+    func stopTrackingEmptyProjectRoot(_ path: String) {
+        do {
+            history = try ObservationStore.untrackEmptyProjectRoot(path, at: observationStoreURL)
+        } catch {
+            errorMessage = "Project tracking could not be stopped: \(error.localizedDescription)"
+        }
     }
 
     func measureAndLinkProjectCandidate(at path: String, to projectRootPath: String) {
@@ -2058,6 +2139,7 @@ struct DashboardView: View {
     @State private var expandedApplicationDiscoveryDataPaths = Set<String>()
     @State private var expandedApplicationDiscoveryRelatedLocations = Set<String>()
     @State private var expandedProjectResourceRoots = Set<String>()
+    @State private var expandedProjectCandidateSourcePaths = Set<String>()
     @State private var applicationDiscoveryMeasurementFilter: ApplicationDiscoveryMeasurementFilter = .all
     @State private var applicationDiscoverySort: ApplicationDiscoverySort = .name
     @State private var developerArtifactReviewFolder: FolderObservation?
@@ -2091,6 +2173,8 @@ struct DashboardView: View {
         _selectedSection = State(initialValue: initialSection)
         _isSavedApplicationHistoryExpanded = State(initialValue: expandSavedApplicationHistory)
         _expandedProjectResourceRoots = State(initialValue: includeSnapshotProjectCandidate
+            ? ["/synthetic/QA/DemoProject"] : [])
+        _expandedProjectCandidateSourcePaths = State(initialValue: includeSnapshotProjectCandidate
             ? ["/synthetic/QA/DemoProject"] : [])
         _expandedApplicationDiscoveryDataPaths = State(initialValue: includeSnapshotDiscoveredApplicationCandidate
             ? ["/synthetic/Applications/DemoApp.app"] : [])
@@ -3920,6 +4004,7 @@ struct DashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 header("Selected folders", subtitle: "Measure only locations you choose. Saved read-only access lets you rescan them on demand.")
+                projectCandidateInventorySection
                 selectedRootOverlapNotice
                 if hasSelectedFolderHistoryChart { historyRangePicker }
                 GroupBox {
@@ -4099,6 +4184,189 @@ struct DashboardView: View {
                 }
             }
         }
+    }
+
+    private var projectCandidateInventorySection: some View {
+        let inventory = ProjectCandidateInventory.make(from: model.history)
+        let discoveredCount = inventory.entries.filter { !$0.sources.isEmpty }.count
+        let trackedCount = inventory.entries.filter(\.isTracked).count
+        return GroupBox {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Project candidates in selected folders")
+                            .font(.headline)
+                        Text("Recent Git-marker evidence from folders you already chose")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text(String.localizedStringWithFormat(
+                        NSLocalizedString("Git candidates: %ld", comment: "Count of Git-marked project candidates in saved selected-folder observations"),
+                        discoveredCount
+                    ))
+                        .font(.subheadline.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.blue)
+                        .contentTransition(.numericText())
+                }
+
+                Text("This list uses the latest saved observation for each selected folder. Nested sizes are estimates within their parent scan, not independent project measurements, and overlapping amounts must not be added. A partial scan or capped candidate list may omit projects. A Git marker is discovery evidence, not proof of ownership or safe cleanup.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if inventory.partialSelectedRootCount > 0 || inventory.truncatedProjectCandidateScopeCount > 0 {
+                    Label(String.localizedStringWithFormat(
+                        NSLocalizedString("Coverage limits · %ld partial selected folders · %ld capped candidate lists", comment: "Project discovery coverage warning counts"),
+                        inventory.partialSelectedRootCount, inventory.truncatedProjectCandidateScopeCount
+                    ), systemImage: "exclamationmark.triangle")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                }
+
+                if inventory.entries.isEmpty {
+                    Label("No Git-marked project candidates in retained selected-folder observations", systemImage: "folder.badge.questionmark")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Text("Disker does not search unselected folders. Select a folder to discover candidates within that scope.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(inventory.entries) { entry in
+                        projectCandidateInventoryRow(entry)
+                        if entry.id != inventory.entries.last?.id { Divider() }
+                    }
+                    if inventory.hasMoreCandidates {
+                        Text("More candidates are stored than this bounded list can show.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    if trackedCount > 0 {
+                        Text(String.localizedStringWithFormat(
+                            NSLocalizedString("%ld project roots are explicitly tracked on this Mac.", comment: "Count of explicitly tracked local project roots"),
+                            trackedCount
+                        ))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func projectCandidateInventoryRow(_ entry: ProjectCandidateInventory.Entry) -> some View {
+        let displaySource = entry.displaySource
+        let otherSources = entry.sources.filter { $0.scopePath != displaySource?.scopePath }
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: entry.isTracked ? "folder.fill" : "folder.badge.questionmark")
+                    .foregroundStyle(entry.isTracked ? .green : .blue)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(URL(fileURLWithPath: entry.path).lastPathComponent)
+                        .font(.subheadline.weight(.semibold))
+                    Text(entry.path)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    if entry.isTracked {
+                        Label("Tracked project root", systemImage: "checkmark.circle")
+                            .font(.caption2)
+                            .foregroundStyle(.green)
+                    }
+                }
+                Spacer(minLength: 8)
+                if !entry.isTracked, !entry.sources.isEmpty {
+                    Button("Track and measure…") {
+                        model.trackAndMeasureProjectCandidate(at: entry.path)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
+                    .help("Confirm this exact project root, then measure only that selected path")
+                    .accessibilityLabel("Track and measure project \(entry.path)")
+                } else if entry.isTracked,
+                          model.history.projectResourceAssociations.first(where: { $0.projectRootPath == entry.path })?.relatedFolderPaths.isEmpty == true {
+                    Button("Stop tracking") { model.stopTrackingEmptyProjectRoot(entry.path) }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                        .help("Remove only the local project tracking record; files and scan history remain")
+                }
+            }
+
+            if let source = displaySource {
+                Text(String.localizedStringWithFormat(
+                    NSLocalizedString("Observed in selected folder %@ · %@", comment: "Project candidate source scope and observation date"),
+                    source.scopePath, source.observedAt.formatted(date: .abbreviated, time: .shortened)
+                ))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .textSelection(.enabled)
+                Text(measuredBytesSummary(
+                    logicalBytes: source.logicalBytes,
+                    allocatedBytes: source.allocatedBytesEstimate,
+                    complete: source.coverageComplete
+                ))
+                .font(.caption)
+                .foregroundStyle(source.coverageComplete ? AnyShapeStyle(.secondary) : AnyShapeStyle(.orange))
+                if !source.isSelectedRoot {
+                    Text("Parent-scan estimate; measure the exact project root for its own history.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                if !source.coverageComplete {
+                    Text("This observation is partial or cancelled; it cannot establish a complete project size or growth comparison.")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+                if !otherSources.isEmpty {
+                    DisclosureGroup(String.localizedStringWithFormat(
+                        NSLocalizedString("Other observed scopes · %ld", comment: "Expand project candidate provenance") ,
+                        otherSources.count
+                    ), isExpanded: Binding(
+                        get: { expandedProjectCandidateSourcePaths.contains(entry.path) },
+                        set: { isExpanded in
+                            if isExpanded { expandedProjectCandidateSourcePaths.insert(entry.path) }
+                            else { expandedProjectCandidateSourcePaths.remove(entry.path) }
+                        }
+                    )) {
+                        ForEach(otherSources) { otherSource in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(otherSource.scopePath)
+                                    .font(.caption2.monospaced())
+                                    .textSelection(.enabled)
+                                Text(measuredBytesSummary(
+                                    logicalBytes: otherSource.logicalBytes,
+                                    allocatedBytes: otherSource.allocatedBytesEstimate,
+                                    complete: otherSource.coverageComplete
+                                ))
+                                .font(.caption2)
+                                .foregroundStyle(otherSource.coverageComplete ? AnyShapeStyle(.secondary) : AnyShapeStyle(.orange))
+                            }
+                            .padding(.vertical, 3)
+                        }
+                        if entry.omittedSourceCount > 0 {
+                            Text(String.localizedStringWithFormat(
+                                NSLocalizedString("%ld additional source scopes omitted", comment: "Bounded project candidate provenance disclosure"),
+                                entry.omittedSourceCount
+                            ))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.caption2)
+                }
+            } else if entry.isTracked {
+                Text("No current selected-folder observation is available for this tracked root. This does not mean the project was removed.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 4)
     }
 
     private var historyPage: some View {

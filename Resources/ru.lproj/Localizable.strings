@@ -80,6 +80,35 @@
 "Git metadata marker detected" = "Обнаружен маркер метаданных Git";
 
 /* Overview growth and selected-folder details. */
+/* Selected-folder project discovery and explicit root tracking. */
+"Project candidates in selected folders" = "Кандидаты проектов в выбранных папках";
+"Recent Git-marker evidence from folders you already chose" = "Недавние данные о маркере Git в уже выбранных папках";
+"Git candidates: %ld" = "Кандидаты Git: %ld";
+"This list uses the latest saved observation for each selected folder. Nested sizes are estimates within their parent scan, not independent project measurements, and overlapping amounts must not be added. A partial scan or capped candidate list may omit projects. A Git marker is discovery evidence, not proof of ownership or safe cleanup." = "Список использует последнее сохранённое наблюдение каждой выбранной папки. Размер вложенных проектов — оценка внутри сканирования родителя, а не отдельное измерение; перекрывающиеся значения нельзя складывать. Частичное сканирование или ограничение списка могут скрыть проекты. Маркер Git указывает на возможный проект, но не подтверждает принадлежность или безопасность очистки.";
+"Coverage limits · %ld partial selected folders · %ld capped candidate lists" = "Ограничения охвата · выбранных папок с неполными данными: %ld · списков с ограничением: %ld";
+"No Git-marked project candidates in retained selected-folder observations" = "В сохранённых наблюдениях выбранных папок нет кандидатов с маркером Git";
+"Disker does not search unselected folders. Select a folder to discover candidates within that scope." = "Disker не ищет в невыбранных папках. Выберите папку, чтобы найти кандидатов только в её пределах.";
+"More candidates are stored than this bounded list can show." = "Сохранено больше кандидатов, чем помещается в этот ограниченный список.";
+"%ld project roots are explicitly tracked on this Mac." = "На этом Mac явно отслеживаются корневые папки проектов: %ld.";
+"Tracked project root" = "Отслеживаемая корневая папка проекта";
+"Track and measure…" = "Отслеживать и измерить…";
+"Confirm this exact project root, then measure only that selected path" = "Подтвердить этот точный корень проекта и измерить только его";
+"Stop tracking" = "Остановить отслеживание";
+"Remove only the local project tracking record; files and scan history remain" = "Удалить только локальную запись отслеживания проекта; файлы и история сканирования останутся";
+"Observed in selected folder %@ · %@" = "Обнаружен в выбранной папке %@ · %@";
+"Parent-scan estimate; measure the exact project root for its own history." = "Оценка сканирования родительской папки; измерьте точный корень проекта для отдельной истории.";
+"This observation is partial or cancelled; it cannot establish a complete project size or growth comparison." = "Наблюдение неполное или отменено; оно не устанавливает полный размер проекта и не подходит для сравнения роста.";
+"Other observed scopes · %ld" = "Другие области наблюдения · %ld";
+"%ld additional source scopes omitted" = "Скрыто дополнительных областей-источников: %ld";
+"No current selected-folder observation is available for this tracked root. This does not mean the project was removed." = "Для отслеживаемого корня нет актуального наблюдения выбранной папки. Это не означает, что проект удалён.";
+"This project candidate is no longer present in the latest saved scan. Scan its selected parent again before tracking it." = "Этого кандидата уже нет в последнем сохранённом сканировании. Повторно просканируйте выбранную родительскую папку перед началом отслеживания.";
+"Confirm Project Root" = "Подтвердить корень проекта";
+"Track and Measure" = "Отслеживать и измерить";
+"Choose this exact Git-marked folder. Disker will save it as a selected project root and run a separate metadata-only scan. The parent scan estimate remains separate." = "Выберите именно эту папку с маркером Git. Disker сохранит её как выбранный корень проекта и отдельно просканирует метаданные. Оценка сканирования родительской папки останется отдельной.";
+"Choose the same project folder to keep its identity exact. No project was tracked and no scan was started." = "Выберите ту же папку проекта, чтобы сохранить точное соответствие. Проект не добавлен, сканирование не запущено.";
+"Disker could not confirm a real directory with a direct .git marker without following symbolic links. No project was tracked and no scan was started." = "Disker не удалось подтвердить, что это настоящая папка с прямым маркером .git, не переходя по символическим ссылкам. Проект не добавлен, сканирование не запущено.";
+
+/* Overview growth and selected-folder details. */
 "Capacity unavailable" = "Данные о ёмкости недоступны";
 "macOS did not provide capacity information for this volume." = "macOS не предоставила сведения о ёмкости этого тома.";
 "Changes inside selected folders" = "Изменения в выбранных папках";
