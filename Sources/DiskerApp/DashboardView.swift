@@ -1212,12 +1212,22 @@ final class DashboardModel {
         scan([chosenURL])
     }
 
-    func trackAndMeasureProjectCandidate(at path: String) {
+    func trackAndMeasureProjectCandidate(at path: String, basedOn source: ProjectCandidateInventory.Source) {
         guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
         let expectedURL = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
-        guard ProjectCandidateInventory.make(from: history).entries.contains(where: {
-            $0.path == expectedURL.path && !$0.sources.isEmpty
-        }) else {
+        let latestScopeObservation = history.observations.reversed().lazy
+            .flatMap(\.folders)
+            .first { $0.path == source.scopePath }
+        let sourceIsCurrent = latestScopeObservation?.finishedAt == source.observedAt
+            && (source.isSelectedRoot
+                ? expectedURL.path == source.scopePath
+                : latestScopeObservation?.projectDirectorySummaries.contains(where: { summary in
+                    guard summary.gitMetadataEntryDetected,
+                          isSafeProjectSummaryPath(summary.rootRelativePath) else { return false }
+                    let root = source.scopePath.hasSuffix("/") ? String(source.scopePath.dropLast()) : source.scopePath
+                    return root + "/" + summary.rootRelativePath == expectedURL.path
+                }) == true)
+        guard sourceIsCurrent else {
             errorMessage = NSLocalizedString(
                 "This project candidate is no longer present in the latest saved scan. Scan its selected parent again before tracking it.",
                 comment: "Rejects stale or no-longer-listed Git project candidates"
@@ -1262,6 +1272,12 @@ final class DashboardModel {
         }
         rememberFolders([chosenURL])
         scan([chosenURL])
+    }
+
+    private func isSafeProjectSummaryPath(_ path: String) -> Bool {
+        guard !path.isEmpty, !path.hasPrefix("/"), !path.utf8.contains(0) else { return false }
+        return path.split(separator: "/", omittingEmptySubsequences: false)
+            .allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
     }
 
     func stopTrackingEmptyProjectRoot(_ path: String) {
@@ -2134,6 +2150,8 @@ struct DashboardView: View {
     @State private var applicationDiscoverySearchText = ""
     @State private var savedApplicationInventoryCache = SavedApplicationInventory.empty
     @State private var isSavedApplicationInventoryLoading = false
+    @State private var projectCandidateInventoryCache = ProjectCandidateInventory.empty
+    @State private var isProjectCandidateInventoryLoading = true
     @State private var isSavedApplicationHistoryExpanded = false
     @State private var expandedSavedApplicationPaths = Set<String>()
     @State private var expandedApplicationDiscoveryDataPaths = Set<String>()
@@ -4187,7 +4205,7 @@ struct DashboardView: View {
     }
 
     private var projectCandidateInventorySection: some View {
-        let inventory = ProjectCandidateInventory.make(from: model.history)
+        let inventory = projectCandidateInventoryCache
         let discoveredCount = inventory.entries.filter { !$0.sources.isEmpty }.count
         let trackedCount = inventory.entries.filter(\.isTracked).count
         return GroupBox {
@@ -4224,7 +4242,11 @@ struct DashboardView: View {
                     .foregroundStyle(.orange)
                 }
 
-                if inventory.entries.isEmpty {
+                if isProjectCandidateInventoryLoading && inventory.latestSelectedRootCount == 0 {
+                    Label("Reviewing saved selected-folder observations…", systemImage: "clock")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else if inventory.entries.isEmpty {
                     Label("No Git-marked project candidates in retained selected-folder observations", systemImage: "folder.badge.questionmark")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -4250,9 +4272,33 @@ struct DashboardView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                if isProjectCandidateInventoryLoading && inventory.latestSelectedRootCount > 0 {
+                    Label("Refreshing project observations…", systemImage: "clock")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding(.vertical, 4)
         }
+        .task(id: projectCandidateInventoryRefreshKey) {
+            let refreshKey = projectCandidateInventoryRefreshKey
+            let history = model.history
+            isProjectCandidateInventoryLoading = true
+            let projection = await Task.detached(priority: .utility) {
+                ProjectCandidateInventory.make(from: history)
+            }.value
+            guard !Task.isCancelled, refreshKey == projectCandidateInventoryRefreshKey else { return }
+            projectCandidateInventoryCache = projection
+            isProjectCandidateInventoryLoading = false
+        }
+    }
+
+    private var projectCandidateInventoryRefreshKey: String {
+        let history = model.history
+        let latestObservationID = history.observations.last?.id.uuidString ?? "none"
+        let latestProjectAssociation = history.projectResourceAssociations.map(\.updatedAt).max()?
+            .timeIntervalSinceReferenceDate.bitPattern ?? 0
+        return "\(history.observations.count):\(latestObservationID):\(history.projectResourceAssociations.count):\(latestProjectAssociation)"
     }
 
     private func projectCandidateInventoryRow(_ entry: ProjectCandidateInventory.Entry) -> some View {
@@ -4281,7 +4327,9 @@ struct DashboardView: View {
                 Spacer(minLength: 8)
                 if !entry.isTracked, !entry.sources.isEmpty {
                     Button("Track and measure…") {
-                        model.trackAndMeasureProjectCandidate(at: entry.path)
+                        if let source = displaySource {
+                            model.trackAndMeasureProjectCandidate(at: entry.path, basedOn: source)
+                        }
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)

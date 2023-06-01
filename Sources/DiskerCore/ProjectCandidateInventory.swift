@@ -30,10 +30,11 @@ public struct ProjectCandidateInventory: Equatable, Sendable {
         public let sources: [Source]
         public let omittedSourceCount: Int
         public let isTracked: Bool
+        /// The newest source across all scopes, even when its row is beyond the source cap.
+        public let latestSource: Source?
 
         public var id: String { path }
         public var isSelectedRoot: Bool { sources.contains(where: \.isSelectedRoot) }
-        public var latestSource: Source? { sources.max { $0.observedAt < $1.observedAt } }
         public var selectedRootSource: Source? { sources.first(where: \.isSelectedRoot) }
         public var displaySource: Source? { selectedRootSource ?? latestSource }
     }
@@ -49,9 +50,40 @@ public struct ProjectCandidateInventory: Equatable, Sendable {
         partialSelectedRootCount: 0, truncatedProjectCandidateScopeCount: 0
     )
 
+    private struct SourceAccumulator {
+        var sources: [Source] = []
+        var totalSourceCount = 0
+        var latestSource: Source?
+    }
+
     public static func make(
         from history: LocalHistory, limit: Int = maximumDisplayedCandidates
     ) -> ProjectCandidateInventory {
+        let visibleLimit = max(0, min(limit, maximumDisplayedCandidates))
+        let candidatePathCapacity = visibleLimit + 1
+        var candidatePaths: [String] = []
+        var retainedCandidatePaths = Set<String>()
+        var sourceAccumulators: [String: SourceAccumulator] = [:]
+        var hasOverflowCandidates = false
+
+        func considerPath(_ path: String) -> String? {
+            guard !retainedCandidatePaths.contains(path) else { return nil }
+            if candidatePaths.count < candidatePathCapacity {
+                let index = insertionIndex(for: path, in: candidatePaths, orderedBy: candidatePathPrecedes)
+                candidatePaths.insert(path, at: index)
+                retainedCandidatePaths.insert(path)
+                return nil
+            }
+
+            hasOverflowCandidates = true
+            guard let last = candidatePaths.last, candidatePathPrecedes(path, last) else { return nil }
+            retainedCandidatePaths.remove(last)
+            let index = insertionIndex(for: path, in: candidatePaths, orderedBy: candidatePathPrecedes)
+            candidatePaths.insert(path, at: index)
+            retainedCandidatePaths.insert(path)
+            return last
+        }
+
         var latestByRoot: [String: (folder: FolderObservation, cancelled: Bool, scanFinishedAt: Date)] = [:]
         for scan in history.observations {
             for folder in scan.folders where !folder.isFileRoot {
@@ -68,7 +100,6 @@ public struct ProjectCandidateInventory: Equatable, Sendable {
             }
         }
 
-        var sourcesByCandidate: [String: [Source]] = [:]
         var partialRootCount = 0
         var truncatedRootCount = 0
         for (rootPath, latest) in latestByRoot {
@@ -78,6 +109,8 @@ public struct ProjectCandidateInventory: Equatable, Sendable {
             if folder.projectDirectorySummariesTruncated { truncatedRootCount += 1 }
 
             if folder.gitMetadataEntryDetected {
+                let evictedPath = considerPath(rootPath)
+                if let evictedPath { sourceAccumulators.removeValue(forKey: evictedPath) }
                 append(Source(
                     scopePath: rootPath, observedAt: folder.finishedAt,
                     selectedRootComplete: folder.complete, scanWasCancelled: latest.cancelled,
@@ -85,13 +118,17 @@ public struct ProjectCandidateInventory: Equatable, Sendable {
                     logicalBytes: folder.logicalBytes, allocatedBytesEstimate: folder.allocatedBytes,
                     fileCount: folder.fileCount,
                     projectCandidateListTruncated: folder.projectDirectorySummariesTruncated
-                ), for: rootPath, to: &sourcesByCandidate)
+                ), for: rootPath, retainedPaths: retainedCandidatePaths, to: &sourceAccumulators)
             }
 
+            var seenSummaryCandidatePaths = Set<String>()
             for summary in folder.projectDirectorySummaries
             where summary.gitMetadataEntryDetected && isSafeRelativePath(summary.rootRelativePath) {
                 let candidatePath = absolutePath(root: rootPath, relativePath: summary.rootRelativePath)
-                guard candidatePath != rootPath else { continue }
+                guard candidatePath != rootPath,
+                      seenSummaryCandidatePaths.insert(candidatePath).inserted else { continue }
+                let evictedPath = considerPath(candidatePath)
+                if let evictedPath { sourceAccumulators.removeValue(forKey: evictedPath) }
                 append(Source(
                     scopePath: rootPath, observedAt: folder.finishedAt,
                     selectedRootComplete: folder.complete, scanWasCancelled: latest.cancelled,
@@ -99,7 +136,7 @@ public struct ProjectCandidateInventory: Equatable, Sendable {
                     logicalBytes: summary.logicalBytes, allocatedBytesEstimate: summary.allocatedBytes,
                     fileCount: summary.fileCount,
                     projectCandidateListTruncated: folder.projectDirectorySummariesTruncated
-                ), for: candidatePath, to: &sourcesByCandidate)
+                ), for: candidatePath, retainedPaths: retainedCandidatePaths, to: &sourceAccumulators)
             }
         }
 
@@ -108,30 +145,25 @@ public struct ProjectCandidateInventory: Equatable, Sendable {
             guard path.hasPrefix("/"), !path.utf8.contains(0) else { return nil }
             return path
         })
-        for path in trackedPaths where sourcesByCandidate[path] == nil {
-            sourcesByCandidate[path] = []
+        for path in trackedPaths {
+            let evictedPath = considerPath(path)
+            if let evictedPath { sourceAccumulators.removeValue(forKey: evictedPath) }
         }
 
-        let sortedPaths = sourcesByCandidate.keys.sorted {
-            let order = $0.localizedStandardCompare($1)
-            return order == .orderedSame ? $0.utf8.lexicographicallyPrecedes($1.utf8) : order == .orderedAscending
-        }
-        let boundedLimit = max(0, min(limit, maximumDisplayedCandidates))
-        let entries = sortedPaths.prefix(boundedLimit).map { path in
-            let allSources = sourcesByCandidate[path, default: []].sorted {
-                if $0.observedAt != $1.observedAt { return $0.observedAt > $1.observedAt }
-                if $0.isSelectedRoot != $1.isSelectedRoot { return $0.isSelectedRoot }
-                return $0.scopePath.utf8.lexicographicallyPrecedes($1.scopePath.utf8)
-            }
+        let displayedPaths = candidatePaths.prefix(visibleLimit)
+        let entries = displayedPaths.map { path in
+            let sourceAccumulator = sourceAccumulators[path, default: SourceAccumulator()]
             return Entry(
                 path: path,
-                sources: Array(allSources.prefix(maximumSourcesPerCandidate)),
-                omittedSourceCount: max(0, allSources.count - maximumSourcesPerCandidate),
-                isTracked: trackedPaths.contains(path)
+                sources: sourceAccumulator.sources,
+                omittedSourceCount: max(0, sourceAccumulator.totalSourceCount - sourceAccumulator.sources.count),
+                isTracked: trackedPaths.contains(path),
+                latestSource: sourceAccumulator.latestSource
             )
         }
         return ProjectCandidateInventory(
-            entries: entries, hasMoreCandidates: sortedPaths.count > entries.count,
+            entries: entries,
+            hasMoreCandidates: hasOverflowCandidates || candidatePaths.count > visibleLimit,
             latestSelectedRootCount: latestByRoot.count,
             partialSelectedRootCount: partialRootCount,
             truncatedProjectCandidateScopeCount: truncatedRootCount
@@ -139,15 +171,61 @@ public struct ProjectCandidateInventory: Equatable, Sendable {
     }
 
     private static func append(
-        _ source: Source, for path: String, to sourcesByCandidate: inout [String: [Source]]
+        _ source: Source,
+        for path: String,
+        retainedPaths: Set<String>,
+        to sourceAccumulators: inout [String: SourceAccumulator]
     ) {
-        var sources = sourcesByCandidate[path, default: []]
-        if let index = sources.firstIndex(where: { $0.scopePath == source.scopePath }) {
-            sources[index] = source
+        guard retainedPaths.contains(path) else { return }
+        var accumulator = sourceAccumulators[path, default: SourceAccumulator()]
+        guard !accumulator.sources.contains(where: { $0.scopePath == source.scopePath }) else { return }
+        accumulator.totalSourceCount += 1
+        if let latestSource = accumulator.latestSource {
+            if sourceIsNewer(source, than: latestSource) { accumulator.latestSource = source }
         } else {
-            sources.append(source)
+            accumulator.latestSource = source
         }
-        sourcesByCandidate[path] = sources
+        let index = insertionIndex(for: source, in: accumulator.sources, orderedBy: sourceRetentionPrecedes)
+        if index < maximumSourcesPerCandidate {
+            accumulator.sources.insert(source, at: index)
+            if accumulator.sources.count > maximumSourcesPerCandidate {
+                accumulator.sources.removeLast()
+            }
+        }
+        sourceAccumulators[path] = accumulator
+    }
+
+    private static func candidatePathPrecedes(_ first: String, _ second: String) -> Bool {
+        let order = first.localizedStandardCompare(second)
+        return order == .orderedSame ? first.utf8.lexicographicallyPrecedes(second.utf8) : order == .orderedAscending
+    }
+
+    private static func sourceRetentionPrecedes(_ first: Source, _ second: Source) -> Bool {
+        if first.isSelectedRoot != second.isSelectedRoot { return first.isSelectedRoot }
+        if first.observedAt != second.observedAt { return first.observedAt > second.observedAt }
+        return first.scopePath.utf8.lexicographicallyPrecedes(second.scopePath.utf8)
+    }
+
+    private static func sourceIsNewer(_ first: Source, than second: Source) -> Bool {
+        if first.observedAt != second.observedAt { return first.observedAt > second.observedAt }
+        if first.isSelectedRoot != second.isSelectedRoot { return first.isSelectedRoot }
+        return first.scopePath.utf8.lexicographicallyPrecedes(second.scopePath.utf8)
+    }
+
+    private static func insertionIndex<Element>(
+        for value: Element, in sortedValues: [Element], orderedBy precedes: (Element, Element) -> Bool
+    ) -> Int {
+        var lowerBound = 0
+        var upperBound = sortedValues.count
+        while lowerBound < upperBound {
+            let midpoint = lowerBound + (upperBound - lowerBound) / 2
+            if precedes(sortedValues[midpoint], value) {
+                lowerBound = midpoint + 1
+            } else {
+                upperBound = midpoint
+            }
+        }
+        return lowerBound
     }
 
     private static func isSafeRelativePath(_ path: String) -> Bool {
@@ -157,8 +235,7 @@ public struct ProjectCandidateInventory: Equatable, Sendable {
     }
 
     private static func absolutePath(root: String, relativePath: String) -> String {
-        URL(fileURLWithPath: root, isDirectory: true)
-            .appendingPathComponent(relativePath, isDirectory: true)
-            .standardizedFileURL.path
+        let parent = root.hasSuffix("/") ? String(root.dropLast()) : root
+        return parent + "/" + relativePath
     }
 }

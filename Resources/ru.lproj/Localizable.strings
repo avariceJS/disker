@@ -87,6 +87,8 @@
 "This list uses the latest saved observation for each selected folder. Nested sizes are estimates within their parent scan, not independent project measurements, and overlapping amounts must not be added. A partial scan or capped candidate list may omit projects. A Git marker is discovery evidence, not proof of ownership or safe cleanup." = "Список использует последнее сохранённое наблюдение каждой выбранной папки. Размер вложенных проектов — оценка внутри сканирования родителя, а не отдельное измерение; перекрывающиеся значения нельзя складывать. Частичное сканирование или ограничение списка могут скрыть проекты. Маркер Git указывает на возможный проект, но не подтверждает принадлежность или безопасность очистки.";
 "Coverage limits · %ld partial selected folders · %ld capped candidate lists" = "Ограничения охвата · выбранных папок с неполными данными: %ld · списков с ограничением: %ld";
 "No Git-marked project candidates in retained selected-folder observations" = "В сохранённых наблюдениях выбранных папок нет кандидатов с маркером Git";
+"Reviewing saved selected-folder observations…" = "Анализ сохранённых наблюдений выбранных папок…";
+"Refreshing project observations…" = "Обновление сведений о проектах…";
 "Disker does not search unselected folders. Select a folder to discover candidates within that scope." = "Disker не ищет в невыбранных папках. Выберите папку, чтобы найти кандидатов только в её пределах.";
 "More candidates are stored than this bounded list can show." = "Сохранено больше кандидатов, чем помещается в этот ограниченный список.";
 "%ld project roots are explicitly tracked on this Mac." = "На этом Mac явно отслеживаются корневые папки проектов: %ld.";

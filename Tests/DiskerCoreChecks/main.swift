@@ -2684,6 +2684,57 @@ private struct DiskerCoreChecks {
                    && !inventory.entries.contains(where: { $0.path == "/Users/synthetic/Outside" }),
                    "superseded and unsafe relative-path summaries must not appear as current project candidates")
 
+        let deeplyNestedPath = "/Users/synthetic/Workspace/deep/root/Project"
+        let scopePaths = [
+            "/Users", "/Users/synthetic", "/Users/synthetic/Workspace",
+            "/Users/synthetic/Workspace/deep", "/Users/synthetic/Workspace/deep/root",
+            deeplyNestedPath
+        ]
+        let multiScopeObservations = scopePaths.enumerated().map { index, scopePath in
+            let candidateSource: FolderObservation
+            if scopePath == deeplyNestedPath {
+                candidateSource = FolderObservation(
+                    path: scopePath, displayName: "Project", logicalBytes: 10,
+                    allocatedBytes: 12, fileCount: 1, inaccessibleCount: 0,
+                    finishedAt: Date(timeIntervalSince1970: 100), complete: true,
+                    gitMetadataEntryDetected: true
+                )
+            } else {
+                let relativePath = String(deeplyNestedPath.dropFirst(scopePath.count + 1))
+                let summary = DirectoryUsage(
+                    rootRelativePath: relativePath, logicalBytes: Int64(index),
+                    allocatedBytes: Int64(index + 1), fileCount: 1,
+                    incompleteCount: 0, excludedSymlinkCount: 0,
+                    gitMetadataEntryDetected: true, complete: true
+                )
+                let summaries = index == 0 ? [summary, summary] : [summary]
+                candidateSource = FolderObservation(
+                    path: scopePath, displayName: "Scope", logicalBytes: 20,
+                    allocatedBytes: 24, fileCount: 2, inaccessibleCount: 0,
+                    finishedAt: Date(timeIntervalSince1970: Double(100 + index)),
+                    complete: true, projectDirectorySummaries: summaries
+                )
+            }
+            return ScanObservation(
+                startedAt: candidateSource.finishedAt,
+                finishedAt: candidateSource.finishedAt,
+                folders: [candidateSource], cancelled: false
+            )
+        }
+        let multiScopeInventory = ProjectCandidateInventory.make(from: LocalHistory(
+            observations: multiScopeObservations
+        ))
+        guard let multiScopeEntry = multiScopeInventory.entries.first(where: { $0.path == deeplyNestedPath }) else {
+            throw CheckFailure.assertion("the same exact Git-marked candidate should merge all selected-scope provenance")
+        }
+        try expect(multiScopeEntry.sources.count == ProjectCandidateInventory.maximumSourcesPerCandidate
+                   && multiScopeEntry.omittedSourceCount == 1,
+                   "candidate provenance rows must stay capped while reporting omitted scopes")
+        try expect(multiScopeEntry.selectedRootSource?.scopePath == deeplyNestedPath
+                   && multiScopeEntry.latestSource?.scopePath == "/Users/synthetic/Workspace/deep/root"
+                   && multiScopeEntry.displaySource?.scopePath == deeplyNestedPath,
+                   "the direct selected-root source and newest parent-scan source must both survive the provenance cap")
+
         let manyRoots = (0...ProjectCandidateInventory.maximumDisplayedCandidates).map { index in
             FolderObservation(
                 path: "/Users/synthetic/Projects/Project-\(index)", displayName: "Project \(index)",
@@ -2701,6 +2752,39 @@ private struct DiskerCoreChecks {
         let zeroLimit = ProjectCandidateInventory.make(from: history, limit: 0)
         try expect(zeroLimit.entries.isEmpty && zeroLimit.hasMoreCandidates,
                    "an empty requested page must preserve inventory counts and disclose omitted rows")
+
+        let maximumHistory = (0..<180).map { observationIndex in
+            let finishedAt = Date(timeIntervalSince1970: Double(observationIndex + 1))
+            let folders = (0..<50).map { rootIndex in
+                let rootID = observationIndex * 50 + rootIndex
+                let root = "/Synthetic/Scopes/Scope-\(rootID)"
+                let summaries = (0..<20).map { summaryIndex in
+                    DirectoryUsage(
+                        rootRelativePath: "Project-\(summaryIndex)", logicalBytes: 1,
+                        allocatedBytes: 1, fileCount: 1, incompleteCount: 0,
+                        excludedSymlinkCount: 0, gitMetadataEntryDetected: true,
+                        complete: true
+                    )
+                }
+                return FolderObservation(
+                    path: root, displayName: "Scope-\(rootID)", logicalBytes: 20,
+                    allocatedBytes: 20, fileCount: 20, inaccessibleCount: 0,
+                    finishedAt: finishedAt, complete: true,
+                    projectDirectorySummaries: summaries
+                )
+            }
+            return ScanObservation(startedAt: finishedAt, folders: folders, cancelled: false)
+        }
+        let projectionStartedAt = ProcessInfo.processInfo.systemUptime
+        let maximumInventory = ProjectCandidateInventory.make(
+            from: LocalHistory(observations: maximumHistory)
+        )
+        let projectionDuration = ProcessInfo.processInfo.systemUptime - projectionStartedAt
+        try expect(maximumInventory.entries.count == ProjectCandidateInventory.maximumDisplayedCandidates
+                   && maximumInventory.hasMoreCandidates
+                   && maximumInventory.latestSelectedRootCount == 9_000,
+                   "a maximum retained history must project only its bounded candidate page and disclose the rest")
+        print(String(format: "  maximum project inventory (9,000 roots × 20 summaries): %.3f s", projectionDuration))
     }
 
     private static func testProjectRootMarkerProbe() throws {
