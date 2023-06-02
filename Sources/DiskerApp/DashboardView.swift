@@ -2152,6 +2152,8 @@ struct DashboardView: View {
     @State private var isSavedApplicationInventoryLoading = false
     @State private var projectCandidateInventoryCache = ProjectCandidateInventory.empty
     @State private var isProjectCandidateInventoryLoading = true
+    @State private var projectCandidateSearchText = ""
+    @State private var projectedProjectCandidateSearchText = ""
     @State private var isSavedApplicationHistoryExpanded = false
     @State private var expandedSavedApplicationPaths = Set<String>()
     @State private var expandedApplicationDiscoveryDataPaths = Set<String>()
@@ -4205,7 +4207,9 @@ struct DashboardView: View {
     }
 
     private var projectCandidateInventorySection: some View {
-        let inventory = projectCandidateInventoryCache
+        let hasCurrentFilterProjection = projectedProjectCandidateSearchText == projectCandidateSearchText
+        let inventory = hasCurrentFilterProjection ? projectCandidateInventoryCache : .empty
+        let queryIsEmpty = projectCandidateSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let discoveredCount = inventory.entries.filter { !$0.sources.isEmpty }.count
         let trackedCount = inventory.entries.filter(\.isTracked).count
         return GroupBox {
@@ -4219,10 +4223,14 @@ struct DashboardView: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Text(String.localizedStringWithFormat(
-                        NSLocalizedString("Git candidates: %ld", comment: "Count of Git-marked project candidates in saved selected-folder observations"),
-                        discoveredCount
-                    ))
+                    Text(hasCurrentFilterProjection
+                         ? String.localizedStringWithFormat(
+                            NSLocalizedString(
+                                queryIsEmpty ? "Git candidates: %ld" : "Matching candidates shown: %ld",
+                                comment: "Count of displayed Git-marked project candidates"
+                            ), discoveredCount
+                         )
+                         : NSLocalizedString("Searching saved project observations…", comment: "Background project candidate filter is running"))
                         .font(.subheadline.weight(.semibold).monospacedDigit())
                         .foregroundStyle(.blue)
                         .contentTransition(.numericText())
@@ -4233,6 +4241,15 @@ struct DashboardView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
+                TextField("Filter project name or path", text: $projectCandidateSearchText)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Filter saved project candidates by name or path")
+                if !queryIsEmpty {
+                    Text("Search filters saved observations from folders you selected; it does not scan the disk.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
                 if inventory.partialSelectedRootCount > 0 || inventory.truncatedProjectCandidateScopeCount > 0 {
                     Label(String.localizedStringWithFormat(
                         NSLocalizedString("Coverage limits · %ld partial selected folders · %ld capped candidate lists", comment: "Project discovery coverage warning counts"),
@@ -4242,9 +4259,17 @@ struct DashboardView: View {
                     .foregroundStyle(.orange)
                 }
 
-                if isProjectCandidateInventoryLoading && inventory.latestSelectedRootCount == 0 {
-                    Label("Reviewing saved selected-folder observations…", systemImage: "clock")
+                if !hasCurrentFilterProjection
+                    || (isProjectCandidateInventoryLoading && inventory.latestSelectedRootCount == 0) {
+                    Label(queryIsEmpty ? "Reviewing saved selected-folder observations…" : "Searching saved project observations…", systemImage: "clock")
                         .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else if inventory.entries.isEmpty && !queryIsEmpty {
+                    Label("No saved project candidates match this filter", systemImage: "magnifyingglass")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Text("Try a different project name or path. Only saved selected-folder observations are searched.")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 } else if inventory.entries.isEmpty {
                     Label("No Git-marked project candidates in retained selected-folder observations", systemImage: "folder.badge.questionmark")
@@ -4259,7 +4284,9 @@ struct DashboardView: View {
                         if entry.id != inventory.entries.last?.id { Divider() }
                     }
                     if inventory.hasMoreCandidates {
-                        Text("More candidates are stored than this bounded list can show.")
+                        Text(queryIsEmpty
+                             ? "More candidates are stored than this bounded list can show."
+                             : "More matching candidates are stored than this bounded list can show.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -4283,12 +4310,27 @@ struct DashboardView: View {
         .task(id: projectCandidateInventoryRefreshKey) {
             let refreshKey = projectCandidateInventoryRefreshKey
             let history = model.history
+            let searchText = projectCandidateSearchText
             isProjectCandidateInventoryLoading = true
-            let projection = await Task.detached(priority: .utility) {
-                ProjectCandidateInventory.make(from: history)
-            }.value
+            do {
+                try await Task.sleep(nanoseconds: 200_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, refreshKey == projectCandidateInventoryRefreshKey else { return }
+            let projectionTask = Task.detached(priority: .utility) {
+                ProjectCandidateInventory.make(
+                    from: history, matchingPath: searchText,
+                    cancellationCheck: { Task.isCancelled }
+                )
+            }
+            let projection = await withTaskCancellationHandler(
+                operation: { await projectionTask.value },
+                onCancel: { projectionTask.cancel() }
+            )
             guard !Task.isCancelled, refreshKey == projectCandidateInventoryRefreshKey else { return }
             projectCandidateInventoryCache = projection
+            projectedProjectCandidateSearchText = searchText
             isProjectCandidateInventoryLoading = false
         }
     }
@@ -4298,7 +4340,7 @@ struct DashboardView: View {
         let latestObservationID = history.observations.last?.id.uuidString ?? "none"
         let latestProjectAssociation = history.projectResourceAssociations.map(\.updatedAt).max()?
             .timeIntervalSinceReferenceDate.bitPattern ?? 0
-        return "\(history.observations.count):\(latestObservationID):\(history.projectResourceAssociations.count):\(latestProjectAssociation)"
+        return "\(history.observations.count):\(latestObservationID):\(history.projectResourceAssociations.count):\(latestProjectAssociation):\(projectCandidateSearchText)"
     }
 
     private func projectCandidateInventoryRow(_ entry: ProjectCandidateInventory.Entry) -> some View {

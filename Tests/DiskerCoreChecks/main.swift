@@ -2742,13 +2742,26 @@ private struct DiskerCoreChecks {
                 finishedAt: latestSeen, complete: true, gitMetadataEntryDetected: true
             )
         }
-        let bounded = ProjectCandidateInventory.make(
-            from: LocalHistory(observations: [ScanObservation(
-                startedAt: latestSeen, folders: manyRoots, cancelled: false
-            )]), limit: 2
-        )
+        let manyRootsHistory = LocalHistory(observations: [ScanObservation(
+            startedAt: latestSeen, folders: manyRoots, cancelled: false
+        )])
+        let bounded = ProjectCandidateInventory.make(from: manyRootsHistory, limit: 2)
         try expect(bounded.entries.count == 2 && bounded.hasMoreCandidates,
                    "the inventory must disclose when its display cap hides additional candidates")
+        let searchBeyondPage = ProjectCandidateInventory.make(
+            from: manyRootsHistory, matchingPath: "  project-100  "
+        )
+        try expect(searchBeyondPage.entries.map(\.path) == ["/Users/synthetic/Projects/Project-100"]
+                   && !searchBeyondPage.hasMoreCandidates,
+                   "case-insensitive path filtering must find saved candidates beyond the default 100-row page")
+        let searchWithoutMatches = ProjectCandidateInventory.make(from: manyRootsHistory, matchingPath: "not-present")
+        try expect(searchWithoutMatches.entries.isEmpty && !searchWithoutMatches.hasMoreCandidates,
+                   "a path filter with no saved matches must not claim undisplayed candidates")
+        let cancelledProjection = ProjectCandidateInventory.make(
+            from: manyRootsHistory, cancellationCheck: { true }
+        )
+        try expect(cancelledProjection.entries.isEmpty && cancelledProjection.latestSelectedRootCount == 0,
+                   "a cancelled background projection must stop before publishing a partial inventory")
         let zeroLimit = ProjectCandidateInventory.make(from: history, limit: 0)
         try expect(zeroLimit.entries.isEmpty && zeroLimit.hasMoreCandidates,
                    "an empty requested page must preserve inventory counts and disclose omitted rows")

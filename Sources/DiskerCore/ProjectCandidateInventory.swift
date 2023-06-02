@@ -57,14 +57,22 @@ public struct ProjectCandidateInventory: Equatable, Sendable {
     }
 
     public static func make(
-        from history: LocalHistory, limit: Int = maximumDisplayedCandidates
+        from history: LocalHistory,
+        limit: Int = maximumDisplayedCandidates,
+        matchingPath searchText: String = "",
+        cancellationCheck: @Sendable () -> Bool = { false }
     ) -> ProjectCandidateInventory {
         let visibleLimit = max(0, min(limit, maximumDisplayedCandidates))
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let candidatePathCapacity = visibleLimit + 1
         var candidatePaths: [String] = []
         var retainedCandidatePaths = Set<String>()
         var sourceAccumulators: [String: SourceAccumulator] = [:]
         var hasOverflowCandidates = false
+
+        func matchesSearch(_ path: String) -> Bool {
+            query.isEmpty || path.localizedCaseInsensitiveContains(query)
+        }
 
         func considerPath(_ path: String) -> String? {
             guard !retainedCandidatePaths.contains(path) else { return nil }
@@ -86,7 +94,9 @@ public struct ProjectCandidateInventory: Equatable, Sendable {
 
         var latestByRoot: [String: (folder: FolderObservation, cancelled: Bool, scanFinishedAt: Date)] = [:]
         for scan in history.observations {
+            if cancellationCheck() { return .empty }
             for folder in scan.folders where !folder.isFileRoot {
+                if cancellationCheck() { return .empty }
                 if let latest = latestByRoot[folder.path] {
                     let isLaterFolder = folder.finishedAt > latest.folder.finishedAt
                     let isLaterScan = folder.finishedAt == latest.folder.finishedAt
@@ -103,30 +113,35 @@ public struct ProjectCandidateInventory: Equatable, Sendable {
         var partialRootCount = 0
         var truncatedRootCount = 0
         for (rootPath, latest) in latestByRoot {
+            if cancellationCheck() { return .empty }
             let folder = latest.folder
             let isPartial = latest.cancelled || !folder.complete
             if isPartial { partialRootCount += 1 }
             if folder.projectDirectorySummariesTruncated { truncatedRootCount += 1 }
 
             if folder.gitMetadataEntryDetected {
-                let evictedPath = considerPath(rootPath)
-                if let evictedPath { sourceAccumulators.removeValue(forKey: evictedPath) }
-                append(Source(
-                    scopePath: rootPath, observedAt: folder.finishedAt,
-                    selectedRootComplete: folder.complete, scanWasCancelled: latest.cancelled,
-                    candidateSummaryComplete: folder.complete, isSelectedRoot: true,
-                    logicalBytes: folder.logicalBytes, allocatedBytesEstimate: folder.allocatedBytes,
-                    fileCount: folder.fileCount,
-                    projectCandidateListTruncated: folder.projectDirectorySummariesTruncated
-                ), for: rootPath, retainedPaths: retainedCandidatePaths, to: &sourceAccumulators)
+                if matchesSearch(rootPath) {
+                    let evictedPath = considerPath(rootPath)
+                    if let evictedPath { sourceAccumulators.removeValue(forKey: evictedPath) }
+                    append(Source(
+                        scopePath: rootPath, observedAt: folder.finishedAt,
+                        selectedRootComplete: folder.complete, scanWasCancelled: latest.cancelled,
+                        candidateSummaryComplete: folder.complete, isSelectedRoot: true,
+                        logicalBytes: folder.logicalBytes, allocatedBytesEstimate: folder.allocatedBytes,
+                        fileCount: folder.fileCount,
+                        projectCandidateListTruncated: folder.projectDirectorySummariesTruncated
+                    ), for: rootPath, retainedPaths: retainedCandidatePaths, to: &sourceAccumulators)
+                }
             }
 
             var seenSummaryCandidatePaths = Set<String>()
             for summary in folder.projectDirectorySummaries
             where summary.gitMetadataEntryDetected && isSafeRelativePath(summary.rootRelativePath) {
+                if cancellationCheck() { return .empty }
                 let candidatePath = absolutePath(root: rootPath, relativePath: summary.rootRelativePath)
                 guard candidatePath != rootPath,
-                      seenSummaryCandidatePaths.insert(candidatePath).inserted else { continue }
+                      seenSummaryCandidatePaths.insert(candidatePath).inserted,
+                      matchesSearch(candidatePath) else { continue }
                 let evictedPath = considerPath(candidatePath)
                 if let evictedPath { sourceAccumulators.removeValue(forKey: evictedPath) }
                 append(Source(
@@ -140,11 +155,13 @@ public struct ProjectCandidateInventory: Equatable, Sendable {
             }
         }
 
-        let trackedPaths = Set(history.projectResourceAssociations.compactMap { association -> String? in
+        var trackedPaths = Set<String>()
+        for association in history.projectResourceAssociations {
+            if cancellationCheck() { return .empty }
             let path = URL(fileURLWithPath: association.projectRootPath, isDirectory: true).standardizedFileURL.path
-            guard path.hasPrefix("/"), !path.utf8.contains(0) else { return nil }
-            return path
-        })
+            guard path.hasPrefix("/"), !path.utf8.contains(0), matchesSearch(path) else { continue }
+            trackedPaths.insert(path)
+        }
         for path in trackedPaths {
             let evictedPath = considerPath(path)
             if let evictedPath { sourceAccumulators.removeValue(forKey: evictedPath) }
