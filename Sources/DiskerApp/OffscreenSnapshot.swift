@@ -11,7 +11,9 @@ struct DiskerSnapshotRequest {
     let appearanceName: NSAppearance.Name?
     let suppressSpotlightDiscovery: Bool
     let includeProjectCandidate: Bool
+    let includeProjectProfile: Bool
     let includeSnapshotDiscoveredApplicationCandidate: Bool
+    let projectCandidateSearchText: String
     let includeDatabaseSidecarReview: Bool
     let usePartialDatabaseSidecarFixture: Bool
     let useOmittedDatabaseChangeFixture: Bool
@@ -26,11 +28,16 @@ struct DiskerSnapshotRequest {
         let section = sectionIndex.flatMap { arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil }
             ?? "Overview"
         let includeProjectCandidate = arguments.contains("--snapshot-project-candidate")
+        let includeProjectProfile = arguments.contains("--snapshot-project-profile")
         let includeSnapshotDiscoveredApplicationCandidate = arguments.contains("--snapshot-discovered-app-data")
+        let projectCandidateSearchIndex = arguments.firstIndex(of: "--snapshot-project-search")
+        let projectCandidateSearchText = projectCandidateSearchIndex.flatMap {
+            arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil
+        } ?? ""
         let includeDatabaseSidecarReview = arguments.contains("--snapshot-database-sidecars")
         let usePartialDatabaseSidecarFixture = arguments.contains("--snapshot-database-sidecars-partial")
         let useOmittedDatabaseChangeFixture = arguments.contains("--snapshot-database-sidecars-omitted")
-        let defaultHeight: CGFloat = includeProjectCandidate ? 1_200
+        let defaultHeight: CGFloat = includeProjectProfile ? 850 : includeProjectCandidate ? 1_200
             : includeSnapshotDiscoveredApplicationCandidate ? 1_400
             : includeDatabaseSidecarReview ? 540 : 900
         let width = dimension(named: "--snapshot-width", in: arguments, fallback: 1_280, range: 760...2_560)
@@ -53,7 +60,9 @@ struct DiskerSnapshotRequest {
             appearanceName: appearanceName,
             suppressSpotlightDiscovery: suppressSpotlightDiscovery,
             includeProjectCandidate: includeProjectCandidate,
+            includeProjectProfile: includeProjectProfile,
             includeSnapshotDiscoveredApplicationCandidate: includeSnapshotDiscoveredApplicationCandidate,
+            projectCandidateSearchText: projectCandidateSearchText,
             includeDatabaseSidecarReview: includeDatabaseSidecarReview || usePartialDatabaseSidecarFixture
                 || useOmittedDatabaseChangeFixture,
             usePartialDatabaseSidecarFixture: usePartialDatabaseSidecarFixture,
@@ -90,6 +99,39 @@ struct DiskerSnapshotHost: View {
                     includeOmittedChange: request.useOmittedDatabaseChangeFixture
                 )
                 DatabaseSidecarReviewSheet(folder: fixture.folder, initialReview: fixture.review)
+            } else if request.includeProjectProfile {
+                let history = DashboardModel(includeSnapshotProjectCandidate: true).history
+                let review = ProjectResourceReview.make(for: "/synthetic/QA/DemoProject", in: history)
+                let fileChanges = FileInventoryChangeSet(
+                    rootPath: "/synthetic/QA/DemoProject",
+                    previousObservedAt: Date().addingTimeInterval(-3_600),
+                    observedAt: Date(),
+                    volumeDeviceID: 42,
+                    changes: [FileInventoryChange(
+                        relativePath: "runs/latest/checkpoint.bin",
+                        kind: .resized,
+                        logicalDelta: 67_108_864,
+                        allocatedDelta: 70_254_592,
+                        logicalBytes: 134_217_728,
+                        allocatedBytes: 140_509_184
+                    )],
+                    changedPathCount: 1,
+                    omittedChangeCount: 0,
+                    netLogicalDelta: 67_108_864,
+                    netAllocatedDelta: 70_254_592,
+                    grossAllocatedGrowth: 70_254_592,
+                    grossAllocatedReduction: 0,
+                    symlinkExcludedCount: 0,
+                    hasBaseline: true
+                )
+                ProjectProfileSheet(
+                    review: review,
+                    growthReview: ProjectResourceGrowthReview.make(for: review, in: history),
+                    appLinkedOverlapPaths: [],
+                    fileChanges: fileChanges,
+                    onRescan: {},
+                    onLinkLocations: {}
+                )
             } else {
                 DashboardView(
                     initialSection: request.includeSnapshotDiscoveredApplicationCandidate
@@ -98,6 +140,8 @@ struct DiskerSnapshotHost: View {
                     suppressSpotlightDiscovery: request.suppressSpotlightDiscovery,
                     expandFirstSavedApplicationForSnapshot: true,
                     includeSnapshotProjectCandidate: request.includeProjectCandidate,
+                    initialProjectCandidateSearchText: request.projectCandidateSearchText,
+                    initialProjectProfileRootPath: request.includeProjectProfile ? "/synthetic/QA/DemoProject" : nil,
                     includeSnapshotDiscoveredApplicationCandidate: request.includeSnapshotDiscoveredApplicationCandidate,
                     storeURLs: request.storeURLs
                 )

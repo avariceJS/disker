@@ -2135,6 +2135,11 @@ private struct OverviewFileChangeRow: Identifiable {
     var id: String { folder.path + "\u{0}" + change.relativePath }
 }
 
+private struct ProjectProfilePresentation: Identifiable {
+    let rootPath: String
+    var id: String { rootPath }
+}
+
 struct DashboardView: View {
     @State private var model: DashboardModel
     @State private var applicationDiscovery: ApplicationDiscoveryModel
@@ -2164,6 +2169,7 @@ struct DashboardView: View {
     @State private var applicationDiscoverySort: ApplicationDiscoverySort = .name
     @State private var developerArtifactReviewFolder: FolderObservation?
     @State private var databaseSidecarReviewFolder: FolderObservation?
+    @State private var projectProfile: ProjectProfilePresentation?
     @Environment(\.scenePhase) private var scenePhase
 
     private let suppressSpotlightDiscovery: Bool
@@ -2177,6 +2183,8 @@ struct DashboardView: View {
         suppressSpotlightDiscovery: Bool = false,
         expandFirstSavedApplicationForSnapshot: Bool = false,
         includeSnapshotProjectCandidate: Bool = false,
+        initialProjectCandidateSearchText: String = "",
+        initialProjectProfileRootPath: String? = nil,
         includeSnapshotDiscoveredApplicationCandidate: Bool = false,
         storeURLs: DashboardModelStoreURLs? = nil
     ) {
@@ -2191,6 +2199,8 @@ struct DashboardView: View {
             bookmarkStoreURL: storeURLs?.applicationDiscoveryScopes
         ))
         _selectedSection = State(initialValue: initialSection)
+        _projectCandidateSearchText = State(initialValue: initialProjectCandidateSearchText)
+        _projectProfile = State(initialValue: initialProjectProfileRootPath.map(ProjectProfilePresentation.init(rootPath:)))
         _isSavedApplicationHistoryExpanded = State(initialValue: expandSavedApplicationHistory)
         _expandedProjectResourceRoots = State(initialValue: includeSnapshotProjectCandidate
             ? ["/synthetic/QA/DemoProject"] : [])
@@ -2268,6 +2278,24 @@ struct DashboardView: View {
                 crossDomainEvidence: model.crossDomainResourceEvidence(forApplicationBundlePath: bundle.path)
             )
             .frame(minWidth: 580, minHeight: 520)
+        }
+        .sheet(item: $projectProfile) { presentation in
+            let review = model.projectResourceReview(for: presentation.rootPath)
+            ProjectProfileSheet(
+                review: review,
+                growthReview: ProjectResourceGrowthReview.make(for: review, in: model.history),
+                appLinkedOverlapPaths: projectProfileAppLinkedOverlapPaths(
+                    for: presentation.rootPath,
+                    evidence: model.crossDomainResourceEvidence(for: presentation.rootPath)
+                ),
+                fileChanges: model.fileInventoryReports[presentation.rootPath].flatMap { report in
+                    review.entries.first(where: { $0.path == presentation.rootPath })?.observation?.id == report.folderObservationID
+                        ? report : nil
+                },
+                onRescan: { model.measureSelectedCandidate(at: presentation.rootPath) },
+                onLinkLocations: { model.chooseProjectResourceFolders(for: presentation.rootPath) }
+            )
+            .frame(minWidth: 640, minHeight: 580)
         }
         .sheet(item: $developerArtifactReviewFolder) { folder in
             DeveloperArtifactReviewSheet(folder: folder, history: model.history) { url in
@@ -4343,6 +4371,18 @@ struct DashboardView: View {
         return "\(history.observations.count):\(latestObservationID):\(history.projectResourceAssociations.count):\(latestProjectAssociation):\(projectCandidateSearchText)"
     }
 
+    private func projectProfileAppLinkedOverlapPaths(
+        for projectRootPath: String, evidence: CrossDomainResourceEvidence
+    ) -> [String] {
+        let root = URL(fileURLWithPath: projectRootPath, isDirectory: true).standardizedFileURL.path
+        let projectLinkIDs = Set(evidence.links.filter {
+            $0.domain == .project && $0.rootPath == root
+        }.flatMap { $0.overlaps.map(\.otherLinkID) })
+        return Array(Set(evidence.links.filter {
+            $0.domain == .application && projectLinkIDs.contains($0.id)
+        }.map(\.path))).sorted()
+    }
+
     private func projectCandidateInventoryRow(_ entry: ProjectCandidateInventory.Entry) -> some View {
         let displaySource = entry.displaySource
         let otherSources = entry.sources.filter { $0.scopePath != displaySource?.scopePath }
@@ -4364,6 +4404,12 @@ struct DashboardView: View {
                         Label("Tracked project root", systemImage: "checkmark.circle")
                             .font(.caption2)
                             .foregroundStyle(.green)
+                        Button("Open project profile…") {
+                            projectProfile = ProjectProfilePresentation(rootPath: entry.path)
+                        }
+                        .buttonStyle(.link)
+                        .font(.caption2)
+                        .accessibilityLabel("Open project profile for \(entry.path)")
                     }
                 }
                 Spacer(minLength: 8)
@@ -8761,6 +8807,292 @@ private struct ApplicationFootprintReviewSheet: View {
 
     private func format(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+}
+
+struct ProjectProfileSheet: View {
+    let review: ProjectResourceReview
+    let growthReview: ProjectResourceGrowthReview
+    let appLinkedOverlapPaths: [String]
+    let fileChanges: FileInventoryChangeSet?
+    let onRescan: () -> Void
+    let onLinkLocations: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    private var rootEntry: ProjectResourceReview.Entry? {
+        review.entries.first(where: { $0.kind == .selectedProjectRoot })
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(URL(fileURLWithPath: review.projectRootPath).lastPathComponent)
+                        .font(.title2.weight(.semibold))
+                    Text(review.projectRootPath)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding()
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    rootSummary
+                    HStack {
+                        Button("Rescan exact project root…", action: onRescan)
+                            .buttonStyle(.borderedProminent)
+                        Button("Link locations and measure…", action: onLinkLocations)
+                            .buttonStyle(.bordered)
+                        Button("Reveal in Finder") {
+                            NSWorkspace.shared.activateFileViewerSelecting([
+                                URL(fileURLWithPath: review.projectRootPath, isDirectory: true)
+                            ])
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    resourcesSection
+                    changesSection
+                    fileChangesSection
+                    Text("Measurements cover only paths explicitly selected and linked by you. Paths are shown separately: nested or shared locations can overlap, and these estimates do not establish ownership, physical SSD use, or reclaimable space.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(18)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var rootSummary: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Tracked project root", systemImage: "folder.badge.gearshape")
+                .font(.headline)
+            if let rootEntry, let observation = rootEntry.observation {
+                HStack(alignment: .firstTextBaseline, spacing: 18) {
+                    metric("Logical size", bytes(observation.logicalBytes))
+                    metric("Allocated estimate", "~\(bytes(observation.allocatedBytes))")
+                    metric("Files", observation.fileCount.formatted())
+                }
+                Text("Observed \(observation.finishedAt.formatted(date: .abbreviated, time: .shortened)) · \(coverageText(rootEntry))")
+                    .font(.caption)
+                    .foregroundStyle(rootEntry.scanWasCancelled || !observation.complete ? .orange : .secondary)
+            } else {
+                Label("No current observation is available for this exact project root. Its size and activity are unknown.", systemImage: "questionmark.circle")
+                    .font(.subheadline)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.background, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
+    }
+
+    private var resourcesSection: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("Measured project locations")
+                .font(.headline)
+            ForEach(review.entries) { entry in
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(entry.path)
+                                .font(.caption.monospaced().weight(.medium))
+                                .textSelection(.enabled)
+                                .lineLimit(2)
+                                .truncationMode(.middle)
+                            Text(entry.kind == .selectedProjectRoot ? "Selected project root" : "User-linked location")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        if entry.observation != nil {
+                            Button {
+                                NSWorkspace.shared.activateFileViewerSelecting([
+                                    URL(fileURLWithPath: entry.path, isDirectory: true)
+                                ])
+                            } label: {
+                                Image(systemName: "arrow.up.right.square")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Reveal this selected path in Finder")
+                        }
+                    }
+                    if let observation = entry.observation {
+                        Text("Logical \(bytes(observation.logicalBytes)) · allocated estimate ~\(bytes(observation.allocatedBytes)) · observed \(observation.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(entry.scanWasCancelled || !observation.complete ? .orange : .secondary)
+                        Text(coverageText(entry))
+                            .font(.caption2)
+                            .foregroundStyle(entry.scanWasCancelled || !observation.complete ? .orange : .secondary)
+                    } else {
+                        Text("No saved observation for this exact path; size is unknown.")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                    if entry.isSharedLink {
+                        Label("Also linked from another selected project", systemImage: "person.2")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                    if !entry.overlappingPaths.isEmpty {
+                        Label("Overlaps another selected path; keep estimates separate", systemImage: "arrow.triangle.branch")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.background, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
+            }
+            if !appLinkedOverlapPaths.isEmpty {
+                DisclosureGroup("App-linked paths intersect this project") {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("These selected application and project paths have an exact or nested lexical relationship. It does not prove ownership or shared physical storage; measurements remain separate.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        ForEach(appLinkedOverlapPaths, id: \.self) { path in
+                            Text(path)
+                                .font(.caption2.monospaced())
+                                .textSelection(.enabled)
+                                .lineLimit(2)
+                                .truncationMode(.middle)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+                .font(.caption)
+                .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private var changesSection: some View {
+        let comparisons = growthReview.rankedComparisonsByAllocatedDelta
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Changes between complete scans")
+                .font(.headline)
+            Text("Each row compares the same exact path and volume. Incomplete or unavailable paths remain unknown.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if comparisons.isEmpty {
+                Label("No comparable complete interval is available yet. A second complete scan of an exact path establishes its history.", systemImage: "clock")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(Array(comparisons.prefix(5))) { entry in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(entry.path)
+                            .font(.caption.monospaced().weight(.medium))
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                        Text("Allocated estimate \(delta(entry.allocatedDelta)) · logical \(delta(entry.logicalDelta))")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        if let previous = entry.previous, let current = entry.current {
+                            Text("\(previous.finishedAt.formatted(date: .abbreviated, time: .shortened)) → \(current.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    Divider()
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var fileChangesSection: some View {
+        if let report = fileChanges {
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Changed files in the project root")
+                    .font(.headline)
+                if !report.hasBaseline {
+                    Text("A complete prior file inventory is needed before file-level changes can be compared.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if report.changes.isEmpty && report.changedPathCount == 0 {
+                    Text("No changed paths were recorded in this complete file inventory comparison.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(report.changes.prefix(5)) { change in
+                        HStack(alignment: .top) {
+                            Text(change.relativePath)
+                                .font(.caption.monospaced())
+                                .lineLimit(2)
+                                .truncationMode(.middle)
+                            Spacer(minLength: 8)
+                            Text(delta(change.allocatedDelta))
+                                .font(.caption2.monospacedDigit().weight(.medium))
+                        }
+                    }
+                    Text("\(report.changedPathCount) changed paths · net allocated estimate \(delta(report.netAllocatedDelta)) · gross growth \(optionalBytes(report.grossAllocatedGrowth))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if report.omittedChangeCount > 0 {
+                        Text("\(report.omittedChangeCount) additional changes are omitted from this bounded list.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private func metric(_ title: LocalizedStringKey, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.caption2).foregroundStyle(.secondary)
+            Text(value).font(.system(.body, design: .rounded).weight(.semibold).monospacedDigit())
+        }
+    }
+
+    private func coverageText(_ entry: ProjectResourceReview.Entry) -> String {
+        guard let observation = entry.observation else {
+            return NSLocalizedString("Coverage unknown", comment: "No saved coverage state for a project path")
+        }
+        if entry.scanWasCancelled {
+            return NSLocalizedString("Scan cancelled; coverage is incomplete.", comment: "Project scan was cancelled")
+        }
+        if observation.byteAccountingOverflowed {
+            return NSLocalizedString("Byte accounting overflowed; comparable size is unavailable.", comment: "Project measurement exceeded supported accounting range")
+        }
+        if observation.complete {
+            return NSLocalizedString("Complete selected-path observation.", comment: "Complete project path measurement status")
+        }
+        return String.localizedStringWithFormat(
+            NSLocalizedString("Partial observation · %ld inaccessible items · %ld excluded symlinks.", comment: "Partial project measurement coverage counts"),
+            observation.inaccessibleCount, observation.excludedSymlinkCount
+        )
+    }
+
+    private func bytes(_ value: Int64) -> String {
+        value >= 0 ? ByteCountFormatter.string(fromByteCount: value, countStyle: .file) : "unknown"
+    }
+
+    private func optionalBytes(_ value: Int64?) -> String {
+        value.map(bytes) ?? "unknown"
+    }
+
+    private func delta(_ value: Int64?) -> String {
+        guard let value else { return "unknown" }
+        let magnitude = value == Int64.min ? Int64.max : abs(value)
+        let sign = value > 0 ? "+" : value < 0 ? "−" : ""
+        return sign + bytes(magnitude)
     }
 }
 
