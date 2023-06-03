@@ -8981,6 +8981,7 @@ struct ProjectProfileSheet: View {
 
     private var changesSection: some View {
         let comparisons = growthReview.rankedComparisonsByAllocatedDelta
+        let unavailable = growthReview.entries.filter { $0.status != .compared }
         return VStack(alignment: .leading, spacing: 8) {
             Text("Changes between complete scans")
                 .font(.headline)
@@ -9012,6 +9013,28 @@ struct ProjectProfileSheet: View {
                     Divider()
                 }
             }
+            if !unavailable.isEmpty {
+                DisclosureGroup(String.localizedStringWithFormat(
+                    NSLocalizedString("Paths without comparable growth · %ld", comment: "Project paths without valid complete growth comparison"),
+                    unavailable.count
+                )) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(unavailable) { entry in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.path)
+                                    .font(.caption2.monospaced())
+                                    .lineLimit(2)
+                                    .truncationMode(.middle)
+                                Text(growthStatusText(entry.status))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+                .font(.caption)
+            }
         }
     }
 
@@ -9030,7 +9053,13 @@ struct ProjectProfileSheet: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(report.changes.prefix(5)) { change in
+                    let rankedChanges = report.changes.sorted { lhs, rhs in
+                        if lhs.allocatedDelta != rhs.allocatedDelta {
+                            return lhs.allocatedDelta > rhs.allocatedDelta
+                        }
+                        return lhs.relativePath.utf8.lexicographicallyPrecedes(rhs.relativePath.utf8)
+                    }
+                    ForEach(rankedChanges.prefix(5)) { change in
                         HStack(alignment: .top) {
                             Text(change.relativePath)
                                 .font(.caption.monospaced())
@@ -9078,6 +9107,21 @@ struct ProjectProfileSheet: View {
             NSLocalizedString("Partial observation · %ld inaccessible items · %ld excluded symlinks.", comment: "Partial project measurement coverage counts"),
             observation.inaccessibleCount, observation.excludedSymlinkCount
         )
+    }
+
+    private func growthStatusText(_ status: ProjectResourceGrowthReview.Status) -> String {
+        switch status {
+        case .compared: NSLocalizedString("Compared", comment: "A project path has comparable complete observations")
+        case .unmeasured: NSLocalizedString("No measurement saved", comment: "A project path has never been measured")
+        case .cancelled: NSLocalizedString("Latest observation was cancelled", comment: "A cancelled scan suppresses project path growth")
+        case .partial: NSLocalizedString("Latest observation is partial", comment: "A partial scan suppresses project path growth")
+        case .overflowed: NSLocalizedString("Current accounting overflowed", comment: "Overflowed current project scan cannot be compared")
+        case .needsBaseline: NSLocalizedString("A second complete scan is needed", comment: "A project path has no prior complete observation")
+        case .volumeChanged: NSLocalizedString("Volume identity changed", comment: "Project path moved to another volume identity")
+        case .timeOrderInvalid: NSLocalizedString("Observation timestamps are not increasing", comment: "Non-monotonic project measurements are not compared")
+        case .previousOverflowed: NSLocalizedString("Prior accounting overflowed", comment: "Overflowed prior project scan cannot be compared")
+        case .deltaOverflowed: NSLocalizedString("Byte delta exceeds the supported range", comment: "Project path growth calculation overflowed")
+        }
     }
 
     private func bytes(_ value: Int64) -> String {

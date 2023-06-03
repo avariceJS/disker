@@ -807,3 +807,4 @@
 "Logical %@ · allocated estimate ~%@ · observed %@" = "Логический размер %@ · оценка выделенного места ~%@ · измерено %@";
 "App-linked paths intersect this project" = "Пути приложений пересекаются с этим проектом";
 "These selected application and project paths have an exact or nested lexical relationship. It does not prove ownership or shared physical storage; measurements remain separate." = "Между выбранными путями приложений и проекта есть точное или вложенное совпадение. Это не доказывает принадлежность или общие физические блоки; измерения остаются раздельными.";
+"Paths without comparable growth · %ld" = "Пути без сопоставимого изменения · %ld";
