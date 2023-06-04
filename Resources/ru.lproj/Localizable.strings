@@ -808,3 +808,12 @@
 "App-linked paths intersect this project" = "Пути приложений пересекаются с этим проектом";
 "These selected application and project paths have an exact or nested lexical relationship. It does not prove ownership or shared physical storage; measurements remain separate." = "Между выбранными путями приложений и проекта есть точное или вложенное совпадение. Это не доказывает принадлежность или общие физические блоки; измерения остаются раздельными.";
 "Paths without comparable growth · %ld" = "Пути без сопоставимого изменения · %ld";
+"Application profile" = "Профиль приложения";
+"Observed presence, measured bundle, and the folders you associated with it." = "Наблюдения присутствия, измеренный пакет и папки, которые вы связали с приложением.";
+"Spotlight observation history" = "История наблюдений Spotlight";
+"First observed by Disker · %@" = "Первое наблюдение Disker · %@";
+"Launch Services last-open date is unknown." = "Дата последнего открытия через Launch Services неизвестна.";
+"No saved Spotlight observation for this exact app path. Presence history is unknown." = "Для этого точного пути приложения нет сохранённого наблюдения Spotlight. История присутствия неизвестна.";
+"These dates record indexed path observations while Disker was open. They do not prove installation, continuous presence, app activity, or removal." = "Эти даты отражают наблюдения индексированного пути, пока Disker был открыт. Они не доказывают факт установки, непрерывное присутствие, активность приложения или удаление.";
+"Open application profile…" = "Открыть профиль приложения…";
+"Open profile…" = "Открыть профиль…";

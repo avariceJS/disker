@@ -12,6 +12,7 @@ struct DiskerSnapshotRequest {
     let suppressSpotlightDiscovery: Bool
     let includeProjectCandidate: Bool
     let includeProjectProfile: Bool
+    let includeApplicationProfile: Bool
     let includeSnapshotDiscoveredApplicationCandidate: Bool
     let projectCandidateSearchText: String
     let includeDatabaseSidecarReview: Bool
@@ -29,6 +30,7 @@ struct DiskerSnapshotRequest {
             ?? "Overview"
         let includeProjectCandidate = arguments.contains("--snapshot-project-candidate")
         let includeProjectProfile = arguments.contains("--snapshot-project-profile")
+        let includeApplicationProfile = arguments.contains("--snapshot-application-profile")
         let includeSnapshotDiscoveredApplicationCandidate = arguments.contains("--snapshot-discovered-app-data")
         let projectCandidateSearchIndex = arguments.firstIndex(of: "--snapshot-project-search")
         let projectCandidateSearchText = projectCandidateSearchIndex.flatMap {
@@ -37,7 +39,7 @@ struct DiskerSnapshotRequest {
         let includeDatabaseSidecarReview = arguments.contains("--snapshot-database-sidecars")
         let usePartialDatabaseSidecarFixture = arguments.contains("--snapshot-database-sidecars-partial")
         let useOmittedDatabaseChangeFixture = arguments.contains("--snapshot-database-sidecars-omitted")
-        let defaultHeight: CGFloat = includeProjectProfile ? 850 : includeProjectCandidate ? 1_200
+        let defaultHeight: CGFloat = includeApplicationProfile ? 900 : includeProjectProfile ? 850 : includeProjectCandidate ? 1_200
             : includeSnapshotDiscoveredApplicationCandidate ? 1_400
             : includeDatabaseSidecarReview ? 540 : 900
         let width = dimension(named: "--snapshot-width", in: arguments, fallback: 1_280, range: 760...2_560)
@@ -61,6 +63,7 @@ struct DiskerSnapshotRequest {
             suppressSpotlightDiscovery: suppressSpotlightDiscovery,
             includeProjectCandidate: includeProjectCandidate,
             includeProjectProfile: includeProjectProfile,
+            includeApplicationProfile: includeApplicationProfile,
             includeSnapshotDiscoveredApplicationCandidate: includeSnapshotDiscoveredApplicationCandidate,
             projectCandidateSearchText: projectCandidateSearchText,
             includeDatabaseSidecarReview: includeDatabaseSidecarReview || usePartialDatabaseSidecarFixture
@@ -132,6 +135,23 @@ struct DiskerSnapshotHost: View {
                     onRescan: {},
                     onLinkLocations: {}
                 )
+            } else if request.includeApplicationProfile {
+                let fixture = applicationProfileFixture()
+                ApplicationFootprintReviewSheet(
+                    bundleName: fixture.bundle.displayName,
+                    review: ApplicationFootprintReview.make(
+                        for: fixture.bundle,
+                        in: fixture.history,
+                        homeDirectoryPath: "/Users/synthetic"
+                    ),
+                    discoveryRecord: fixture.discoveryRecord,
+                    crossDomainEvidence: CrossDomainResourceEvidence.make(
+                        forApplicationBundlePath: fixture.bundle.path,
+                        in: fixture.history,
+                        homeDirectoryPath: "/Users/synthetic"
+                    )
+                )
+                .frame(minWidth: 640, minHeight: 580)
             } else {
                 DashboardView(
                     initialSection: request.includeSnapshotDiscoveredApplicationCandidate
@@ -156,6 +176,60 @@ struct DiskerSnapshotHost: View {
             }
             captureWhenReady(attempt: 0)
         }
+    }
+
+    private func applicationProfileFixture() -> (
+        bundle: FolderObservation, history: LocalHistory, discoveryRecord: ApplicationDiscoveryRecord
+    ) {
+        let observedAt = Date()
+        let bundle = FolderObservation(
+            path: "/synthetic/Applications/DemoApp.app",
+            volumeDeviceID: 42,
+            displayName: "Demo App",
+            logicalBytes: 92_274_688,
+            allocatedBytes: 96_468_992,
+            fileCount: 142,
+            inaccessibleCount: 0,
+            finishedAt: observedAt,
+            complete: true,
+            applicationBundleIdentifier: "com.example.DemoApp",
+            selectedAsApplicationBundle: true
+        )
+        let dataPath = "/synthetic/QA/DemoAppData"
+        let data = FolderObservation(
+            path: dataPath,
+            volumeDeviceID: 42,
+            displayName: "DemoAppData",
+            logicalBytes: 12_582_912,
+            allocatedBytes: 13_107_200,
+            fileCount: 27,
+            inaccessibleCount: 0,
+            finishedAt: observedAt,
+            complete: true
+        )
+        let record = ApplicationDiscoveryRecord(
+            path: bundle.path,
+            displayName: bundle.displayName,
+            firstSeenAt: observedAt.addingTimeInterval(-86_400 * 14),
+            lastSeenAt: observedAt.addingTimeInterval(-120),
+            launchServicesLastOpenedAt: observedAt.addingTimeInterval(-86_400 * 2)
+        )
+        let history = LocalHistory(
+            observations: [ScanObservation(
+                startedAt: observedAt,
+                finishedAt: observedAt,
+                folders: [bundle, data],
+                cancelled: false
+            )],
+            applicationAssociations: [ApplicationFolderAssociation(
+                bundlePath: bundle.path,
+                bundleIdentifier: "com.example.DemoApp",
+                relatedFolderPaths: [dataPath],
+                updatedAt: observedAt
+            )],
+            discoveredApplications: [record]
+        )
+        return (bundle, history, record)
     }
 
     private func databaseSidecarReviewFixture(

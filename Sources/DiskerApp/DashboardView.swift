@@ -2275,6 +2275,7 @@ struct DashboardView: View {
             ApplicationFootprintReviewSheet(
                 bundleName: bundle.displayName,
                 review: model.applicationFootprintReview(for: bundle),
+                discoveryRecord: applicationDiscovery.history.first(where: { $0.path == bundle.path }),
                 crossDomainEvidence: model.crossDomainResourceEvidence(forApplicationBundlePath: bundle.path)
             )
             .frame(minWidth: 580, minHeight: 520)
@@ -3437,8 +3438,7 @@ struct DashboardView: View {
     }
 
     private var applicationsPage: some View {
-        ScrollViewReader { scrollProxy in
-            ScrollView {
+        ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                 header("Application bundles", subtitle: "Measure the selected .app bundle; associated data is outside this measurement.")
                 if hasApplicationHistoryChart { historyRangePicker }
@@ -3456,10 +3456,8 @@ struct DashboardView: View {
                 } else {
                     Button("Choose an Application Bundle…") { model.chooseApplicationBundle() }
                 }
-                applicationDiscoverySection { path in
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        scrollProxy.scrollTo(path, anchor: .top)
-                    }
+                applicationDiscoverySection { bundle in
+                    applicationReviewBundle = bundle
                 }
                 if model.isScanning {
                     HStack(spacing: 8) {
@@ -3652,7 +3650,7 @@ struct DashboardView: View {
                                     .foregroundStyle(.secondary)
                             }
                             .font(.caption2)
-                            Button("Review app removal footprint…") {
+                            Button("Open application profile…") {
                                 applicationReviewBundle = bundle
                             }
                             .disabled(model.isScanning || model.isVerifyingDuplicates || model.isMeasuringOwnFootprint)
@@ -3707,11 +3705,10 @@ struct DashboardView: View {
             }
             .padding(30)
             .frame(maxWidth: 960, alignment: .leading)
-            }
         }
     }
 
-    private func applicationDiscoverySection(scrollToMeasurement: @escaping (String) -> Void) -> some View {
+    private func applicationDiscoverySection(openProfile: @escaping (FolderObservation) -> Void) -> some View {
         let measurementsByPath = Dictionary(
             model.measuredApplicationBundles.map { ($0.path, $0) },
             uniquingKeysWith: { first, _ in first }
@@ -3964,8 +3961,8 @@ struct DashboardView: View {
                         }
                         Spacer(minLength: 8)
                         if measurement != nil {
-                            Button("View measurement") {
-                                scrollToMeasurement(candidate.path)
+                            Button("Open profile…") {
+                                if let measurement { openProfile(measurement) }
                             }
                             .controlSize(.small)
                             .buttonStyle(.borderless)
@@ -8448,9 +8445,10 @@ private struct DeveloperArtifactReviewSheet: View {
     }
 }
 
-private struct ApplicationFootprintReviewSheet: View {
+struct ApplicationFootprintReviewSheet: View {
     let bundleName: String
     let review: ApplicationFootprintReview
+    let discoveryRecord: ApplicationDiscoveryRecord?
     let crossDomainEvidence: CrossDomainResourceEvidence
 
     private var removalReviewPlan: ApplicationRemovalReviewPlan {
@@ -8469,18 +8467,56 @@ private struct ApplicationFootprintReviewSheet: View {
         }.map(\.path))).sorted()
     }
 
+    private var discoveryHistorySection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Spotlight observation history", systemImage: "sparkle.magnifyingglass")
+                .font(.headline)
+            if let discoveryRecord {
+                Text("First observed by Disker · \(discoveryRecord.firstSeenAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Last observed in Spotlight index · \(discoveryRecord.lastSeenAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let lastOpened = discoveryRecord.launchServicesLastOpenedAt {
+                    Text("Launch Services last-open date · \(lastOpened.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Launch Services last-open date is unknown.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Label("No saved Spotlight observation for this exact app path. Presence history is unknown.", systemImage: "questionmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text("These dates record indexed path observations while Disker was open. They do not prove installation, continuous presence, app activity, or removal.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.background, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label("App removal footprint", systemImage: "app.badge.checkmark")
+                    Label("Application profile", systemImage: "app.badge.checkmark")
                         .font(.title2.weight(.semibold))
                     Text(bundleName)
                         .font(.headline)
-                    Text("Read-only review of the bundle and folders you associated with it.")
+                    Text("Observed presence, measured bundle, and the folders you associated with it.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
+
+                discoveryHistorySection
 
                 Label {
                     Text("This review can total only complete, non-cancelled, non-overflowed measurements of disjoint paths you selected. Shared paths are excluded. The subtotal is not proof of app ownership or reclaimable physical space. Disker does not remove files.")
