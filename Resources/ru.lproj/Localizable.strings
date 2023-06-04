@@ -817,3 +817,6 @@
 "These dates record indexed path observations while Disker was open. They do not prove installation, continuous presence, app activity, or removal." = "Эти даты отражают наблюдения индексированного пути, пока Disker был открыт. Они не доказывают факт установки, непрерывное присутствие, активность приложения или удаление.";
 "Open application profile…" = "Открыть профиль приложения…";
 "Open profile…" = "Открыть профиль…";
+"Allocated estimate change: %@ since %@" = "Изменение оценки выделенного места: %@ с %@";
+"No comparable complete prior measurement is available. A second complete scan of this exact path establishes its history." = "Нет сопоставимого предыдущего полного измерения. Второе полное сканирование этого точного пути позволит начать историю.";
+"Growth is unknown because the latest scan was partial." = "Изменение размера неизвестно: последнее сканирование было неполным.";

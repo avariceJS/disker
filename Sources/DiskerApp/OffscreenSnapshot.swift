@@ -20,6 +20,12 @@ struct DiskerSnapshotRequest {
     let useOmittedDatabaseChangeFixture: Bool
     let storeURLs: DashboardModelStoreURLs
 
+    var colorScheme: ColorScheme {
+        let selectedAppearance = appearanceName
+            ?? NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
+        return selectedAppearance == .darkAqua ? .dark : .light
+    }
+
     static func from(arguments: [String]) -> DiskerSnapshotRequest? {
         guard let outputIndex = arguments.firstIndex(of: "--snapshot-output"),
               arguments.indices.contains(outputIndex + 1) else { return nil }
@@ -144,6 +150,7 @@ struct DiskerSnapshotHost: View {
                         in: fixture.history,
                         homeDirectoryPath: "/Users/synthetic"
                     ),
+                    history: fixture.history,
                     discoveryRecord: fixture.discoveryRecord,
                     crossDomainEvidence: CrossDomainResourceEvidence.make(
                         forApplicationBundlePath: fixture.bundle.path,
@@ -152,6 +159,7 @@ struct DiskerSnapshotHost: View {
                     )
                 )
                 .frame(minWidth: 640, minHeight: 580)
+                .background(Color(nsColor: .windowBackgroundColor))
             } else {
                 DashboardView(
                     initialSection: request.includeSnapshotDiscoveredApplicationCandidate
@@ -168,6 +176,7 @@ struct DiskerSnapshotHost: View {
             }
         }
         .frame(width: request.width, height: request.height)
+        .environment(\.colorScheme, request.colorScheme)
         .task {
             do {
                 try await Task.sleep(nanoseconds: 1_500_000_000)
@@ -182,6 +191,7 @@ struct DiskerSnapshotHost: View {
         bundle: FolderObservation, history: LocalHistory, discoveryRecord: ApplicationDiscoveryRecord
     ) {
         let observedAt = Date()
+        let baselineAt = observedAt.addingTimeInterval(-86_400)
         let bundle = FolderObservation(
             path: "/synthetic/Applications/DemoApp.app",
             volumeDeviceID: 42,
@@ -207,6 +217,30 @@ struct DiskerSnapshotHost: View {
             finishedAt: observedAt,
             complete: true
         )
+        let baselineBundle = FolderObservation(
+            path: bundle.path,
+            volumeDeviceID: 42,
+            displayName: bundle.displayName,
+            logicalBytes: bundle.logicalBytes - 20_971_520,
+            allocatedBytes: bundle.allocatedBytes - 22_020_096,
+            fileCount: bundle.fileCount - 6,
+            inaccessibleCount: 0,
+            finishedAt: baselineAt,
+            complete: true,
+            applicationBundleIdentifier: bundle.applicationBundleIdentifier,
+            selectedAsApplicationBundle: true
+        )
+        let baselineData = FolderObservation(
+            path: data.path,
+            volumeDeviceID: 42,
+            displayName: data.displayName,
+            logicalBytes: data.logicalBytes - 4_194_304,
+            allocatedBytes: data.allocatedBytes - 4_456_448,
+            fileCount: data.fileCount - 4,
+            inaccessibleCount: 0,
+            finishedAt: baselineAt,
+            complete: true
+        )
         let record = ApplicationDiscoveryRecord(
             path: bundle.path,
             displayName: bundle.displayName,
@@ -215,12 +249,20 @@ struct DiskerSnapshotHost: View {
             launchServicesLastOpenedAt: observedAt.addingTimeInterval(-86_400 * 2)
         )
         let history = LocalHistory(
-            observations: [ScanObservation(
-                startedAt: observedAt,
-                finishedAt: observedAt,
-                folders: [bundle, data],
-                cancelled: false
-            )],
+            observations: [
+                ScanObservation(
+                    startedAt: baselineAt,
+                    finishedAt: baselineAt,
+                    folders: [baselineBundle, baselineData],
+                    cancelled: false
+                ),
+                ScanObservation(
+                    startedAt: observedAt,
+                    finishedAt: observedAt,
+                    folders: [bundle, data],
+                    cancelled: false
+                ),
+            ],
             applicationAssociations: [ApplicationFolderAssociation(
                 bundlePath: bundle.path,
                 bundleIdentifier: "com.example.DemoApp",

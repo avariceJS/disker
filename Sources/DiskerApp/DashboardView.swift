@@ -2275,6 +2275,7 @@ struct DashboardView: View {
             ApplicationFootprintReviewSheet(
                 bundleName: bundle.displayName,
                 review: model.applicationFootprintReview(for: bundle),
+                history: model.history,
                 discoveryRecord: applicationDiscovery.history.first(where: { $0.path == bundle.path }),
                 crossDomainEvidence: model.crossDomainResourceEvidence(forApplicationBundlePath: bundle.path)
             )
@@ -8448,6 +8449,7 @@ private struct DeveloperArtifactReviewSheet: View {
 struct ApplicationFootprintReviewSheet: View {
     let bundleName: String
     let review: ApplicationFootprintReview
+    let history: LocalHistory
     let discoveryRecord: ApplicationDiscoveryRecord?
     let crossDomainEvidence: CrossDomainResourceEvidence
 
@@ -8518,16 +8520,18 @@ struct ApplicationFootprintReviewSheet: View {
 
                 discoveryHistorySection
 
-                Label {
-                    Text("This review can total only complete, non-cancelled, non-overflowed measurements of disjoint paths you selected. Shared paths are excluded. The subtotal is not proof of app ownership or reclaimable physical space. Disker does not remove files.")
-                } icon: {
+                HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "info.circle.fill")
+                        .foregroundStyle(.secondary)
+                    Text("This review can total only complete, non-cancelled, non-overflowed measurements of disjoint paths you selected. Shared paths are excluded. The subtotal is not proof of app ownership or reclaimable physical space. Disker does not remove files.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .font(.callout)
-                .foregroundStyle(.secondary)
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
 
                 if !linkedProjectPaths.isEmpty {
                     DisclosureGroup("Paths also linked under a selected project") {
@@ -8698,8 +8702,27 @@ struct ApplicationFootprintReviewSheet: View {
                     Label("Complete coverage at that scan", systemImage: "checkmark.circle")
                         .font(.caption)
                         .foregroundStyle(.green)
+                    if let previous = ObservationComparison.previousCompleteFolder(for: observation, in: history),
+                       let delta = ObservationComparison.allocatedByteDelta(current: observation, previous: previous) {
+                        Label {
+                            Text("Allocated estimate change: \(signedAllocatedDelta(delta)) since \(previous.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                        } icon: {
+                            Image(systemName: allocatedDeltaSymbol(delta))
+                        }
+                        .font(.caption)
+                        .foregroundStyle(delta == 0 ? Color.secondary : Color.primary)
+                    } else {
+                        Label("No comparable complete prior measurement is available. A second complete scan of this exact path establishes its history.", systemImage: "clock.arrow.circlepath")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 } else {
                     Label("Partial coverage at that scan · \(unmeasuredSummary(observation, wasCancelled: entry.scanWasCancelled))", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Label("Growth is unknown because the latest scan was partial.", systemImage: "questionmark.circle")
                         .font(.caption)
                         .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
@@ -8843,6 +8866,19 @@ struct ApplicationFootprintReviewSheet: View {
 
     private func format(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    private func signedAllocatedDelta(_ bytes: Int64) -> String {
+        if bytes > 0 { return "+\(format(bytes))" }
+        if bytes < 0, bytes != Int64.min { return "−\(format(-bytes))" }
+        if bytes == Int64.min { return "−\(format(Int64.max))" }
+        return format(0)
+    }
+
+    private func allocatedDeltaSymbol(_ bytes: Int64) -> String {
+        if bytes > 0 { return "arrow.up.right" }
+        if bytes < 0 { return "arrow.down.right" }
+        return "equal"
     }
 }
 
