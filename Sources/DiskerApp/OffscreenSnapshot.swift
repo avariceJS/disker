@@ -138,6 +138,12 @@ struct DiskerSnapshotHost: View {
                     growthReview: ProjectResourceGrowthReview.make(for: review, in: history),
                     appLinkedOverlapPaths: [],
                     fileChanges: fileChanges,
+                    rememberedScopePaths: [
+                        "/synthetic/QA/DemoProject",
+                        "/synthetic/QA/DemoProject/models",
+                    ],
+                    monitoredScopePaths: ["/synthetic/QA/DemoProject"],
+                    monitoringSessionOpen: true,
                     onRescan: {},
                     onLinkLocations: {}
                 )

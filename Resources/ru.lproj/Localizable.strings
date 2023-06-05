@@ -818,11 +818,13 @@
 "Bundle not measured. Spotlight’s bundle ID is only a discovery hint; Disker needs your exact bundle selection before it can inspect identity or measure this path." = "Пакет не измерен. Идентификатор из Spotlight служит только подсказкой; перед проверкой идентичности и измерением этого пути выберите точный пакет.";
 "Synthetic QA candidate · not returned by Spotlight" = "Синтетический QA-кандидат · не найден Spotlight";
 "Keep this selected path up to date" = "Обновлять измерения этого выбранного пути";
+"Only this explicitly selected path is monitored. Linked and overlapping paths remain separate measurements." = "Наблюдение включено только для этого явно выбранного пути. Связанные и пересекающиеся пути измеряются отдельно.";
 "Monitoring applies only to this exact saved path and runs while the Disker window is open." = "Мониторинг касается только этого точного сохранённого пути и работает, пока открыто окно Disker.";
 "Monitoring paused · %@" = "Мониторинг приостановлен · %@";
 "Resume monitoring" = "Возобновить мониторинг";
 "Reconciling this selected path" = "Сверка выбранного пути";
 "Event-triggered monitoring is unavailable. Periodic reconciliation may still run." = "Мониторинг по событиям недоступен. Периодическая сверка может продолжаться.";
+"Monitoring runs while the Disker window is open; activity between complete scans can be unknown." = "Мониторинг работает, пока открыто окно Disker; активность между полными сканированиями может быть неизвестна.";
 "Monitoring is active only while the Disker window is open. Missed and coalesced activity remains unknown between full scans." = "Мониторинг работает, только пока открыто окно Disker. Пропущенная активность и объединённые события между полными сканированиями неизвестны.";
 "Monitoring is saved and resumes when the Disker window opens." = "Настройка сохранена; мониторинг возобновится при открытии окна Disker.";
 "Disker scans this exact selected path on your chosen interval while the window is open. Suggestions and inferred locations are never enrolled automatically." = "Disker сканирует этот точный выбранный путь с заданным интервалом, пока окно открыто. Предложенные и предположительные расположения не добавляются автоматически.";

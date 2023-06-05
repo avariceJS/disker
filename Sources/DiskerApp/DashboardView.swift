@@ -2313,8 +2313,18 @@ struct DashboardView: View {
                     review.entries.first(where: { $0.path == presentation.rootPath })?.observation?.id == report.folderObservationID
                         ? report : nil
                 },
+                rememberedScopePaths: Set(model.rememberedScopes.map(\.path)),
+                monitoredScopePaths: model.monitoredScopePaths,
+                pausedMonitoringReasons: model.pausedMonitoringReasons,
+                storageEventWatcherErrors: model.storageEventWatcherErrors,
+                scanningScopePaths: model.isScanning ? model.currentlyScanningRootPaths : [],
+                monitoringSessionOpen: model.storageMonitoringSessionOpen,
+                isBusy: model.isScanning || model.isVerifyingDuplicates || model.isMeasuringOwnFootprint,
                 onRescan: { model.measureSelectedCandidate(at: presentation.rootPath) },
-                onLinkLocations: { model.chooseProjectResourceFolders(for: presentation.rootPath) }
+                onLinkLocations: { model.chooseProjectResourceFolders(for: presentation.rootPath) },
+                onToggleMonitoring: { path, enabled in model.toggleStorageMonitoring(path, enabled: enabled) },
+                onResumeMonitoring: { path in model.resumeStorageMonitoring(path) },
+                onRestoreAccess: { path in model.rescanAssociatedFolder(path) }
             )
             .frame(minWidth: 640, minHeight: 580)
         }
@@ -9051,8 +9061,18 @@ struct ProjectProfileSheet: View {
     let growthReview: ProjectResourceGrowthReview
     let appLinkedOverlapPaths: [String]
     let fileChanges: FileInventoryChangeSet?
+    var rememberedScopePaths: Set<String> = []
+    var monitoredScopePaths: Set<String> = []
+    var pausedMonitoringReasons: [String: String] = [:]
+    var storageEventWatcherErrors: [String: String] = [:]
+    var scanningScopePaths: Set<String> = []
+    var monitoringSessionOpen = false
+    var isBusy = false
     let onRescan: () -> Void
     let onLinkLocations: () -> Void
+    var onToggleMonitoring: (String, Bool) -> Void = { _, _ in }
+    var onResumeMonitoring: (String) -> Void = { _ in }
+    var onRestoreAccess: (String) -> Void = { _ in }
 
     @Environment(\.dismiss) private var dismiss
 
@@ -9172,6 +9192,7 @@ struct ProjectProfileSheet: View {
                         Text(coverageText(entry))
                             .font(.caption2)
                             .foregroundStyle(entry.scanWasCancelled || !observation.complete ? .orange : .secondary)
+                        selectedPathMonitoringControls(for: entry)
                     } else {
                         Text("No saved observation for this exact path; size is unknown.")
                             .font(.caption2)
@@ -9211,6 +9232,67 @@ struct ProjectProfileSheet: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func selectedPathMonitoringControls(for entry: ProjectResourceReview.Entry) -> some View {
+        if rememberedScopePaths.contains(entry.path) {
+            VStack(alignment: .leading, spacing: 5) {
+                Toggle("Keep this selected path up to date", isOn: Binding(
+                    get: { monitoredScopePaths.contains(entry.path) },
+                    set: { onToggleMonitoring(entry.path, $0) }
+                ))
+                .toggleStyle(.checkbox)
+                .font(.caption)
+                .disabled(isBusy)
+
+                if let reason = pausedMonitoringReasons[entry.path] {
+                    HStack(spacing: 8) {
+                        Label("Monitoring paused · \(reason)", systemImage: "pause.circle")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                        Button("Resume monitoring") { onResumeMonitoring(entry.path) }
+                            .font(.caption2)
+                            .disabled(isBusy)
+                    }
+                } else if monitoredScopePaths.contains(entry.path) {
+                    if scanningScopePaths.contains(entry.path) {
+                        Label("Reconciling this selected path", systemImage: "arrow.triangle.2.circlepath")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    } else if let error = storageEventWatcherErrors[entry.path] {
+                        Text("Event-triggered monitoring is unavailable. Periodic reconciliation may still run.")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                            .help(error)
+                    } else if monitoringSessionOpen {
+                        Text("Monitoring runs while the Disker window is open; activity between complete scans can be unknown.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("Monitoring is saved and resumes when the Disker window opens.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("Only this explicitly selected path is monitored. Linked and overlapping paths remain separate measurements.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Saved access is unavailable for this path. Re-select the exact location before monitoring.", systemImage: "folder.badge.questionmark")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Restore exact-path access…") { onRestoreAccess(entry.path) }
+                    .font(.caption2)
+                    .disabled(isBusy)
             }
         }
     }
