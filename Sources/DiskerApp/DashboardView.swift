@@ -711,6 +711,14 @@ final class DashboardModel {
     var latestScan: ScanObservation? { history.observations.last }
     var currentlyScanningRootPaths: Set<String> { scanRootPaths }
 
+    func storageMonitoringObservationStatuses(
+        for paths: [String], at date: Date = .now
+    ) -> [String: StorageMonitoringObservationStatus] {
+        StorageMonitoringObservationReview.make(
+            for: paths, in: history, interval: storageMonitoringInterval, at: date
+        )
+    }
+
     var localSupportDirectory: URL? {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first?
@@ -2302,9 +2310,13 @@ struct DashboardView: View {
         .sheet(item: $applicationReviewBundle) { applicationProfileSheet(for: $0) }
         .sheet(item: $projectProfile) { presentation in
             let review = model.projectResourceReview(for: presentation.rootPath)
+            let monitoringStatuses = model.storageMonitoringObservationStatuses(
+                for: review.entries.map(\.path)
+            )
             ProjectProfileSheet(
                 review: review,
                 growthReview: ProjectResourceGrowthReview.make(for: review, in: model.history),
+                monitoringObservationStatuses: monitoringStatuses,
                 appLinkedOverlapPaths: projectProfileAppLinkedOverlapPaths(
                     for: presentation.rootPath,
                     evidence: model.crossDomainResourceEvidence(for: presentation.rootPath)
@@ -2425,17 +2437,22 @@ struct DashboardView: View {
     }
 
     private func applicationProfileSheet(for bundle: ApplicationProfilePresentation) -> some View {
+        let review = model.applicationFootprintReview(forBundlePath: bundle.path)
         let scopePaths = Set(model.rememberedScopes.map(\.path))
         let isBusy = model.isScanning || model.isVerifyingDuplicates || model.isMeasuringOwnFootprint
         let scanningPaths = model.isScanning ? model.currentlyScanningRootPaths : Set<String>()
+        let monitoringStatuses = model.storageMonitoringObservationStatuses(
+            for: review.entries.map(\.path)
+        )
         return ApplicationFootprintReviewSheet(
             bundleName: bundle.displayName,
             bundlePath: bundle.path,
-            review: model.applicationFootprintReview(forBundlePath: bundle.path),
+            review: review,
             history: model.history,
             discoveryRecord: applicationDiscovery.history.first(where: { $0.path == bundle.path }),
             crossDomainEvidence: model.crossDomainResourceEvidence(forApplicationBundlePath: bundle.path),
             isBusy: isBusy,
+            monitoringObservationStatuses: monitoringStatuses,
             rememberedScopePaths: scopePaths,
             monitoredScopePaths: model.monitoredScopePaths,
             pausedMonitoringReasons: model.pausedMonitoringReasons,
@@ -8522,6 +8539,7 @@ struct ApplicationFootprintReviewSheet: View {
     let discoveryRecord: ApplicationDiscoveryRecord?
     let crossDomainEvidence: CrossDomainResourceEvidence
     var isBusy = false
+    var monitoringObservationStatuses: [String: StorageMonitoringObservationStatus] = [:]
     var rememberedScopePaths: Set<String> = []
     var monitoredScopePaths: Set<String> = []
     var pausedMonitoringReasons: [String: String] = [:]
@@ -8953,6 +8971,10 @@ struct ApplicationFootprintReviewSheet: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                if monitoredScopePaths.contains(entry.path),
+                   let status = monitoringObservationStatuses[entry.path] {
+                    StorageMonitoringObservationStatusView(status: status)
+                }
             }
             .padding(.top, 3)
         } else {
@@ -9056,9 +9078,77 @@ struct ApplicationFootprintReviewSheet: View {
     }
 }
 
+private struct StorageMonitoringObservationStatusView: View {
+    let status: StorageMonitoringObservationStatus
+
+    var body: some View {
+        Group {
+            switch status {
+            case .current:
+                EmptyView()
+            case .noCompleteBaseline(let latestAttemptAt):
+                VStack(alignment: .leading, spacing: 3) {
+                    Label("No complete observation is available for monitoring.", systemImage: "questionmark.circle")
+                        .foregroundStyle(.orange)
+                    if let latestAttemptAt {
+                        Text("Latest attempt: \(latestAttemptAt.formatted(date: .abbreviated, time: .shortened)).")
+                    }
+                    Text("Growth remains unknown until a complete observation establishes a baseline.")
+                }
+            case .baselineOnly(let lastCompleteAt):
+                Label(
+                    "Baseline established · \(lastCompleteAt.formatted(date: .abbreviated, time: .shortened)); another complete scan is needed for growth.",
+                    systemImage: "clock"
+                )
+            case .reconciliationDue(let lastCompleteAt):
+                VStack(alignment: .leading, spacing: 3) {
+                    Label(
+                        "Reconciliation needed · last complete scan \(lastCompleteAt.formatted(date: .abbreviated, time: .shortened)).",
+                        systemImage: "arrow.triangle.2.circlepath"
+                    )
+                        .foregroundStyle(.orange)
+                    Text("Activity since that observation is unknown; growth is only the net difference between complete scans.")
+                }
+            case .reconciledGap(let previousCompleteAt, let latestCompleteAt):
+                VStack(alignment: .leading, spacing: 3) {
+                    Label("Reconciled after an observation gap", systemImage: "checkmark.circle")
+                        .foregroundStyle(.orange)
+                    Text("Complete observations: \(previousCompleteAt.formatted(date: .abbreviated, time: .shortened)) → \(latestCompleteAt.formatted(date: .abbreviated, time: .shortened)). The exact time of any change is unknown.")
+                }
+            case .latestAttemptIncomplete(let lastCompleteAt, let latestAttemptAt):
+                VStack(alignment: .leading, spacing: 3) {
+                    Label("Latest monitoring attempt was incomplete · \(latestAttemptAt.formatted(date: .abbreviated, time: .shortened)).", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                    if let lastCompleteAt {
+                        Text("Last complete observation: \(lastCompleteAt.formatted(date: .abbreviated, time: .shortened)). Current coverage and growth remain unknown.")
+                    } else {
+                        Text("No complete baseline is available; current coverage and growth remain unknown.")
+                    }
+                }
+            case .volumeChanged(let previousCompleteAt, let latestCompleteAt):
+                Label(
+                    "Volume identity changed between complete scans (\(previousCompleteAt.formatted(date: .abbreviated, time: .shortened)) → \(latestCompleteAt.formatted(date: .abbreviated, time: .shortened))). This scan starts a separate baseline.",
+                    systemImage: "externaldrive.badge.questionmark"
+                )
+                    .foregroundStyle(.orange)
+            case .volumeIdentityUnknown(let previousCompleteAt, let latestCompleteAt):
+                Label(
+                    "Volume identity is unknown between complete scans (\(previousCompleteAt.formatted(date: .abbreviated, time: .shortened)) → \(latestCompleteAt.formatted(date: .abbreviated, time: .shortened))). Growth remains unknown.",
+                    systemImage: "questionmark.circle"
+                )
+                    .foregroundStyle(.orange)
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
 struct ProjectProfileSheet: View {
     let review: ProjectResourceReview
     let growthReview: ProjectResourceGrowthReview
+    var monitoringObservationStatuses: [String: StorageMonitoringObservationStatus] = [:]
     let appLinkedOverlapPaths: [String]
     let fileChanges: FileInventoryChangeSet?
     var rememberedScopePaths: Set<String> = []
@@ -9282,6 +9372,10 @@ struct ProjectProfileSheet: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+                if monitoredScopePaths.contains(entry.path),
+                   let status = monitoringObservationStatuses[entry.path] {
+                    StorageMonitoringObservationStatusView(status: status)
                 }
             }
         } else {

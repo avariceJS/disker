@@ -82,6 +82,7 @@ private struct DiskerCoreChecks {
             ("live RAM and process sample", testLiveRAMSample),
             ("opt-in RAM monitoring policy", testRAMMonitoringPolicy),
             ("opt-in selected-root storage monitoring policy", testStorageMonitoringPolicy),
+            ("monitoring review identifies gaps without turning them into change claims", testStorageMonitoringObservationReview),
             ("scheduled scans produce same-path growth after cadence", testScheduledStorageGrowthSequence),
             ("system memory-pressure transition mapping", testMemoryPressureEventMapping),
             ("cautious sustained process growth signal", testPossibleProcessGrowth),
@@ -3872,6 +3873,133 @@ private struct DiskerCoreChecks {
         )
         try expect(eventClockRollback == nil,
                    "a wall-clock rollback should not make a recently scanned event root eligible early")
+    }
+
+    private static func testStorageMonitoringObservationReview() throws {
+        let now = Date(timeIntervalSince1970: 50_000)
+        let interval = 600.0
+        let currentPath = "/saved/current"
+        let duePath = "/saved/due"
+        let partialPath = "/saved/partial"
+        let changedVolumePath = "/saved/volume"
+        let unknownVolumePath = "/saved/unknown-volume"
+        let gapPath = "/saved/reconciled-gap"
+        let baselinePath = "/saved/baseline"
+        let cancelledPath = "/saved/cancelled"
+        let noBaselinePath = "/saved/no-baseline"
+        let overflowPath = "/saved/overflow"
+        func scan(_ folder: FolderObservation, cancelled: Bool = false) -> ScanObservation {
+            ScanObservation(
+                startedAt: folder.finishedAt.addingTimeInterval(-1),
+                finishedAt: folder.finishedAt,
+                folders: [folder], cancelled: cancelled
+            )
+        }
+
+        let currentAt = now.addingTimeInterval(-30)
+        let currentPreviousAt = now.addingTimeInterval(-300)
+        let duePreviousAt = now.addingTimeInterval(-1_200)
+        let dueAt = now.addingTimeInterval(-interval)
+        let partialBaselineAt = now.addingTimeInterval(-1_200)
+        let partialAttemptAt = now.addingTimeInterval(-15)
+        let volumeBeforeAt = now.addingTimeInterval(-1_000)
+        let volumeAfterAt = now.addingTimeInterval(-20)
+        let unknownVolumeBeforeAt = now.addingTimeInterval(-1_000)
+        let unknownVolumeAfterAt = now.addingTimeInterval(-20)
+        let gapBeforeAt = now.addingTimeInterval(-1_500)
+        let gapAfterAt = now.addingTimeInterval(-100)
+        let baselineAt = now.addingTimeInterval(-30)
+        let cancelledAt = now.addingTimeInterval(-10)
+        let overflowAt = now.addingTimeInterval(-5)
+        let history = LocalHistory(observations: [
+            scan(syntheticFolder(path: currentPath, bytes: 900, complete: true, volumeDeviceID: 1, finishedAt: currentPreviousAt)),
+            scan(syntheticFolder(path: currentPath, bytes: 1_000, complete: true, volumeDeviceID: 1, finishedAt: currentAt)),
+            scan(syntheticFolder(path: duePath, bytes: 1_800, complete: true, volumeDeviceID: 1, finishedAt: duePreviousAt)),
+            scan(syntheticFolder(path: duePath, bytes: 2_000, complete: true, volumeDeviceID: 1, finishedAt: dueAt)),
+            scan(syntheticFolder(path: partialPath, bytes: 3_000, complete: true, volumeDeviceID: 1, finishedAt: partialBaselineAt)),
+            scan(syntheticFolder(path: partialPath, bytes: 0, complete: false, volumeDeviceID: 1, finishedAt: partialAttemptAt)),
+            scan(syntheticFolder(path: changedVolumePath, bytes: 4_000, complete: true, volumeDeviceID: 4, finishedAt: volumeBeforeAt)),
+            scan(syntheticFolder(path: changedVolumePath, bytes: 9_000, complete: true, volumeDeviceID: 9, finishedAt: volumeAfterAt)),
+            scan(syntheticFolder(path: unknownVolumePath, bytes: 4_000, complete: true, finishedAt: unknownVolumeBeforeAt)),
+            scan(syntheticFolder(path: unknownVolumePath, bytes: 9_000, complete: true, finishedAt: unknownVolumeAfterAt)),
+            scan(syntheticFolder(path: gapPath, bytes: 4_000, complete: true, volumeDeviceID: 4, finishedAt: gapBeforeAt)),
+            scan(syntheticFolder(path: gapPath, bytes: 9_000, complete: true, volumeDeviceID: 4, finishedAt: gapAfterAt)),
+            scan(syntheticFolder(path: baselinePath, bytes: 9_000, complete: true, volumeDeviceID: 4, finishedAt: baselineAt)),
+            scan(syntheticFolder(path: cancelledPath, bytes: 9_000, complete: true, volumeDeviceID: 4, finishedAt: cancelledAt), cancelled: true),
+            scan(FolderObservation(
+                path: overflowPath, volumeDeviceID: 1, displayName: "overflow",
+                logicalBytes: Int64.max, allocatedBytes: Int64.max, fileCount: 1,
+                inaccessibleCount: 0, finishedAt: overflowAt, complete: true,
+                byteAccountingOverflowed: true
+            )),
+        ])
+
+        let statuses = StorageMonitoringObservationReview.make(
+            for: [
+                currentPath, duePath, partialPath, changedVolumePath, unknownVolumePath,
+                gapPath, baselinePath, cancelledPath, noBaselinePath, overflowPath,
+            ],
+            in: history, interval: interval, at: now
+        )
+        try expect(statuses[currentPath] == .current(lastCompleteAt: currentAt),
+                   "a recent complete observation should remain current")
+        try expect(statuses[duePath] == .reconciliationDue(lastCompleteAt: dueAt),
+                   "a complete observation at the cadence boundary should request reconciliation")
+        try expect(statuses[partialPath] == .latestAttemptIncomplete(
+            lastCompleteAt: partialBaselineAt, latestAttemptAt: partialAttemptAt
+        ), "an incomplete attempt should preserve the last complete baseline and disclose unknown current coverage")
+        try expect(statuses[changedVolumePath] == .volumeChanged(
+            previousCompleteAt: volumeBeforeAt, latestCompleteAt: volumeAfterAt
+        ), "a changed observed volume identifier should start an unknown new baseline")
+        try expect(statuses[unknownVolumePath] == .volumeIdentityUnknown(
+            previousCompleteAt: unknownVolumeBeforeAt, latestCompleteAt: unknownVolumeAfterAt
+        ), "missing volume identity should withhold continuity across a gap")
+        try expect(statuses[gapPath] == .reconciledGap(
+            previousCompleteAt: gapBeforeAt, latestCompleteAt: gapAfterAt
+        ), "a complete scan after a missed cadence should preserve the unobserved interval")
+        try expect(statuses[baselinePath] == .baselineOnly(lastCompleteAt: baselineAt),
+                   "the first complete observation should be disclosed as a baseline, not growth")
+        try expect(statuses[cancelledPath] == .latestAttemptIncomplete(
+            lastCompleteAt: nil, latestAttemptAt: cancelledAt
+        ), "a cancelled scan must not be treated as a complete baseline even if its root summary was complete")
+        try expect(statuses[noBaselinePath] == .noCompleteBaseline(latestAttemptAt: nil),
+                   "a path without a retained observation should remain unknown")
+        try expect(statuses[overflowPath] == .latestAttemptIncomplete(
+            lastCompleteAt: nil, latestAttemptAt: overflowAt
+        ),
+                   "an overflowed observation must not seed a complete monitoring baseline")
+
+        let clockRollback = StorageMonitoringObservationReview.make(
+            for: [duePath], in: history, interval: interval,
+            at: dueAt.addingTimeInterval(-1)
+        )
+        try expect(clockRollback[duePath] == .current(lastCompleteAt: dueAt),
+                   "a wall-clock rollback must not report a future observation as an elapsed gap")
+
+        let largePaths = (0..<50).map { "/saved/project-\($0)" }
+        let largeScans = (0..<180).map { scanIndex in
+            let observedAt = now.addingTimeInterval(TimeInterval((scanIndex - 180) * 900))
+            let folders = (0..<20).map { slot in
+                let pathIndex = (scanIndex * 20 + slot) % largePaths.count
+                return syntheticFolder(
+                    path: largePaths[pathIndex], bytes: Int64(scanIndex + slot + 1),
+                    complete: true, volumeDeviceID: UInt64(pathIndex + 1), finishedAt: observedAt
+                )
+            }
+            return ScanObservation(
+                startedAt: observedAt.addingTimeInterval(-1), finishedAt: observedAt,
+                folders: folders, cancelled: false
+            )
+        }
+        let reviewStart = ProcessInfo.processInfo.systemUptime
+        let largeReview = StorageMonitoringObservationReview.make(
+            for: largePaths, in: LocalHistory(observations: largeScans),
+            interval: 900, at: now
+        )
+        let reviewSeconds = ProcessInfo.processInfo.systemUptime - reviewStart
+        print("  monitoring freshness (50 exact paths × 180 observations, 3,600 rows): \(String(format: "%.3f", reviewSeconds)) s")
+        try expect(largeReview.count == largePaths.count,
+                   "monitoring status projection should remain bounded to requested exact paths")
     }
 
     private static func testStorageMonitoringPreferences() throws {

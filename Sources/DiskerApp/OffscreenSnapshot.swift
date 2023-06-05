@@ -111,6 +111,9 @@ struct DiskerSnapshotHost: View {
             } else if request.includeProjectProfile {
                 let history = DashboardModel(includeSnapshotProjectCandidate: true).history
                 let review = ProjectResourceReview.make(for: "/synthetic/QA/DemoProject", in: history)
+                let monitoringStatuses = StorageMonitoringObservationReview.make(
+                    for: review.entries.map(\.path), in: history
+                )
                 let fileChanges = FileInventoryChangeSet(
                     rootPath: "/synthetic/QA/DemoProject",
                     previousObservedAt: Date().addingTimeInterval(-3_600),
@@ -136,33 +139,39 @@ struct DiskerSnapshotHost: View {
                 ProjectProfileSheet(
                     review: review,
                     growthReview: ProjectResourceGrowthReview.make(for: review, in: history),
+                    monitoringObservationStatuses: monitoringStatuses,
                     appLinkedOverlapPaths: [],
                     fileChanges: fileChanges,
                     rememberedScopePaths: [
                         "/synthetic/QA/DemoProject",
                         "/synthetic/QA/DemoProject/models",
                     ],
-                    monitoredScopePaths: ["/synthetic/QA/DemoProject"],
+                    monitoredScopePaths: [
+                        "/synthetic/QA/DemoProject",
+                        "/synthetic/QA/DemoProject/models",
+                    ],
                     monitoringSessionOpen: true,
                     onRescan: {},
                     onLinkLocations: {}
                 )
             } else if request.includeApplicationProfile {
                 let fixture = applicationProfileFixture()
+                let applicationReview = ApplicationFootprintReview.make(
+                    for: fixture.bundle, in: fixture.history, homeDirectoryPath: "/Users/synthetic"
+                )
                 ApplicationFootprintReviewSheet(
                     bundleName: fixture.bundle.displayName,
                     bundlePath: fixture.bundle.path,
-                    review: ApplicationFootprintReview.make(
-                        for: fixture.bundle,
-                        in: fixture.history,
-                        homeDirectoryPath: "/Users/synthetic"
-                    ),
+                    review: applicationReview,
                     history: fixture.history,
                     discoveryRecord: fixture.discoveryRecord,
                     crossDomainEvidence: CrossDomainResourceEvidence.make(
                         forApplicationBundlePath: fixture.bundle.path,
                         in: fixture.history,
                         homeDirectoryPath: "/Users/synthetic"
+                    ),
+                    monitoringObservationStatuses: StorageMonitoringObservationReview.make(
+                        for: applicationReview.entries.map(\.path), in: fixture.history
                     ),
                     rememberedScopePaths: [fixture.bundle.path, fixture.dataPath],
                     monitoredScopePaths: [fixture.bundle.path],
