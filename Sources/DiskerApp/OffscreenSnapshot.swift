@@ -157,7 +157,10 @@ struct DiskerSnapshotHost: View {
                         forApplicationBundlePath: fixture.bundle.path,
                         in: fixture.history,
                         homeDirectoryPath: "/Users/synthetic"
-                    )
+                    ),
+                    rememberedScopePaths: [fixture.bundle.path, fixture.dataPath],
+                    monitoredScopePaths: [fixture.bundle.path],
+                    monitoringSessionOpen: true
                 )
                 .frame(minWidth: 640, minHeight: 580)
                 .background(Color(nsColor: .windowBackgroundColor))
@@ -189,7 +192,8 @@ struct DiskerSnapshotHost: View {
     }
 
     private func applicationProfileFixture() -> (
-        bundle: FolderObservation, history: LocalHistory, discoveryRecord: ApplicationDiscoveryRecord
+        bundle: FolderObservation, dataPath: String, history: LocalHistory,
+        discoveryRecord: ApplicationDiscoveryRecord
     ) {
         let observedAt = Date()
         let baselineAt = observedAt.addingTimeInterval(-86_400)
@@ -272,7 +276,7 @@ struct DiskerSnapshotHost: View {
             )],
             discoveredApplications: [record]
         )
-        return (bundle, history, record)
+        return (bundle, dataPath, history, record)
     }
 
     private func databaseSidecarReviewFixture(

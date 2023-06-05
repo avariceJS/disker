@@ -47,4 +47,4 @@ else
     echo "DashboardModel QA app exited $APP_STATUS without writing its result." >&2
 fi
 [ "$APP_STATUS" -eq 0 ]
-grep -q '^PASS DashboardModel monitor lifecycle, event-triggered growth scan, persisted same-path report, opt-out, re-opt-in baseline, scheduled scan, and incomplete-root pause/resume$' "$RESULT"
+grep -q '^PASS DashboardModel monitor lifecycle, event-triggered growth scan, opt-out, re-opt-in baseline, scheduled scan, incomplete-root pause/resume, and app-profile retention with signature claims withheld during monitoring rescans$' "$RESULT"

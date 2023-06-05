@@ -709,6 +709,7 @@ final class DashboardModel {
     }
 
     var latestScan: ScanObservation? { history.observations.last }
+    var currentlyScanningRootPaths: Set<String> { scanRootPaths }
 
     var localSupportDirectory: URL? {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
@@ -1548,15 +1549,26 @@ final class DashboardModel {
         }
         eventTriggeredScanPath = origin == .eventTriggered ? scanRootPaths.first : nil
         let generation = historyGeneration.token()
+        let previouslySelectedApplicationPaths = Set(history.observations.lazy
+            .flatMap(\.folders)
+            .filter(\.selectedAsApplicationBundle)
+            .map { URL(fileURLWithPath: $0.path).standardizedFileURL.path })
+        let suppliedApplicationIdentityPaths = Set(applicationBundleIdentities.keys.map {
+            URL(fileURLWithPath: $0).standardizedFileURL.path
+        })
+        let selectedApplicationBundlePaths = Set(urls.compactMap { url -> String? in
+            guard url.pathExtension.lowercased() == "app" else { return nil }
+            let path = url.standardizedFileURL.path
+            return inspectSelectedAppBundles
+                || previouslySelectedApplicationPaths.contains(path)
+                || suppliedApplicationIdentityPaths.contains(path) ? path : nil
+        })
         currentPath = ""
         countedFileObjects = 0
         let scanTask = Task.detached(priority: .utility) {
             var identities = applicationBundleIdentities
-            let selectedApplicationBundlePaths = inspectSelectedAppBundles
-                ? Set(urls.filter { $0.pathExtension.lowercased() == "app" }.map(\.path))
-                : []
             if inspectSelectedAppBundles {
-                for url in urls where url.pathExtension.lowercased() == "app" {
+                for url in urls where selectedApplicationBundlePaths.contains(url.standardizedFileURL.path) {
                     let accessGranted = url.startAccessingSecurityScopedResource()
                     defer {
                         if accessGranted { url.stopAccessingSecurityScopedResource() }
@@ -2287,25 +2299,7 @@ struct DashboardView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(Color(nsColor: .windowBackgroundColor))
         }
-        .sheet(item: $applicationReviewBundle) { bundle in
-            ApplicationFootprintReviewSheet(
-                bundleName: bundle.displayName,
-                bundlePath: bundle.path,
-                review: model.applicationFootprintReview(forBundlePath: bundle.path),
-                history: model.history,
-                discoveryRecord: applicationDiscovery.history.first(where: { $0.path == bundle.path }),
-                crossDomainEvidence: model.crossDomainResourceEvidence(forApplicationBundlePath: bundle.path),
-                isBusy: model.isScanning || model.isVerifyingDuplicates || model.isMeasuringOwnFootprint,
-                onMeasureBundle: {
-                    model.chooseApplicationBundle(
-                        startingAt: URL(fileURLWithPath: bundle.path).deletingLastPathComponent(),
-                        expectedPath: bundle.path
-                    )
-                },
-                onAssociateLocations: { model.chooseRelatedFolders(for: bundle.path) }
-            )
-            .frame(minWidth: 580, minHeight: 520)
-        }
+        .sheet(item: $applicationReviewBundle) { applicationProfileSheet(for: $0) }
         .sheet(item: $projectProfile) { presentation in
             let review = model.projectResourceReview(for: presentation.rootPath)
             ProjectProfileSheet(
@@ -2418,6 +2412,40 @@ struct DashboardView: View {
         } message: {
             Text("This removes saved capacity, folder, file-change, RAM and system-pressure history, application discovery dates, saved application discovery folders and app-folder associations, and remembered scan locations from this Mac. Active storage and RAM monitoring will stop. Your files and folders will not be changed.")
         }
+    }
+
+    private func applicationProfileSheet(for bundle: ApplicationProfilePresentation) -> some View {
+        let scopePaths = Set(model.rememberedScopes.map(\.path))
+        let isBusy = model.isScanning || model.isVerifyingDuplicates || model.isMeasuringOwnFootprint
+        let scanningPaths = model.isScanning ? model.currentlyScanningRootPaths : Set<String>()
+        return ApplicationFootprintReviewSheet(
+            bundleName: bundle.displayName,
+            bundlePath: bundle.path,
+            review: model.applicationFootprintReview(forBundlePath: bundle.path),
+            history: model.history,
+            discoveryRecord: applicationDiscovery.history.first(where: { $0.path == bundle.path }),
+            crossDomainEvidence: model.crossDomainResourceEvidence(forApplicationBundlePath: bundle.path),
+            isBusy: isBusy,
+            rememberedScopePaths: scopePaths,
+            monitoredScopePaths: model.monitoredScopePaths,
+            pausedMonitoringReasons: model.pausedMonitoringReasons,
+            storageEventWatcherErrors: model.storageEventWatcherErrors,
+            scanningScopePaths: scanningPaths,
+            monitoringSessionOpen: model.storageMonitoringSessionOpen,
+            onMeasureBundle: {
+                model.chooseApplicationBundle(
+                    startingAt: URL(fileURLWithPath: bundle.path).deletingLastPathComponent(),
+                    expectedPath: bundle.path
+                )
+            },
+            onAssociateLocations: { model.chooseRelatedFolders(for: bundle.path) },
+            onToggleMonitoring: { path, enabled in
+                model.toggleStorageMonitoring(path, enabled: enabled)
+            },
+            onResumeMonitoring: { path in model.resumeStorageMonitoring(path) },
+            onRestoreAccess: { path in model.rescanAssociatedFolder(path) }
+        )
+        .frame(minWidth: 580, minHeight: 520)
     }
 
     private var overviewPage: some View {
@@ -8484,8 +8512,17 @@ struct ApplicationFootprintReviewSheet: View {
     let discoveryRecord: ApplicationDiscoveryRecord?
     let crossDomainEvidence: CrossDomainResourceEvidence
     var isBusy = false
+    var rememberedScopePaths: Set<String> = []
+    var monitoredScopePaths: Set<String> = []
+    var pausedMonitoringReasons: [String: String] = [:]
+    var storageEventWatcherErrors: [String: String] = [:]
+    var scanningScopePaths: Set<String> = []
+    var monitoringSessionOpen = false
     var onMeasureBundle: () -> Void = {}
     var onAssociateLocations: () -> Void = {}
+    var onToggleMonitoring: (String, Bool) -> Void = { _, _ in }
+    var onResumeMonitoring: (String) -> Void = { _ in }
+    var onRestoreAccess: (String) -> Void = { _ in }
 
     private var bundleObservation: FolderObservation? {
         review.entries.first(where: { $0.kind == .applicationBundle })?.observation
@@ -8791,6 +8828,10 @@ struct ApplicationFootprintReviewSheet: View {
                     .foregroundStyle(.secondary)
             }
 
+            if entry.observation != nil {
+                selectedPathMonitoringControls(for: entry)
+            }
+
             if let attribution = entry.attribution {
                 Label(attribution.title, systemImage: entry.isShared ? "person.2" : "questionmark.folder")
                     .font(.caption.weight(.medium))
@@ -8851,6 +8892,71 @@ struct ApplicationFootprintReviewSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.background, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
+    }
+
+    @ViewBuilder
+    private func selectedPathMonitoringControls(for entry: ApplicationFootprintReview.Entry) -> some View {
+        if rememberedScopePaths.contains(entry.path) {
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Keep this selected path up to date", isOn: Binding(
+                    get: { monitoredScopePaths.contains(entry.path) },
+                    set: { onToggleMonitoring(entry.path, $0) }
+                ))
+                .toggleStyle(.checkbox)
+                .disabled(isBusy)
+                .help("Monitoring applies only to this exact saved path and runs while the Disker window is open.")
+
+                if let reason = pausedMonitoringReasons[entry.path] {
+                    HStack(alignment: .top, spacing: 8) {
+                        Label("Monitoring paused · \(reason)", systemImage: "pause.circle")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Resume monitoring") { onResumeMonitoring(entry.path) }
+                            .font(.caption)
+                            .disabled(isBusy)
+                    }
+                } else if monitoredScopePaths.contains(entry.path) {
+                    if scanningScopePaths.contains(entry.path) {
+                        Label("Reconciling this selected path", systemImage: "arrow.triangle.2.circlepath")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if let error = storageEventWatcherErrors[entry.path] {
+                        Text("Event-triggered monitoring is unavailable. Periodic reconciliation may still run.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .help(error)
+                    } else if monitoringSessionOpen {
+                        Label("Monitoring is active only while the Disker window is open. Missed and coalesced activity remains unknown between full scans.", systemImage: "dot.radiowaves.left.and.right")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Label("Monitoring is saved and resumes when the Disker window opens.", systemImage: "checkmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("Disker scans this exact selected path on your chosen interval while the window is open. Suggestions and inferred locations are never enrolled automatically.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.top, 3)
+        } else {
+            VStack(alignment: .leading, spacing: 5) {
+                Label("Saved access is unavailable for this path. Re-select the exact location before monitoring.", systemImage: "folder.badge.questionmark")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Restore exact-path access…") { onRestoreAccess(entry.path) }
+                    .font(.caption)
+                    .disabled(isBusy)
+            }
+            .padding(.top, 3)
+        }
     }
 
     private func removalDispositionSymbol(_ disposition: ApplicationRemovalReviewPlan.Disposition) -> String {

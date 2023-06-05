@@ -130,7 +130,9 @@ public struct ApplicationFootprintReview: Equatable, Sendable {
     /// Creates a profile from an exact discovered path, even before the user
     /// has measured the bundle. Spotlight metadata remains a discovery hint;
     /// related-path attribution is withheld until a selected bundle supplies
-    /// its locally inspected identity and signature evidence.
+    /// its locally inspected identity and signature evidence. Later
+    /// metadata-only scans preserve the selected-path marker but withhold
+    /// identity fields until the user selects the bundle again for review.
     public static func make(
         forBundlePath path: String,
         in history: LocalHistory,
@@ -138,7 +140,7 @@ public struct ApplicationFootprintReview: Equatable, Sendable {
     ) -> ApplicationFootprintReview {
         let bundlePath = standardized(path)
         let bundleObservation = latestObservations(in: history)[bundlePath].flatMap { observation in
-            observation.applicationBundleIdentifier == nil ? nil : observation
+            observation.selectedAsApplicationBundle ? observation : nil
         }
         return make(
             forBundlePath: bundlePath,

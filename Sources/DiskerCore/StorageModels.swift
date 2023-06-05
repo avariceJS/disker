@@ -186,7 +186,9 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     public let applicationGroupIdentifiers: [String]
     public let applicationSignatureValidated: Bool
     public let applicationSignedBundleIdentifier: String?
-    /// True only for a scan initiated through the application-bundle picker.
+    /// True for a path explicitly selected as an application bundle and for
+    /// later exact-path scans that preserve that selection. Automated metadata
+    /// rescans omit bundle identity and signature claims until explicit review.
     public let selectedAsApplicationBundle: Bool
 
     public init(

@@ -58,7 +58,10 @@ struct DashboardModelMonitoringCheckHost: View {
                         try await Self.runEventTriggeredScanCheck(
                             stateDirectory: runDirectory.appendingPathComponent("event-scan", isDirectory: true)
                         )
-                        try writeResult("PASS DashboardModel monitor lifecycle, event-triggered growth scan, persisted same-path report, opt-out, re-opt-in baseline, scheduled scan, and incomplete-root pause/resume")
+                        try await Self.runApplicationBundleMonitoringCheck(
+                            stateDirectory: runDirectory.appendingPathComponent("application-bundle", isDirectory: true)
+                        )
+                        try writeResult("PASS DashboardModel monitor lifecycle, event-triggered growth scan, opt-out, re-opt-in baseline, scheduled scan, incomplete-root pause/resume, and app-profile retention with signature claims withheld during monitoring rescans")
                     }
                 } catch {
                     try? writeResult("FAIL \(error.localizedDescription)")
@@ -562,6 +565,125 @@ struct DashboardModelMonitoringCheckHost: View {
                   })
               }) else {
             throw failure("Resume did not restore the exact same-root file comparison after the excluded symlink was removed.")
+        }
+
+        model.setStorageMonitoringSessionOpen(false)
+        model.isScanning = false
+    }
+
+    @MainActor
+    private static func runApplicationBundleMonitoringCheck(stateDirectory: URL) async throws {
+        let bundleURL = stateDirectory.appendingPathComponent("Workflow Demo.app", isDirectory: true)
+        let contentsURL = bundleURL.appendingPathComponent("Contents", isDirectory: true)
+        let resourcesURL = contentsURL.appendingPathComponent("Resources", isDirectory: true)
+        try FileManager.default.createDirectory(at: resourcesURL, withIntermediateDirectories: true)
+        let info: [String: Any] = [
+            "CFBundleDevelopmentRegion": "en",
+            "CFBundleIdentifier": "com.example.DiskerMonitoringWorkflow",
+            "CFBundleName": "Workflow Demo",
+            "CFBundlePackageType": "APPL",
+            "CFBundleShortVersionString": "1.0",
+            "CFBundleVersion": "1",
+        ]
+        let infoData = try PropertyListSerialization.data(
+            fromPropertyList: info, format: .xml, options: 0
+        )
+        try infoData.write(to: contentsURL.appendingPathComponent("Info.plist"))
+        let initialResource = resourcesURL.appendingPathComponent("baseline.dat")
+        try Data(repeating: 0x41, count: 256).write(to: initialResource)
+        guard let identity = ApplicationBundleMetadata.identity(fromSelectedBundleAt: bundleURL) else {
+            throw failure("The synthetic application bundle did not expose its local Bundle ID.")
+        }
+
+        let observationsURL = stateDirectory.appendingPathComponent("observations.json")
+        let inventoriesURL = stateDirectory.appendingPathComponent("file-inventory.plist")
+        let bookmarksURL = stateDirectory.appendingPathComponent("selected-scopes.json")
+        let preferencesURL = stateDirectory.appendingPathComponent("storage-monitoring.json")
+        let rootPath = bundleURL.standardizedFileURL.path
+        let initialScan = FolderScanner.scanWithFileInventories(roots: [bundleURL])
+        guard let initialFolder = initialScan.observation.folders.first,
+              initialFolder.complete,
+              let initialInventory = initialScan.fileInventories.first else {
+            throw failure("The synthetic application bundle did not create a complete baseline.")
+        }
+        let selectedBundleBaseline = initialScan.observation.includingApplicationBundleIdentities(
+            [rootPath: ApplicationBundleIdentity(
+                bundleIdentifier: identity.bundleIdentifier,
+                claimedGroupIdentifiers: ["TEAM.synthetic.shared"],
+                signatureValidated: true,
+                signedBundleIdentifier: identity.bundleIdentifier
+            )], selectedApplicationBundlePaths: [rootPath]
+        )
+        _ = try ObservationStore.append(selectedBundleBaseline, to: observationsURL)
+        _ = try FileInventoryStore.recordWithTrendPoints(initialInventory, at: inventoriesURL)
+        let bookmarks = try SelectedScopeBookmarkStore.remember([bundleURL], at: bookmarksURL)
+        let model = DashboardModel(
+            storeURLs: DashboardModelStoreURLs(
+                observations: observationsURL,
+                fileInventory: inventoriesURL,
+                selectedScopeBookmarks: bookmarksURL,
+                storageMonitoringPreferences: preferencesURL
+            )
+        )
+        defer {
+            model.setStorageMonitoringSessionOpen(false)
+            model.isScanning = false
+        }
+        model.rememberedScopes = bookmarks
+        model.storageMonitoringInterval = StorageMonitoringPolicy.minimumInterval
+        model.setStorageMonitoringSessionOpen(true)
+        model.toggleStorageMonitoring(rootPath, enabled: true)
+        try await waitUntil(timeout: 18) { !model.isScanning }
+        guard let manualBaseline = model.latestFolderObservation(at: rootPath) else {
+            throw failure("The monitoring baseline for the synthetic application path was not saved.")
+        }
+        let identityState = [
+            "selected=\(manualBaseline.selectedAsApplicationBundle)",
+            "bundleID=\(String(describing: manualBaseline.applicationBundleIdentifier))",
+            "groups=\(manualBaseline.applicationGroupIdentifiers.count)",
+            "signature=\(manualBaseline.applicationSignatureValidated)",
+            "signedID=\(String(describing: manualBaseline.applicationSignedBundleIdentifier))",
+        ].joined(separator: ", ")
+        guard manualBaseline.selectedAsApplicationBundle,
+              manualBaseline.applicationBundleIdentifier == nil,
+              manualBaseline.applicationGroupIdentifiers.isEmpty,
+              !manualBaseline.applicationSignatureValidated,
+              manualBaseline.applicationSignedBundleIdentifier == nil else {
+            throw failure("The metadata-only monitoring baseline lost the selected path marker or retained stale signature and group claims (\(identityState)).")
+        }
+
+        model.setStorageMonitoringAppActive(false)
+        guard model.activeStorageEventWatcherPathsForTesting == [rootPath] else {
+            throw failure("The opted-in selected application path did not start its authorized event watcher.")
+        }
+        model.setStorageMonitoringCooldownForTesting(
+            rootPath, lastScanAt: .now.addingTimeInterval(-StorageMonitoringPolicy.minimumEventScanInterval - 1)
+        )
+        let addedPath = "Contents/Resources/after-baseline.dat"
+        try Data(repeating: 0x42, count: 8_192).write(
+            to: bundleURL.appendingPathComponent(addedPath)
+        )
+        try await waitUntil(timeout: 18) {
+            !model.isScanning && model.fileInventoryReports[rootPath]?.changes.contains(where: {
+                $0.relativePath == addedPath && $0.kind == .added
+            }) == true
+        }
+
+        guard let report = model.fileInventoryReports[rootPath],
+              report.hasBaseline,
+              report.netLogicalDelta == 8_192,
+              let latestBundle = model.latestFolderObservation(at: rootPath),
+              latestBundle.complete,
+              latestBundle.selectedAsApplicationBundle,
+              latestBundle.applicationBundleIdentifier == nil,
+              latestBundle.applicationGroupIdentifiers.isEmpty,
+              !latestBundle.applicationSignatureValidated,
+              latestBundle.applicationSignedBundleIdentifier == nil,
+              ApplicationBundleIndex.latestMeasurements(in: model.history).first(where: { $0.path == rootPath }) == latestBundle,
+              ApplicationFootprintReview.make(
+                  forBundlePath: rootPath, in: model.history, homeDirectoryPath: stateDirectory.path
+              ).entries.first?.observation == latestBundle else {
+            throw failure("An event-triggered app-bundle growth scan lost its selected identity or profile measurement.")
         }
 
         model.setStorageMonitoringSessionOpen(false)
