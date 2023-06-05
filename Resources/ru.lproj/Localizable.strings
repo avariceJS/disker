@@ -810,6 +810,13 @@
 "Paths without comparable growth · %ld" = "Пути без сопоставимого изменения · %ld";
 "Application profile" = "Профиль приложения";
 "Observed presence, measured bundle, and the folders you associated with it." = "Наблюдения присутствия, измеренный пакет и папки, которые вы связали с приложением.";
+"Choose exact bundle to measure…" = "Выбрать точный пакет для измерения…";
+"Measure bundle again…" = "Измерить пакет повторно…";
+"Associate locations and measure…" = "Связать папки и измерить…";
+"Choose exact related files or folders; each will be measured separately." = "Выберите точные связанные файлы или папки; каждое расположение будет измерено отдельно.";
+"Measure the selected application bundle before associating related locations." = "Сначала измерьте выбранный пакет приложения, затем связывайте другие расположения.";
+"Bundle not measured. Spotlight’s bundle ID is only a discovery hint; Disker needs your exact bundle selection before it can inspect identity or measure this path." = "Пакет не измерен. Идентификатор из Spotlight служит только подсказкой; перед проверкой идентичности и измерением этого пути выберите точный пакет.";
+"Synthetic QA candidate · not returned by Spotlight" = "Синтетический QA-кандидат · не найден Spotlight";
 "Spotlight observation history" = "История наблюдений Spotlight";
 "First observed by Disker · %@" = "Первое наблюдение Disker · %@";
 "Launch Services last-open date is unknown." = "Дата последнего открытия через Launch Services неизвестна.";

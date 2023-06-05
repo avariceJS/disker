@@ -1779,6 +1779,21 @@ private struct DiskerCoreChecks {
                    "cache clues, user-only evidence, and links to another app must remain distinguishable")
         try expect(byPath[cachePath]?.observation == nil && review.reclaimableBytes == nil,
                    "unmeasured locations and reclaimable physical bytes must remain unknown")
+
+        let unmeasuredHistory = LocalHistory(applicationAssociations: [
+            ApplicationFolderAssociation(bundlePath: bundlePath, relatedFolderPaths: [supportPath]),
+        ])
+        let candidateReview = ApplicationFootprintReview.make(
+            forBundlePath: bundlePath, in: unmeasuredHistory, homeDirectoryPath: home
+        )
+        let candidateEntries = Dictionary(uniqueKeysWithValues: candidateReview.entries.map { ($0.path, $0) })
+        try expect(candidateReview.bundlePath == bundlePath
+                   && candidateEntries[bundlePath]?.kind == .applicationBundle
+                   && candidateEntries[bundlePath]?.observation == nil
+                   && candidateEntries[supportPath]?.observation == nil
+                   && candidateEntries[supportPath]?.attribution == nil
+                   && candidateReview.measuredSelectedScopeSubtotal == nil,
+                   "an unmeasured discovered candidate can open its exact-path profile without inventing measurements or ownership")
     }
 
     private static func testCrossDomainResourceEvidence() throws {

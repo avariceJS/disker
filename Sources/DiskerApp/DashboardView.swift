@@ -736,6 +736,12 @@ final class DashboardModel {
         )
     }
 
+    func applicationFootprintReview(forBundlePath path: String) -> ApplicationFootprintReview {
+        ApplicationFootprintReview.make(
+            forBundlePath: path, in: history, homeDirectoryPath: CurrentUserHomeDirectory.path ?? ""
+        )
+    }
+
     func checkApplicationBundlePath(_ path: String) {
         guard checkingApplicationBundlePaths.insert(path).inserted else { return }
         let requestID = UUID()
@@ -2140,6 +2146,12 @@ private struct ProjectProfilePresentation: Identifiable {
     var id: String { rootPath }
 }
 
+private struct ApplicationProfilePresentation: Identifiable {
+    let path: String
+    let displayName: String
+    var id: String { path }
+}
+
 struct DashboardView: View {
     @State private var model: DashboardModel
     @State private var applicationDiscovery: ApplicationDiscoveryModel
@@ -2151,7 +2163,7 @@ struct DashboardView: View {
     @State private var selectedFolderHistoryDate: Date?
     @State private var isConfirmingHistoryClear = false
     @State private var isAutomaticRAMSamplingEnabled = false
-    @State private var applicationReviewBundle: FolderObservation?
+    @State private var applicationReviewBundle: ApplicationProfilePresentation?
     @State private var applicationDiscoverySearchText = ""
     @State private var savedApplicationInventoryCache = SavedApplicationInventory.empty
     @State private var isSavedApplicationInventoryLoading = false
@@ -2176,6 +2188,7 @@ struct DashboardView: View {
     private let expandFirstSavedApplicationForSnapshot: Bool
     private let includeSnapshotProjectCandidate: Bool
     private let includeSnapshotDiscoveredApplicationCandidate: Bool
+    private let qaApplicationCandidatePath: String?
 
     init(
         initialSection: String = "Overview",
@@ -2186,6 +2199,7 @@ struct DashboardView: View {
         initialProjectCandidateSearchText: String = "",
         initialProjectProfileRootPath: String? = nil,
         includeSnapshotDiscoveredApplicationCandidate: Bool = false,
+        qaApplicationCandidatePath: String? = nil,
         storeURLs: DashboardModelStoreURLs? = nil
     ) {
         _model = State(initialValue: DashboardModel(
@@ -2196,7 +2210,8 @@ struct DashboardView: View {
         _applicationDiscovery = State(initialValue: ApplicationDiscoveryModel(
             includeSnapshotCandidate: includeSnapshotDiscoveredApplicationCandidate,
             historyStoreURL: storeURLs?.observations,
-            bookmarkStoreURL: storeURLs?.applicationDiscoveryScopes
+            bookmarkStoreURL: storeURLs?.applicationDiscoveryScopes,
+            qaCandidatePath: qaApplicationCandidatePath
         ))
         _selectedSection = State(initialValue: initialSection)
         _projectCandidateSearchText = State(initialValue: initialProjectCandidateSearchText)
@@ -2213,6 +2228,7 @@ struct DashboardView: View {
         self.suppressSpotlightDiscovery = suppressSpotlightDiscovery
         self.expandFirstSavedApplicationForSnapshot = expandFirstSavedApplicationForSnapshot
         self.includeSnapshotProjectCandidate = includeSnapshotProjectCandidate
+        self.qaApplicationCandidatePath = qaApplicationCandidatePath
         self.includeSnapshotDiscoveredApplicationCandidate = includeSnapshotDiscoveredApplicationCandidate
     }
 
@@ -2274,10 +2290,19 @@ struct DashboardView: View {
         .sheet(item: $applicationReviewBundle) { bundle in
             ApplicationFootprintReviewSheet(
                 bundleName: bundle.displayName,
-                review: model.applicationFootprintReview(for: bundle),
+                bundlePath: bundle.path,
+                review: model.applicationFootprintReview(forBundlePath: bundle.path),
                 history: model.history,
                 discoveryRecord: applicationDiscovery.history.first(where: { $0.path == bundle.path }),
-                crossDomainEvidence: model.crossDomainResourceEvidence(forApplicationBundlePath: bundle.path)
+                crossDomainEvidence: model.crossDomainResourceEvidence(forApplicationBundlePath: bundle.path),
+                isBusy: model.isScanning || model.isVerifyingDuplicates || model.isMeasuringOwnFootprint,
+                onMeasureBundle: {
+                    model.chooseApplicationBundle(
+                        startingAt: URL(fileURLWithPath: bundle.path).deletingLastPathComponent(),
+                        expectedPath: bundle.path
+                    )
+                },
+                onAssociateLocations: { model.chooseRelatedFolders(for: bundle.path) }
             )
             .frame(minWidth: 580, minHeight: 520)
         }
@@ -3457,8 +3482,8 @@ struct DashboardView: View {
                 } else {
                     Button("Choose an Application Bundle…") { model.chooseApplicationBundle() }
                 }
-                applicationDiscoverySection { bundle in
-                    applicationReviewBundle = bundle
+                applicationDiscoverySection { path, displayName in
+                    applicationReviewBundle = ApplicationProfilePresentation(path: path, displayName: displayName)
                 }
                 if model.isScanning {
                     HStack(spacing: 8) {
@@ -3652,7 +3677,9 @@ struct DashboardView: View {
                             }
                             .font(.caption2)
                             Button("Open application profile…") {
-                                applicationReviewBundle = bundle
+                                applicationReviewBundle = ApplicationProfilePresentation(
+                                    path: bundle.path, displayName: bundle.displayName
+                                )
                             }
                             .disabled(model.isScanning || model.isVerifyingDuplicates || model.isMeasuringOwnFootprint)
                             Button("Associate Folders…") {
@@ -3709,7 +3736,7 @@ struct DashboardView: View {
         }
     }
 
-    private func applicationDiscoverySection(openProfile: @escaping (FolderObservation) -> Void) -> some View {
+    private func applicationDiscoverySection(openProfile: @escaping (String, String) -> Void) -> some View {
         let measurementsByPath = Dictionary(
             model.measuredApplicationBundles.map { ($0.path, $0) },
             uniquingKeysWith: { first, _ in first }
@@ -3919,6 +3946,11 @@ struct DashboardView: View {
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
+                            if applicationDiscovery.qaInjectedCandidatePaths.contains(candidate.path) {
+                                Label("Synthetic QA candidate · not returned by Spotlight", systemImage: "testtube.2")
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(.orange)
+                            }
                             if let record = discoveryRecordsByPath[candidate.path] {
                                 Text("First seen by Disker · \(record.firstSeenAt.formatted(date: .abbreviated, time: .shortened))")
                                     .font(.caption2)
@@ -3961,13 +3993,11 @@ struct DashboardView: View {
                             applicationDiscoveryRelatedLocations(for: candidate)
                         }
                         Spacer(minLength: 8)
-                        if measurement != nil {
-                            Button("Open profile…") {
-                                if let measurement { openProfile(measurement) }
-                            }
-                            .controlSize(.small)
-                            .buttonStyle(.borderless)
+                        Button("Open profile…") {
+                            openProfile(candidate.path, candidate.displayName)
                         }
+                        .controlSize(.small)
+                        .buttonStyle(.borderless)
                         if measurement == nil {
                             Button("Measure…") {
                                 model.chooseApplicationBundle(
@@ -8448,10 +8478,18 @@ private struct DeveloperArtifactReviewSheet: View {
 
 struct ApplicationFootprintReviewSheet: View {
     let bundleName: String
+    let bundlePath: String
     let review: ApplicationFootprintReview
     let history: LocalHistory
     let discoveryRecord: ApplicationDiscoveryRecord?
     let crossDomainEvidence: CrossDomainResourceEvidence
+    var isBusy = false
+    var onMeasureBundle: () -> Void = {}
+    var onAssociateLocations: () -> Void = {}
+
+    private var bundleObservation: FolderObservation? {
+        review.entries.first(where: { $0.kind == .applicationBundle })?.observation
+    }
 
     private var removalReviewPlan: ApplicationRemovalReviewPlan {
         ApplicationRemovalReviewPlanner.makePlan(from: review)
@@ -8516,6 +8554,26 @@ struct ApplicationFootprintReviewSheet: View {
                     Text("Observed presence, measured bundle, and the folders you associated with it.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                    HStack(spacing: 10) {
+                        Button(bundleObservation == nil ? "Choose exact bundle to measure…" : "Measure bundle again…") {
+                            onMeasureBundle()
+                        }
+                        .disabled(isBusy)
+                        Button("Associate locations and measure…") {
+                            onAssociateLocations()
+                        }
+                        .disabled(isBusy || bundleObservation == nil)
+                        .help(bundleObservation == nil
+                            ? "Measure the selected application bundle before associating related locations."
+                            : "Choose exact related files or folders; each will be measured separately.")
+                    }
+                    .controlSize(.small)
+                    if bundleObservation == nil {
+                        Label("Bundle not measured. Spotlight’s bundle ID is only a discovery hint; Disker needs your exact bundle selection before it can inspect identity or measure this path.", systemImage: "questionmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
 
                 discoveryHistorySection

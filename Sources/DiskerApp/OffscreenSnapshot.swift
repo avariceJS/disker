@@ -145,6 +145,7 @@ struct DiskerSnapshotHost: View {
                 let fixture = applicationProfileFixture()
                 ApplicationFootprintReviewSheet(
                     bundleName: fixture.bundle.displayName,
+                    bundlePath: fixture.bundle.path,
                     review: ApplicationFootprintReview.make(
                         for: fixture.bundle,
                         in: fixture.history,

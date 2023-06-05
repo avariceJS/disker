@@ -119,7 +119,42 @@ public struct ApplicationFootprintReview: Equatable, Sendable {
         in history: LocalHistory,
         homeDirectoryPath: String
     ) -> ApplicationFootprintReview {
-        let bundlePath = standardized(bundle.path)
+        make(
+            forBundlePath: bundle.path,
+            bundleObservation: bundle,
+            in: history,
+            homeDirectoryPath: homeDirectoryPath
+        )
+    }
+
+    /// Creates a profile from an exact discovered path, even before the user
+    /// has measured the bundle. Spotlight metadata remains a discovery hint;
+    /// related-path attribution is withheld until a selected bundle supplies
+    /// its locally inspected identity and signature evidence.
+    public static func make(
+        forBundlePath path: String,
+        in history: LocalHistory,
+        homeDirectoryPath: String
+    ) -> ApplicationFootprintReview {
+        let bundlePath = standardized(path)
+        let bundleObservation = latestObservations(in: history)[bundlePath].flatMap { observation in
+            observation.applicationBundleIdentifier == nil ? nil : observation
+        }
+        return make(
+            forBundlePath: bundlePath,
+            bundleObservation: bundleObservation,
+            in: history,
+            homeDirectoryPath: homeDirectoryPath
+        )
+    }
+
+    private static func make(
+        forBundlePath path: String,
+        bundleObservation bundle: FolderObservation?,
+        in history: LocalHistory,
+        homeDirectoryPath: String
+    ) -> ApplicationFootprintReview {
+        let bundlePath = standardized(path)
         let associatedPaths = history.applicationAssociations
             .first(where: { standardized($0.bundlePath) == bundlePath })?.relatedFolderPaths ?? []
         var paths: [(String, ScopeKind)] = [(bundlePath, .applicationBundle)]
@@ -134,7 +169,7 @@ public struct ApplicationFootprintReview: Equatable, Sendable {
         let otherAssociationsByPath = otherAssociations(in: history, for: bundlePath)
         let entries = paths.map { path, kind in
             let attribution: ApplicationPathAttribution?
-            if kind == .associatedLocation {
+            if kind == .associatedLocation, let bundle {
                 attribution = ApplicationPathAttribution.classify(
                     bundleIdentifier: bundle.applicationBundleIdentifier,
                     associatedFolderPath: path,

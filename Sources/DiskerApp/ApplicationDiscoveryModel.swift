@@ -9,6 +9,9 @@ final class ApplicationDiscoveryModel {
     private static let launchServicesLastOpenedAttribute = "kMDItemLastUsedDate"
     private let historyStoreURL: URL?
     private let bookmarkStoreOverrideURL: URL?
+#if DEBUG
+    private let qaCandidate: ApplicationDiscoveryCandidate?
+#endif
 
     private(set) var candidates: [ApplicationDiscoveryCandidate] = []
     private(set) var searchableCandidates: [ApplicationDiscoveryCandidate] = []
@@ -20,6 +23,7 @@ final class ApplicationDiscoveryModel {
     private(set) var statusMessage: String?
     private(set) var scopePaths: [String] = []
     private(set) var userSelectedScopePaths: [String] = []
+    private(set) var qaInjectedCandidatePaths = Set<String>()
 
     static let maximumUserSelectedScopeCount = SelectedScopeBookmarkStore.maximumBookmarkCount
 
@@ -32,11 +36,23 @@ final class ApplicationDiscoveryModel {
     init(
         includeSnapshotCandidate: Bool = false,
         historyStoreURL: URL? = nil,
-        bookmarkStoreURL: URL? = nil
+        bookmarkStoreURL: URL? = nil,
+        qaCandidatePath: String? = nil
     ) {
         self.historyStoreURL = historyStoreURL
         self.bookmarkStoreOverrideURL = bookmarkStoreURL
 #if DEBUG
+        if let qaCandidatePath {
+            let url = URL(fileURLWithPath: qaCandidatePath).standardizedFileURL
+            let bundle = Bundle(url: url)
+            self.qaCandidate = ApplicationDiscoveryCandidate(
+                path: url.path,
+                displayName: (bundle?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+                    ?? url.deletingPathExtension().lastPathComponent
+            )
+        } else {
+            self.qaCandidate = nil
+        }
         if includeSnapshotCandidate {
             let candidate = ApplicationDiscoveryCandidate(
                 path: "/synthetic/Applications/DemoApp.app",
@@ -49,6 +65,8 @@ final class ApplicationDiscoveryModel {
             resultRevision = 1
             return
         }
+#else
+        _ = qaCandidatePath
 #endif
         history = (try? ObservationStore.load(from: historyStoreURL).discoveredApplications) ?? []
     }
@@ -322,15 +340,25 @@ final class ApplicationDiscoveryModel {
         let scoped = ApplicationBundleIndex.scopedCandidateSample(
             raw, within: scopePaths, limit: maximumDisplayedResults
         )
-        let searchable = ApplicationBundleIndex.scopedCandidates(
+        var searchable = ApplicationBundleIndex.scopedCandidates(
             raw, within: scopePaths, limit: maximumIndexedResults
         )
+        var displayed = scoped.candidates
+        var injectedPaths = Set<String>()
+#if DEBUG
+        if let qaCandidate, !searchable.contains(where: { $0.path == qaCandidate.path }) {
+            searchable.append(qaCandidate)
+            displayed.append(qaCandidate)
+            injectedPaths.insert(qaCandidate.path)
+        }
+#endif
         searchableCandidates = searchable
         let sampleIsTruncated = query.resultCount > maximumIndexedResults || scoped.hasMore
-        let displayed = scoped.candidates
         candidates = displayed
+        qaInjectedCandidatePaths = injectedPaths
         resultRevision &+= 1
-        let updatedHistory = ApplicationBundleIndex.updatingDiscoveryHistory(history, with: searchable)
+        let historyCandidates = searchable.filter { !injectedPaths.contains($0.path) }
+        let updatedHistory = ApplicationBundleIndex.updatingDiscoveryHistory(history, with: historyCandidates)
         if updatedHistory != history {
             do {
                 history = try ObservationStore.updateDiscoveredApplications(
