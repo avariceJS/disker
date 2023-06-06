@@ -61,7 +61,10 @@ struct DashboardModelMonitoringCheckHost: View {
                         try await Self.runApplicationBundleMonitoringCheck(
                             stateDirectory: runDirectory.appendingPathComponent("application-bundle", isDirectory: true)
                         )
-                        try writeResult("PASS DashboardModel monitor lifecycle, event-triggered growth scan, opt-out, re-opt-in baseline, scheduled scan, incomplete-root pause/resume, and app-profile retention with signature claims withheld during monitoring rescans")
+                        try await Self.runRelaunchReconciliationCheck(
+                            stateDirectory: runDirectory.appendingPathComponent("relaunch-reconciliation", isDirectory: true)
+                        )
+                        try writeResult("PASS DashboardModel monitor lifecycle, event-triggered growth scan, opt-out, re-opt-in baseline, scheduled scan, incomplete-root pause/resume, app-profile retention with signature claims withheld during monitoring rescans, and restored monitoring reconciliation after relaunch")
                     }
                 } catch {
                     try? writeResult("FAIL \(error.localizedDescription)")
@@ -361,6 +364,84 @@ struct DashboardModelMonitoringCheckHost: View {
 
         model.setStorageMonitoringSessionOpen(false)
         model.isScanning = false
+    }
+
+    @MainActor
+    private static func runRelaunchReconciliationCheck(stateDirectory: URL) async throws {
+        let root = stateDirectory.appendingPathComponent("AuthorizedSyntheticRoot", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: stateDirectory) }
+
+        let observationsURL = stateDirectory.appendingPathComponent("observations.json")
+        let inventoriesURL = stateDirectory.appendingPathComponent("file-inventory.plist")
+        let bookmarksURL = stateDirectory.appendingPathComponent("selected-scopes.json")
+        let preferencesURL = stateDirectory.appendingPathComponent("storage-monitoring.json")
+        let rootPath = root.standardizedFileURL.path
+        try Data(repeating: 0x61, count: 32).write(to: root.appendingPathComponent("baseline.bin"))
+
+        let baselineScan = FolderScanner.scanWithFileInventories(roots: [root])
+        guard let baselineFolder = baselineScan.observation.folders.first,
+              baselineFolder.complete,
+              let baselineInventory = baselineScan.fileInventories.first,
+              baselineInventory.complete else {
+            throw failure("The relaunch QA root did not produce a complete isolated baseline.")
+        }
+        _ = try FileInventoryStore.recordWithTrendPoints(baselineInventory, at: inventoriesURL)
+        _ = try ObservationStore.append(baselineScan.observation, to: observationsURL)
+        _ = try SelectedScopeBookmarkStore.remember([root], at: bookmarksURL)
+        try StorageMonitoringPreferences.save([rootPath], at: preferencesURL)
+
+        // A new model instance represents a fresh app launch and restores only
+        // the explicitly saved exact-path bookmark and monitoring choice.
+        let relaunchedModel = DashboardModel(
+            storeURLs: DashboardModelStoreURLs(
+                observations: observationsURL,
+                fileInventory: inventoriesURL,
+                selectedScopeBookmarks: bookmarksURL,
+                storageMonitoringPreferences: preferencesURL
+            )
+        )
+        defer { relaunchedModel.setStorageMonitoringSessionOpen(false) }
+        relaunchedModel.storageMonitoringInterval = StorageMonitoringPolicy.minimumInterval
+        guard relaunchedModel.monitoredScopePaths == [rootPath],
+              relaunchedModel.rememberedScopes.contains(where: { $0.path == rootPath }),
+              let baselineAt = relaunchedModel.fileInventoryReports[rootPath]?.observedAt,
+              relaunchedModel.storageMonitoringNextEligibleDate(for: rootPath)
+                == baselineAt.addingTimeInterval(StorageMonitoringPolicy.minimumInterval) else {
+            throw failure("The relaunched model did not restore the opted-in exact path and its saved scan cadence.")
+        }
+
+        // This file represents activity during the period when the app was
+        // closed. It predates the restored watcher, so no event is assumed.
+        try Data(repeating: 0x62, count: 8_192).write(to: root.appendingPathComponent("changed-while-closed.bin"))
+        let observationCountBeforeReconciliation = relaunchedModel.history.observations.count
+        relaunchedModel.setStorageMonitoringSessionOpen(true)
+        relaunchedModel.evaluateStorageMonitoringForTesting(
+            at: baselineAt.addingTimeInterval(StorageMonitoringPolicy.minimumInterval + 1)
+        )
+        guard relaunchedModel.scheduledScanPath == rootPath else {
+            throw failure("A saved opt-in did not queue one reconciliation after the missed interval on relaunch.")
+        }
+        try await waitUntil(timeout: 18) {
+            !relaunchedModel.isScanning && relaunchedModel.scheduledScanPath == nil
+                && relaunchedModel.history.observations.count > observationCountBeforeReconciliation
+        }
+        guard let report = relaunchedModel.fileInventoryReports[rootPath],
+              report.hasBaseline,
+              report.netLogicalDelta == 8_192,
+              report.changes.contains(where: {
+                  $0.relativePath == "changed-while-closed.bin" && $0.kind == .added
+              }),
+              let latest = relaunchedModel.history.observations.last?.folders.first(where: { $0.path == rootPath }),
+              latest.complete,
+              latest.logicalBytes == 8_224,
+              relaunchedModel.activeStorageEventWatcherPathsForTesting == [rootPath] else {
+            throw failure("Relaunch reconciliation did not record the exact complete net growth while keeping one authorized root watched.")
+        }
+        let storedReports = try FileInventoryStore.loadReports(at: inventoriesURL)
+        guard storedReports[rootPath] == report else {
+            throw failure("Relaunch reconciliation did not persist the same-path file-growth explanation.")
+        }
     }
 
     @MainActor
