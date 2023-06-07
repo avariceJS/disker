@@ -116,6 +116,9 @@ struct DiskerSnapshotHost: View {
                 )
                 let fileChanges = FileInventoryChangeSet(
                     rootPath: "/synthetic/QA/DemoProject",
+                    folderObservationID: review.entries.first(where: {
+                        $0.path == "/synthetic/QA/DemoProject"
+                    })?.observation?.id ?? UUID(),
                     previousObservedAt: Date().addingTimeInterval(-3_600),
                     observedAt: Date(),
                     volumeDeviceID: 42,
@@ -136,12 +139,39 @@ struct DiskerSnapshotHost: View {
                     symlinkExcludedCount: 0,
                     hasBaseline: true
                 )
+                let modelsPath = "/synthetic/QA/DemoProject/models"
+                let modelsChanges = FileInventoryChangeSet(
+                    rootPath: modelsPath,
+                    folderObservationID: review.entries.first(where: { $0.path == modelsPath })?.observation?.id ?? UUID(),
+                    previousObservedAt: Date().addingTimeInterval(-1_800),
+                    observedAt: Date(),
+                    volumeDeviceID: 42,
+                    changes: [FileInventoryChange(
+                        relativePath: "dataset/latest-part.bin",
+                        kind: .added,
+                        logicalDelta: 2_097_152,
+                        allocatedDelta: 2_101_248,
+                        logicalBytes: 2_097_152,
+                        allocatedBytes: 2_101_248
+                    )],
+                    changedPathCount: 1,
+                    omittedChangeCount: 0,
+                    netLogicalDelta: 2_097_152,
+                    netAllocatedDelta: 2_101_248,
+                    grossAllocatedGrowth: 2_101_248,
+                    grossAllocatedReduction: 0,
+                    symlinkExcludedCount: 0,
+                    hasBaseline: true
+                )
                 ProjectProfileSheet(
                     review: review,
                     growthReview: ProjectResourceGrowthReview.make(for: review, in: history),
                     monitoringObservationStatuses: monitoringStatuses,
                     appLinkedOverlapPaths: [],
-                    fileChanges: fileChanges,
+                    fileChangesByPath: [
+                        "/synthetic/QA/DemoProject": fileChanges,
+                        modelsPath: modelsChanges,
+                    ],
                     rememberedScopePaths: [
                         "/synthetic/QA/DemoProject",
                         "/synthetic/QA/DemoProject/models",

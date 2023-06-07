@@ -64,7 +64,10 @@ struct DashboardModelMonitoringCheckHost: View {
                         try await Self.runRelaunchReconciliationCheck(
                             stateDirectory: runDirectory.appendingPathComponent("relaunch-reconciliation", isDirectory: true)
                         )
-                        try writeResult("PASS DashboardModel monitor lifecycle, event-triggered growth scan, opt-out, re-opt-in baseline, scheduled scan, incomplete-root pause/resume, app-profile retention with signature claims withheld during monitoring rescans, and restored monitoring reconciliation after relaunch")
+                        try await Self.runProjectResourceWorkflowCheck(
+                            stateDirectory: runDirectory.appendingPathComponent("project-resource-workflow", isDirectory: true)
+                        )
+                        try writeResult("PASS DashboardModel monitor lifecycle, event-triggered growth scan, opt-out, re-opt-in baseline, scheduled scan, incomplete-root pause/resume, app-profile retention with signature claims withheld during monitoring rescans, restored monitoring reconciliation after relaunch, and coordinated project-location measurement with exact-path growth explanation")
                     }
                 } catch {
                     try? writeResult("FAIL \(error.localizedDescription)")
@@ -364,6 +367,109 @@ struct DashboardModelMonitoringCheckHost: View {
 
         model.setStorageMonitoringSessionOpen(false)
         model.isScanning = false
+    }
+
+    @MainActor
+    private static func runProjectResourceWorkflowCheck(stateDirectory: URL) async throws {
+        let projectRoot = stateDirectory.appendingPathComponent("SyntheticProject", isDirectory: true)
+        let linkedResources = stateDirectory.appendingPathComponent("SyntheticResources", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: linkedResources, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: stateDirectory) }
+
+        let projectPath = projectRoot.standardizedFileURL.path
+        let resourcesPath = linkedResources.standardizedFileURL.path
+        let projectFile = projectRoot.appendingPathComponent("source.bin")
+        let resourceFile = linkedResources.appendingPathComponent("dataset.bin")
+        try Data(repeating: 0x31, count: 32).write(to: projectFile)
+        try Data(repeating: 0x42, count: 64).write(to: resourceFile)
+
+        let observationsURL = stateDirectory.appendingPathComponent("observations.json")
+        let inventoryURL = stateDirectory.appendingPathComponent("file-inventory.plist")
+        let bookmarksURL = stateDirectory.appendingPathComponent("selected-scopes.json")
+        let preferencesURL = stateDirectory.appendingPathComponent("storage-monitoring.json")
+        _ = try ObservationStore.trackProjectRoot(projectPath, at: observationsURL)
+        _ = try ObservationStore.associateProjectFolders([resourcesPath], with: projectPath, to: observationsURL)
+        let bookmarks = try SelectedScopeBookmarkStore.remember(
+            [projectRoot, linkedResources], at: bookmarksURL
+        )
+        let model = DashboardModel(storeURLs: DashboardModelStoreURLs(
+            observations: observationsURL,
+            fileInventory: inventoryURL,
+            selectedScopeBookmarks: bookmarksURL,
+            storageMonitoringPreferences: preferencesURL
+        ))
+        defer { model.cancelScan() }
+        guard Set(model.rememberedScopes.map(\.path)) == Set([projectPath, resourcesPath]),
+              bookmarks.count == 2 else {
+            throw failure("The project workflow fixture did not restore both exact synthetic selected scopes.")
+        }
+
+        model.measureProjectResources(for: projectPath)
+        try await waitUntil(timeout: 18) { !model.isScanning }
+        guard let baseline = model.history.observations.last,
+              !baseline.cancelled, baseline.folders.count == 2,
+              baseline.folders.allSatisfy({ $0.complete }),
+              Set(baseline.folders.map(\.path)) == Set([projectPath, resourcesPath]) else {
+            throw failure("One coordinated project measurement did not record complete observations for the root and linked synthetic resource path.")
+        }
+
+        let partialBookmarksURL = stateDirectory.appendingPathComponent("partial-selected-scopes.json")
+        _ = try SelectedScopeBookmarkStore.remember([projectRoot], at: partialBookmarksURL)
+        let blockedModel = DashboardModel(storeURLs: DashboardModelStoreURLs(
+            observations: observationsURL,
+            fileInventory: inventoryURL,
+            selectedScopeBookmarks: partialBookmarksURL,
+            storageMonitoringPreferences: preferencesURL
+        ))
+        let savedObservationCount = blockedModel.history.observations.count
+        blockedModel.measureProjectResources(for: projectPath)
+        guard !blockedModel.isScanning,
+              blockedModel.history.observations.count == savedObservationCount,
+              blockedModel.errorMessage?.contains(resourcesPath) == true else {
+            throw failure("The coordinated project workflow did not stop when one linked path lacked saved exact-path authorization.")
+        }
+
+        try appendFixture(Data(repeating: 0x53, count: 41), to: projectFile)
+        try appendFixture(Data(repeating: 0x64, count: 17), to: resourceFile)
+        let relaunchedModel = DashboardModel(storeURLs: DashboardModelStoreURLs(
+            observations: observationsURL,
+            fileInventory: inventoryURL,
+            selectedScopeBookmarks: bookmarksURL,
+            storageMonitoringPreferences: preferencesURL
+        ))
+        guard relaunchedModel.history.observations.count == savedObservationCount,
+              Set(relaunchedModel.rememberedScopes.map(\.path)) == Set([projectPath, resourcesPath]) else {
+            throw failure("The project profile and its exact selected scopes did not restore after synthetic app relaunch.")
+        }
+        let baselineCount = relaunchedModel.history.observations.count
+        relaunchedModel.measureProjectResources(for: projectPath)
+        try await waitUntil(timeout: 18) {
+            !relaunchedModel.isScanning && relaunchedModel.history.observations.count > baselineCount
+        }
+
+        let latestReview = relaunchedModel.projectResourceReview(for: projectPath)
+        let growth = ProjectResourceGrowthReview.make(for: latestReview, in: relaunchedModel.history)
+        let growthByPath = Dictionary(uniqueKeysWithValues: growth.entries.map { ($0.path, $0) })
+        let profileFileChanges = relaunchedModel.projectFileChanges(for: latestReview)
+        guard relaunchedModel.history.observations.last?.folders.count == 2,
+              growthByPath[projectPath]?.status == .compared,
+              growthByPath[projectPath]?.logicalDelta == 41,
+              growthByPath[resourcesPath]?.status == .compared,
+              growthByPath[resourcesPath]?.logicalDelta == 17,
+              relaunchedModel.fileInventoryReports[projectPath]?.netLogicalDelta == 41,
+              relaunchedModel.fileInventoryReports[resourcesPath]?.netLogicalDelta == 17,
+              profileFileChanges[projectPath]?.netLogicalDelta == 41,
+              profileFileChanges[resourcesPath]?.netLogicalDelta == 17 else {
+            throw failure("The repeated coordinated project scan did not explain exact per-path logical growth in both the profile and file inventories.")
+        }
+    }
+
+    private static func appendFixture(_ data: Data, to fileURL: URL) throws {
+        let handle = try FileHandle(forWritingTo: fileURL)
+        defer { try? handle.close() }
+        try handle.seekToEnd()
+        try handle.write(contentsOf: data)
     }
 
     @MainActor

@@ -801,6 +801,14 @@
 "Partial observation · %ld inaccessible items · %ld excluded symlinks." = "Неполное наблюдение: недоступных объектов — %1$ld, пропущенных символических ссылок — %2$ld.";
 "Rescan exact project root…" = "Повторно измерить точный корень проекта…";
 "Link locations and measure…" = "Связать расположения и измерить…";
+"Measure all selected locations together" = "Измерить все выбранные расположения вместе";
+"One metadata-only scan refreshes the exact project root and all linked paths. Results and growth remain separate by path; overlapping locations are not added together." = "Один метаданный просмотр обновит точный корень проекта и все связанные пути. Результаты и рост показываются отдельно по путям; пересекающиеся расположения не суммируются.";
+"File changes within selected locations" = "Изменения файлов в выбранных расположениях";
+"Files changed · %@ — %@" = "Изменения файлов · %@ — %@";
+"A complete prior file inventory is needed before file-level changes can be compared." = "Для сравнения изменений файлов нужен предыдущий полный перечень файлов.";
+"No changed paths were recorded in this complete file inventory comparison." = "В этом сравнении полных перечней файлов изменения путей не обнаружены.";
+"%ld changed paths · net logical %@ · net allocated estimate %@ · gross allocated growth %@" = "Изменённых путей: %1$ld · чистое изменение логического размера: %2$@ · чистая оценка выделенного места: %3$@ · общий рост оценки выделенного места: %4$@";
+"%ld additional changes are omitted from this bounded list." = "Ещё изменений, не показанных в ограниченном списке: %1$ld.";
 "Logical size" = "Логический размер";
 "Files" = "Файлы";
 "Observed %@ · %@" = "Наблюдение от %@ · %@";

@@ -1146,6 +1146,60 @@ final class DashboardModel {
         ProjectResourceReview.make(for: projectRootPath, in: history)
     }
 
+    func projectFileChanges(for review: ProjectResourceReview) -> [String: FileInventoryChangeSet] {
+        Dictionary(uniqueKeysWithValues: review.entries.compactMap { entry in
+            guard let report = fileInventoryReports[entry.path],
+                  entry.observation?.id == report.folderObservationID else { return nil }
+            return (entry.path, report)
+        })
+    }
+
+    /// Measures the selected project root and every explicitly linked location
+    /// in one sequential scan operation. Per-path observations and histories
+    /// remain independent; this does not produce an ownership or project-wide
+    /// byte total.
+    func measureProjectResources(for projectRootPath: String) {
+        guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
+        let root = URL(fileURLWithPath: projectRootPath, isDirectory: true).standardizedFileURL.path
+        guard let association = history.projectResourceAssociations.first(where: {
+            URL(fileURLWithPath: $0.projectRootPath, isDirectory: true).standardizedFileURL.path == root
+        }) else {
+            errorMessage = "Track this exact project root before measuring its linked locations."
+            return
+        }
+        let paths = [root] + association.relatedFolderPaths.map {
+            URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL.path
+        }
+        guard paths.count <= SelectedScopeBookmarkStore.maximumBookmarkCount else {
+            errorMessage = "This project has more locations than Disker can hold as saved read-only scopes. Remove links or measure individual paths."
+            return
+        }
+        let bookmarksByPath = Dictionary(uniqueKeysWithValues: rememberedScopes.map { ($0.path, $0) })
+        guard let missingPath = paths.first(where: { bookmarksByPath[$0] == nil }) else {
+            do {
+                let urls = try paths.map { path -> URL in
+                    guard let bookmark = bookmarksByPath[path] else {
+                        throw SelectedScopeBookmarkError.bookmarkUnavailable("No saved read-only scope exists for \(path).")
+                    }
+                    let resolved = try SelectedScopeBookmarkStore.resolve(bookmark, at: selectedScopeBookmarkStoreURL)
+                    guard SelectedScopeBookmarkStore.isSameSelectedPath(resolved, as: path) else {
+                        throw SelectedScopeBookmarkError.bookmarkPathChanged(
+                            expected: path, resolved: resolved.standardizedFileURL.path
+                        )
+                    }
+                    return resolved
+                }
+                rememberedScopes = try SelectedScopeBookmarkStore.load(from: selectedScopeBookmarkStoreURL)
+                errorMessage = nil
+                scan(urls)
+            } catch {
+                errorMessage = "One or more selected locations need exact-path access restored before the coordinated measurement: \(error.localizedDescription)"
+            }
+            return
+        }
+        errorMessage = "Restore saved read-only access for \(missingPath) before measuring all selected project locations together."
+    }
+
     func projectRootsLinkingResource(_ path: String) -> [String] {
         let standardizedPath = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path
         return history.projectResourceAssociations.compactMap { association in
@@ -2321,10 +2375,7 @@ struct DashboardView: View {
                     for: presentation.rootPath,
                     evidence: model.crossDomainResourceEvidence(for: presentation.rootPath)
                 ),
-                fileChanges: model.fileInventoryReports[presentation.rootPath].flatMap { report in
-                    review.entries.first(where: { $0.path == presentation.rootPath })?.observation?.id == report.folderObservationID
-                        ? report : nil
-                },
+                fileChangesByPath: model.projectFileChanges(for: review),
                 rememberedScopePaths: Set(model.rememberedScopes.map(\.path)),
                 monitoredScopePaths: model.monitoredScopePaths,
                 pausedMonitoringReasons: model.pausedMonitoringReasons,
@@ -2333,6 +2384,7 @@ struct DashboardView: View {
                 monitoringSessionOpen: model.storageMonitoringSessionOpen,
                 isBusy: model.isScanning || model.isVerifyingDuplicates || model.isMeasuringOwnFootprint,
                 onRescan: { model.measureSelectedCandidate(at: presentation.rootPath) },
+                onMeasureSelectedLocations: { model.measureProjectResources(for: presentation.rootPath) },
                 onLinkLocations: { model.chooseProjectResourceFolders(for: presentation.rootPath) },
                 onToggleMonitoring: { path, enabled in model.toggleStorageMonitoring(path, enabled: enabled) },
                 onResumeMonitoring: { path in model.resumeStorageMonitoring(path) },
@@ -9150,7 +9202,7 @@ struct ProjectProfileSheet: View {
     let growthReview: ProjectResourceGrowthReview
     var monitoringObservationStatuses: [String: StorageMonitoringObservationStatus] = [:]
     let appLinkedOverlapPaths: [String]
-    let fileChanges: FileInventoryChangeSet?
+    var fileChangesByPath: [String: FileInventoryChangeSet] = [:]
     var rememberedScopePaths: Set<String> = []
     var monitoredScopePaths: Set<String> = []
     var pausedMonitoringReasons: [String: String] = [:]
@@ -9159,6 +9211,7 @@ struct ProjectProfileSheet: View {
     var monitoringSessionOpen = false
     var isBusy = false
     let onRescan: () -> Void
+    var onMeasureSelectedLocations: () -> Void = {}
     let onLinkLocations: () -> Void
     var onToggleMonitoring: (String, Bool) -> Void = { _, _ in }
     var onResumeMonitoring: (String) -> Void = { _ in }
@@ -9194,7 +9247,7 @@ struct ProjectProfileSheet: View {
                     rootSummary
                     HStack {
                         Button("Rescan exact project root…", action: onRescan)
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.bordered)
                         Button("Link locations and measure…", action: onLinkLocations)
                             .buttonStyle(.bordered)
                         Button("Reveal in Finder") {
@@ -9203,6 +9256,17 @@ struct ProjectProfileSheet: View {
                             ])
                         }
                         .buttonStyle(.borderless)
+                    }
+                    VStack(alignment: .leading, spacing: 5) {
+                        Button("Measure all selected locations together", action: onMeasureSelectedLocations)
+                            .buttonStyle(.borderedProminent)
+                            .disabled(isBusy || review.entries.contains {
+                                !rememberedScopePaths.contains($0.path)
+                            })
+                        Text("One metadata-only scan refreshes the exact project root and all linked paths. Results and growth remain separate by path; overlapping locations are not added together.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     resourcesSection
                     changesSection
@@ -9452,43 +9516,75 @@ struct ProjectProfileSheet: View {
 
     @ViewBuilder
     private var fileChangesSection: some View {
-        if let report = fileChanges {
+        let entriesWithReports = review.entries.compactMap { entry -> (ProjectResourceReview.Entry, FileInventoryChangeSet)? in
+            guard let report = fileChangesByPath[entry.path],
+                  entry.observation?.id == report.folderObservationID else { return nil }
+            return (entry, report)
+        }
+        if !entriesWithReports.isEmpty {
             VStack(alignment: .leading, spacing: 7) {
-                Text("Changed files in the project root")
+                Text(NSLocalizedString(
+                    "File changes within selected locations",
+                    comment: "Project profile section heading for per-path file inventory changes"
+                ))
                     .font(.headline)
-                if !report.hasBaseline {
-                    Text("A complete prior file inventory is needed before file-level changes can be compared.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if report.changes.isEmpty && report.changedPathCount == 0 {
-                    Text("No changed paths were recorded in this complete file inventory comparison.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    let rankedChanges = report.changes.sorted { lhs, rhs in
-                        if lhs.allocatedDelta != rhs.allocatedDelta {
-                            return lhs.allocatedDelta > rhs.allocatedDelta
+                ForEach(entriesWithReports, id: \.0.path) { entry, report in
+                    let disclosureTitle = String.localizedStringWithFormat(
+                        NSLocalizedString("Files changed · %@ — %@", comment: "Project file-change disclosure for one selected location"),
+                        URL(fileURLWithPath: entry.path).lastPathComponent,
+                        entry.path
+                    )
+                    DisclosureGroup(disclosureTitle) {
+                        if !report.hasBaseline {
+                            Text(NSLocalizedString(
+                                "A complete prior file inventory is needed before file-level changes can be compared.",
+                                comment: "No prior complete file inventory is available for a selected project path"
+                            ))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if report.changes.isEmpty && report.changedPathCount == 0 {
+                            Text(NSLocalizedString(
+                                "No changed paths were recorded in this complete file inventory comparison.",
+                                comment: "A complete file inventory comparison found no changed paths"
+                            ))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            let rankedChanges = report.changes.sorted { lhs, rhs in
+                                if lhs.allocatedDelta != rhs.allocatedDelta {
+                                    return lhs.allocatedDelta > rhs.allocatedDelta
+                                }
+                                return lhs.relativePath.utf8.lexicographicallyPrecedes(rhs.relativePath.utf8)
+                            }
+                            ForEach(rankedChanges.prefix(5)) { change in
+                                HStack(alignment: .top) {
+                                    Text(change.relativePath)
+                                        .font(.caption.monospaced())
+                                        .lineLimit(2)
+                                        .truncationMode(.middle)
+                                    Spacer(minLength: 8)
+                                    Text(delta(change.allocatedDelta))
+                                        .font(.caption2.monospacedDigit().weight(.medium))
+                                }
+                            }
+                            Text(String.localizedStringWithFormat(
+                                NSLocalizedString("%ld changed paths · net logical %@ · net allocated estimate %@ · gross allocated growth %@", comment: "Per-path file inventory change totals"),
+                                Int64(report.changedPathCount),
+                                delta(report.netLogicalDelta),
+                                delta(report.netAllocatedDelta),
+                                optionalBytes(report.grossAllocatedGrowth)
+                            ))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            if report.omittedChangeCount > 0 {
+                                Text(String.localizedStringWithFormat(
+                                    NSLocalizedString("%ld additional changes are omitted from this bounded list.", comment: "Additional changed paths omitted by the bounded file inventory report"),
+                                    Int64(report.omittedChangeCount)
+                                ))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
-                        return lhs.relativePath.utf8.lexicographicallyPrecedes(rhs.relativePath.utf8)
-                    }
-                    ForEach(rankedChanges.prefix(5)) { change in
-                        HStack(alignment: .top) {
-                            Text(change.relativePath)
-                                .font(.caption.monospaced())
-                                .lineLimit(2)
-                                .truncationMode(.middle)
-                            Spacer(minLength: 8)
-                            Text(delta(change.allocatedDelta))
-                                .font(.caption2.monospacedDigit().weight(.medium))
-                        }
-                    }
-                    Text("\(report.changedPathCount) changed paths · net allocated estimate \(delta(report.netAllocatedDelta)) · gross growth \(optionalBytes(report.grossAllocatedGrowth))")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    if report.omittedChangeCount > 0 {
-                        Text("\(report.omittedChangeCount) additional changes are omitted from this bounded list.")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
                     }
                 }
             }
