@@ -418,6 +418,11 @@
 "File inventory baseline" = "Базовый список файлов";
 "File changes · no changes" = "Изменений файлов нет";
 "Changed paths (%ld)" = "Изменённые пути (%ld)";
+"Baseline recorded at %@. Another complete scan of this exact path is needed before file-level changes can be explained." = "Базовый список записан %@. Для объяснения изменений отдельных файлов нужно ещё одно полное сканирование этого точного пути.";
+"Compared regular-file paths with the previous complete inventory from %@. Net logical change %@ · net allocated estimate %@." = "Пути обычных файлов сравнены с предыдущей полной инвентаризацией от %@. Чистое изменение логического размера %@ · чистое изменение оценки выделенного места %@.";
+"File names and metadata stay on this Mac; file contents are never read. Inventory differences do not establish cause, ownership, or reclaimable space." = "Имена файлов и метаданные остаются на этом Mac; содержимое файлов не читается. Различия в инвентаризации не устанавливают причину изменений, принадлежность или объём возвращаемого места.";
+"Logical change %@ · allocated estimate %@" = "Изменение логического размера %@ · оценка выделенного места %@";
+"%ld additional file changes are included in aggregate totals but omitted from this bounded detail list." = "Ещё %ld изменений файлов учтены в итоговых значениях, но не показаны в этом ограниченном списке.";
 "File change count: %ld" = "Число изменившихся путей: %ld";
 "Linked path comparisons · %ld" = "Сравнения связанных путей · %ld";
 "Each row compares complete observations of one exact path and volume. Intervals differ; linked paths may overlap. Values are never added and do not establish cause or reclaimable space." = "Каждая строка сравнивает полные измерения одного точного пути и тома. Интервалы различаются; связанные пути могут пересекаться. Значения не суммируются и не доказывают причину изменений или объём возврата места.";

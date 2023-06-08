@@ -2511,6 +2511,7 @@ struct DashboardView: View {
             storageEventWatcherErrors: model.storageEventWatcherErrors,
             scanningScopePaths: scanningPaths,
             monitoringSessionOpen: model.storageMonitoringSessionOpen,
+            fileInventoryReports: model.fileInventoryReports,
             onMeasureBundle: {
                 model.chooseApplicationBundle(
                     startingAt: URL(fileURLWithPath: bundle.path).deletingLastPathComponent(),
@@ -8584,6 +8585,7 @@ private struct DeveloperArtifactReviewSheet: View {
 }
 
 struct ApplicationFootprintReviewSheet: View {
+    @State private var expandedFileChangePaths: Set<String> = []
     let bundleName: String
     let bundlePath: String
     let review: ApplicationFootprintReview
@@ -8598,6 +8600,8 @@ struct ApplicationFootprintReviewSheet: View {
     var storageEventWatcherErrors: [String: String] = [:]
     var scanningScopePaths: Set<String> = []
     var monitoringSessionOpen = false
+    var fileInventoryReports: [String: FileInventoryChangeSet] = [:]
+    var expandFileChangeDetailsForSnapshot = false
     var onMeasureBundle: () -> Void = {}
     var onAssociateLocations: () -> Void = {}
     var onToggleMonitoring: (String, Bool) -> Void = { _, _ in }
@@ -8902,6 +8906,7 @@ struct ApplicationFootprintReviewSheet: View {
                         .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                applicationFileChangeDisclosure(for: observation)
             } else {
                 Label("No saved measurement for this path", systemImage: "questionmark.circle")
                     .font(.caption)
@@ -8972,6 +8977,124 @@ struct ApplicationFootprintReviewSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.background, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
+    }
+
+    @ViewBuilder
+    private func applicationFileChangeDisclosure(for observation: FolderObservation) -> some View {
+        if let report = fileInventoryReports[observation.path],
+           report.folderObservationID == observation.id {
+            DisclosureGroup(isExpanded: Binding(
+                get: {
+                    expandFileChangeDetailsForSnapshot || expandedFileChangePaths.contains(observation.path)
+                },
+                set: { isExpanded in
+                    if isExpanded {
+                        expandedFileChangePaths.insert(observation.path)
+                    } else {
+                        expandedFileChangePaths.remove(observation.path)
+                    }
+                }
+            )) {
+                VStack(alignment: .leading, spacing: 7) {
+                    if !report.hasBaseline {
+                        Text(String.localizedStringWithFormat(
+                            NSLocalizedString(
+                                "Baseline recorded at %@. Another complete scan of this exact path is needed before file-level changes can be explained.",
+                                comment: "First complete file inventory baseline in an application profile"
+                            ),
+                            report.observedAt.formatted(date: .abbreviated, time: .shortened)
+                        ))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text(String.localizedStringWithFormat(
+                            NSLocalizedString(
+                                "Compared regular-file paths with the previous complete inventory from %@. Net logical change %@ · net allocated estimate %@.",
+                                comment: "Same-path file inventory comparison in an application profile"
+                            ),
+                            report.previousObservedAt?.formatted(date: .abbreviated, time: .shortened) ?? NSLocalizedString("unknown time", comment: "Missing prior inventory time"),
+                            report.netLogicalDelta.map(signedAllocatedDelta) ?? NSLocalizedString("unknown", comment: "Unknown logical file inventory delta"),
+                            report.netAllocatedDelta.map(signedAllocatedDelta) ?? NSLocalizedString("unknown", comment: "Unknown allocated file inventory delta")
+                        ))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("File names and metadata stay on this Mac; file contents are never read. Inventory differences do not establish cause, ownership, or reclaimable space.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if report.symlinkExcludedCount > 0 {
+                            Text(String.localizedStringWithFormat(
+                                NSLocalizedString("%ld symlink entries were excluded; their targets were not followed.", comment: "Application file inventory excludes symlink targets"),
+                                Int32(report.symlinkExcludedCount)
+                            ))
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
+                        if report.changedPathCount == 0 {
+                            Text("No regular-file size or path changes were measured.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(report.changes) { change in
+                                HStack(alignment: .top, spacing: 8) {
+                                    Image(systemName: applicationFileChangeSymbol(change.kind))
+                                        .foregroundStyle(change.allocatedDelta > 0 ? .orange : .secondary)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(change.relativePath.isEmpty ? observation.displayName : change.relativePath)
+                                            .font(.caption2.monospaced())
+                                            .lineLimit(2)
+                                            .textSelection(.enabled)
+                                        Text(String.localizedStringWithFormat(
+                                            NSLocalizedString("Logical change %@ · allocated estimate %@", comment: "Logical and allocated estimate change for one application file path"),
+                                            signedAllocatedDelta(change.logicalDelta),
+                                            signedAllocatedDelta(change.allocatedDelta)
+                                        ))
+                                            .font(.caption2.monospacedDigit())
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer(minLength: 4)
+                                }
+                            }
+                            if report.omittedChangeCount > 0 {
+                                Text(String.localizedStringWithFormat(
+                                    NSLocalizedString("%ld additional file changes are included in aggregate totals but omitted from this bounded detail list.", comment: "Application file inventory details are truncated"),
+                                    Int32(report.omittedChangeCount)
+                                ))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 4)
+            } label: {
+                Label(applicationFileChangeDisclosureTitle(for: report), systemImage: "doc.badge.arrow.up")
+            }
+            .font(.caption2)
+        }
+    }
+
+    private func applicationFileChangeDisclosureTitle(for report: FileInventoryChangeSet) -> String {
+        if !report.hasBaseline {
+            return NSLocalizedString("File inventory baseline", comment: "Disclosure for the first complete application file inventory")
+        }
+        if report.changedPathCount == 0 {
+            return NSLocalizedString("File changes · no changes", comment: "Disclosure for a complete application file comparison without changes")
+        }
+        return String.localizedStringWithFormat(
+            NSLocalizedString("Changed paths (%ld)", comment: "Count of changed file paths in one selected application resource"),
+            Int32(report.changedPathCount)
+        )
+    }
+
+    private func applicationFileChangeSymbol(_ kind: FileInventoryChange.Kind) -> String {
+        switch kind {
+        case .added: "plus.circle"
+        case .resized: "arrow.up.left.and.arrow.down.right"
+        case .noLongerPresent: "minus.circle"
+        }
     }
 
     @ViewBuilder

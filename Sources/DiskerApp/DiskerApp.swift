@@ -1,4 +1,5 @@
 import SwiftUI
+import Darwin
 
 @main
 struct DiskerApp: App {
@@ -68,8 +69,7 @@ private struct ApplicationWorkflowQAConfiguration {
         let suppliedPath = arguments[index + 1]
         guard suppliedPath.hasPrefix("/Users/root1/Desktop/Disker-WorkflowQA-"),
               suppliedPath == URL(fileURLWithPath: suppliedPath).standardizedFileURL.path,
-              (try? FileManager.default
-                .attributesOfItem(atPath: suppliedPath)[.type] as? FileAttributeType) == .typeDirectory else {
+              isRealDirectoryWithoutFollowingSymlinks(at: suppliedPath) else {
             return nil
         }
         let root = URL(fileURLWithPath: suppliedPath, isDirectory: true)
@@ -82,8 +82,7 @@ private struct ApplicationWorkflowQAConfiguration {
               qaRootPath.hasPrefix("/Users/root1/Desktop/Disker-WorkflowQA-"),
               candidatePath.hasPrefix(qaRoot.path + "/"),
               candidateURL.pathExtension.lowercased() == "app",
-              (try? FileManager.default
-                .attributesOfItem(atPath: candidatePath)[.type] as? FileAttributeType) == .typeDirectory,
+              isRealDirectoryWithoutFollowingSymlinks(at: candidatePath),
               let bundle = Bundle(url: candidateURL),
               bundle.object(forInfoDictionaryKey: "CFBundlePackageType") as? String == "APPL",
               bundle.bundleIdentifier?.isEmpty == false else { return nil }
@@ -94,6 +93,13 @@ private struct ApplicationWorkflowQAConfiguration {
             storageMonitoringPreferences: root.appendingPathComponent("storage-monitoring.json"),
             applicationDiscoveryScopes: root.appendingPathComponent("application-discovery-scopes.json")
         ), candidatePath: candidatePath)
+    }
+
+    private static func isRealDirectoryWithoutFollowingSymlinks(at path: String) -> Bool {
+        var metadata = stat()
+        return path.withCString { fileSystemPath in
+            lstat(fileSystemPath, &metadata) == 0 && (metadata.st_mode & S_IFMT) == S_IFDIR
+        }
     }
 }
 #endif

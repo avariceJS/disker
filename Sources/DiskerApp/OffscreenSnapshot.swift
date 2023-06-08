@@ -13,6 +13,7 @@ struct DiskerSnapshotRequest {
     let includeProjectCandidate: Bool
     let includeProjectProfile: Bool
     let includeApplicationProfile: Bool
+    let expandApplicationFileChanges: Bool
     let includeSnapshotDiscoveredApplicationCandidate: Bool
     let projectCandidateSearchText: String
     let includeDatabaseSidecarReview: Bool
@@ -37,6 +38,7 @@ struct DiskerSnapshotRequest {
         let includeProjectCandidate = arguments.contains("--snapshot-project-candidate")
         let includeProjectProfile = arguments.contains("--snapshot-project-profile")
         let includeApplicationProfile = arguments.contains("--snapshot-application-profile")
+        let expandApplicationFileChanges = arguments.contains("--snapshot-expanded-file-changes")
         let includeSnapshotDiscoveredApplicationCandidate = arguments.contains("--snapshot-discovered-app-data")
         let projectCandidateSearchIndex = arguments.firstIndex(of: "--snapshot-project-search")
         let projectCandidateSearchText = projectCandidateSearchIndex.flatMap {
@@ -70,6 +72,7 @@ struct DiskerSnapshotRequest {
             includeProjectCandidate: includeProjectCandidate,
             includeProjectProfile: includeProjectProfile,
             includeApplicationProfile: includeApplicationProfile,
+            expandApplicationFileChanges: expandApplicationFileChanges,
             includeSnapshotDiscoveredApplicationCandidate: includeSnapshotDiscoveredApplicationCandidate,
             projectCandidateSearchText: projectCandidateSearchText,
             includeDatabaseSidecarReview: includeDatabaseSidecarReview || usePartialDatabaseSidecarFixture
@@ -205,7 +208,9 @@ struct DiskerSnapshotHost: View {
                     ),
                     rememberedScopePaths: [fixture.bundle.path, fixture.dataPath],
                     monitoredScopePaths: [fixture.bundle.path],
-                    monitoringSessionOpen: true
+                    monitoringSessionOpen: true,
+                    fileInventoryReports: fixture.fileInventoryReports,
+                    expandFileChangeDetailsForSnapshot: request.expandApplicationFileChanges
                 )
                 .frame(minWidth: 640, minHeight: 580)
                 .background(Color(nsColor: .windowBackgroundColor))
@@ -238,7 +243,8 @@ struct DiskerSnapshotHost: View {
 
     private func applicationProfileFixture() -> (
         bundle: FolderObservation, dataPath: String, history: LocalHistory,
-        discoveryRecord: ApplicationDiscoveryRecord
+        discoveryRecord: ApplicationDiscoveryRecord,
+        fileInventoryReports: [String: FileInventoryChangeSet]
     ) {
         let observedAt = Date()
         let baselineAt = observedAt.addingTimeInterval(-86_400)
@@ -321,7 +327,49 @@ struct DiskerSnapshotHost: View {
             )],
             discoveredApplications: [record]
         )
-        return (bundle, dataPath, history, record)
+        let bundleChanges = FileInventoryChangeSet(
+            rootPath: bundle.path,
+            folderObservationID: bundle.id,
+            previousObservedAt: baselineAt,
+            observedAt: observedAt,
+            volumeDeviceID: bundle.volumeDeviceID,
+            changes: [FileInventoryChange(
+                relativePath: "Contents/Resources/Models/catalog.bin",
+                kind: .resized,
+                logicalDelta: 20_971_520,
+                allocatedDelta: 22_020_096,
+                logicalBytes: 41_943_040,
+                allocatedBytes: 44_040_192
+            )],
+            changedPathCount: 1,
+            omittedChangeCount: 0,
+            netLogicalDelta: 20_971_520,
+            netAllocatedDelta: 22_020_096,
+            symlinkExcludedCount: 2,
+            hasBaseline: true
+        )
+        let dataChanges = FileInventoryChangeSet(
+            rootPath: data.path,
+            folderObservationID: data.id,
+            previousObservedAt: baselineAt,
+            observedAt: observedAt,
+            volumeDeviceID: data.volumeDeviceID,
+            changes: [FileInventoryChange(
+                relativePath: "Training.log",
+                kind: .resized,
+                logicalDelta: 4_194_304,
+                allocatedDelta: 4_456_448,
+                logicalBytes: 8_388_608,
+                allocatedBytes: 8_912_896
+            )],
+            changedPathCount: 1,
+            omittedChangeCount: 0,
+            netLogicalDelta: 4_194_304,
+            netAllocatedDelta: 4_456_448,
+            symlinkExcludedCount: 0,
+            hasBaseline: true
+        )
+        return (bundle, dataPath, history, record, [bundle.path: bundleChanges, data.path: dataChanges])
     }
 
     private func databaseSidecarReviewFixture(
