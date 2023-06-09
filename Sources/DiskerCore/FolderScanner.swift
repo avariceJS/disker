@@ -154,12 +154,14 @@ public enum FolderScanner {
     }
 
     public static func scanWithFileInventories(
-        roots: [URL], shouldCancel: () -> Bool = { Task.isCancelled },
+        roots: [URL], expectedRootIdentities: [String: PersistentRootIdentity] = [:],
+        shouldCancel: () -> Bool = { Task.isCancelled },
         progress: (ScanProgress) -> Void = { _ in }
     ) -> DetailedScanObservation {
         var inventories: [FileInventorySnapshot] = []
         let observation = scanInternal(
-            roots: roots, simulatedDeviceIDsByPath: [:], shouldCancel: shouldCancel,
+            roots: roots, simulatedDeviceIDsByPath: [:], expectedRootIdentities: expectedRootIdentities,
+            shouldCancel: shouldCancel,
             progress: progress, collectFileInventories: true, fileInventories: &inventories
         )
         return DetailedScanObservation(observation: observation, fileInventories: inventories)
@@ -185,6 +187,7 @@ public enum FolderScanner {
 
     private static func scanInternal(
         roots: [URL], simulatedDeviceIDsByPath: [String: UInt64],
+        expectedRootIdentities: [String: PersistentRootIdentity] = [:],
         sandboxedRootAccessOverride: Bool? = nil,
         rootsTrustedWithinSandbox: Set<String> = [],
         shouldCancel: () -> Bool,
@@ -215,6 +218,7 @@ public enum FolderScanner {
             let rootMetadata: stat
             let directoryRootDescriptor: Int32?
             let rootType: UInt32
+            let rootPersistentIdentity: PersistentRootIdentity?
             switch openSelectedRootWithoutFollowingLinks(
                 root.path,
                 scopedAccessGranted: rootAccessIsScoped
@@ -223,10 +227,12 @@ public enum FolderScanner {
                 directoryRootDescriptor = descriptor
                 rootMetadata = metadata
                 rootType = UInt32(S_IFDIR)
+                rootPersistentIdentity = PersistentRootIdentity.read(from: descriptor, path: root.path)
             case .metadata(let metadata):
                 directoryRootDescriptor = nil
                 rootMetadata = metadata
                 rootType = UInt32(metadata.st_mode & S_IFMT)
+                rootPersistentIdentity = nil
             case .symbolicLink:
                 results.append(emptyObservation(root: root, excludedSymlinkCount: 1))
                 continue
@@ -235,6 +241,16 @@ public enum FolderScanner {
                 continue
             case .unavailable:
                 results.append(emptyObservation(root: root, inaccessibleCount: 1))
+                continue
+            }
+            if let expected = expectedRootIdentities[root.standardizedFileURL.path],
+               rootPersistentIdentity != expected {
+                if let directoryRootDescriptor { close(directoryRootDescriptor) }
+                results.append(emptyObservation(
+                    root: root,
+                    volumeDeviceID: UInt64(truncatingIfNeeded: rootMetadata.st_dev),
+                    changedDuringScanCount: 1
+                ))
                 continue
             }
             var rootVolumeDeviceID = UInt64(truncatingIfNeeded: rootMetadata.st_dev)
@@ -688,8 +704,10 @@ public enum FolderScanner {
                     root.path, scopedAccessGranted: rootAccessIsScoped
                 ) {
                 case .openedDirectory(let finalRootFD, let finalRootMetadata):
+                    let finalPersistentIdentity = PersistentRootIdentity.read(from: finalRootFD, path: root.path)
                     close(finalRootFD)
-                    if !sameIdentity(rootMetadata, finalRootMetadata) {
+                    if !sameIdentity(rootMetadata, finalRootMetadata)
+                        || (rootPersistentIdentity != nil && finalPersistentIdentity != rootPersistentIdentity) {
                         scanComplete = false
                         inventoryRootStable = false
                         var rootMetrics = metrics["", default: DirectoryMetrics()]
@@ -735,6 +753,7 @@ public enum FolderScanner {
             let folderResult = FolderObservation(
                 path: root.path,
                 volumeDeviceID: rootVolumeDeviceID,
+                persistentRootIdentity: rootPersistentIdentity,
                 displayName: root.lastPathComponent,
                 logicalBytes: rootLogicalBytes,
                 allocatedBytes: rootAllocatedBytes,
@@ -778,6 +797,7 @@ public enum FolderScanner {
                     folderObservationID: folderResult.id,
                     volumeDeviceID: rootVolumeDeviceID,
                     observedAt: folderResult.finishedAt,
+                    persistentRootIdentity: rootPersistentIdentity,
                     entries: inventoryComplete ? inventoryEntries : [],
                     complete: inventoryComplete,
                     excludedSymlinkCount: excludedSymlinkCount
@@ -854,14 +874,16 @@ public enum FolderScanner {
         inventories[index] = FileInventorySnapshot(
             rootPath: current.rootPath, folderObservationID: current.folderObservationID,
             volumeDeviceID: current.volumeDeviceID,
-            observedAt: current.observedAt, entries: [], complete: false,
+            observedAt: current.observedAt,
+            persistentRootIdentity: current.persistentRootIdentity, entries: [], complete: false,
             excludedSymlinkCount: current.excludedSymlinkCount
         )
     }
 
     private static func markingChangedDuringScan(_ folder: FolderObservation) -> FolderObservation {
         FolderObservation(
-            id: folder.id, path: folder.path, volumeDeviceID: folder.volumeDeviceID, displayName: folder.displayName,
+            id: folder.id, path: folder.path, volumeDeviceID: folder.volumeDeviceID,
+            persistentRootIdentity: folder.persistentRootIdentity, displayName: folder.displayName,
             logicalBytes: folder.logicalBytes, allocatedBytes: folder.allocatedBytes, fileCount: folder.fileCount,
             isFileRoot: folder.isFileRoot,
             fileExtensionSummaries: folder.fileExtensionSummaries,
@@ -901,7 +923,8 @@ public enum FolderScanner {
 
     private static func markingInaccessible(_ folder: FolderObservation) -> FolderObservation {
         FolderObservation(
-            id: folder.id, path: folder.path, volumeDeviceID: folder.volumeDeviceID, displayName: folder.displayName,
+            id: folder.id, path: folder.path, volumeDeviceID: folder.volumeDeviceID,
+            persistentRootIdentity: folder.persistentRootIdentity, displayName: folder.displayName,
             logicalBytes: folder.logicalBytes, allocatedBytes: folder.allocatedBytes, fileCount: folder.fileCount,
             isFileRoot: folder.isFileRoot,
             fileExtensionSummaries: folder.fileExtensionSummaries,

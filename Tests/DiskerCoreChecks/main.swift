@@ -74,6 +74,7 @@ private struct DiskerCoreChecks {
             ("project resource review preserves scope and coverage evidence", testProjectResourceReview),
             ("project linked growth compares exact paths independently", testProjectResourceGrowthReview),
             ("bounded read-only selected-scope bookmarks", testSelectedScopeBookmarks),
+            ("persistent root identity fences replaced selected directories", testPersistentRootIdentity),
             ("bounded persisted selected-root monitoring choices", testStorageMonitoringPreferences),
             ("typed no-follow selected-scope path probe", testSelectedScopePathProbeStatuses),
             ("local stores reject symlinks", testLocalStoresRejectSymlinks),
@@ -3208,6 +3209,24 @@ private struct DiskerCoreChecks {
             let scopeStoreAfterMismatch = try Data(contentsOf: storeURL)
             try expect(rejectedMovedBookmark && !attemptedUnsafeRefresh,
                        "a moved stale bookmark must fail before refreshing data for another path")
+            var validatedIdentityBeforeRefresh = false
+            var attemptedIdentityRefresh = false
+            do {
+                _ = try SelectedScopeBookmarkStore.resolve(
+                    loaded[0], at: storeURL,
+                    resolvingBookmarkData: { _ in (url: root, isStale: true) },
+                    creatingBookmarkData: { _ in
+                        attemptedIdentityRefresh = true
+                        return loaded[0].bookmarkData
+                    },
+                    validateResolvedURL: { _ in
+                        validatedIdentityBeforeRefresh = true
+                        throw SelectedScopeBookmarkError.persistentRootIdentityChanged
+                    }
+                )
+            } catch SelectedScopeBookmarkError.persistentRootIdentityChanged {}
+            try expect(validatedIdentityBeforeRefresh && !attemptedIdentityRefresh,
+                       "stale bookmark data must not refresh before persistent root identity validation")
             try expect(scopeStoreAfterMismatch == scopeStoreBeforeMismatch,
                        "rejecting a moved bookmark must preserve the saved bookmark and path association")
             try expect(!SelectedScopePathProbe.isAvailable(
@@ -3334,6 +3353,40 @@ private struct DiskerCoreChecks {
             try expect(fullStoreAfterRefresh == fullStoreBeforeRefresh
                        && fullStoreEntriesAfterRefresh.count == SelectedScopeBookmarkStore.maximumBookmarkCount,
                        "a rejected stale refresh must preserve the bounded bookmark store")
+        }
+    }
+
+    private static func testPersistentRootIdentity() throws {
+        try withTemporaryDirectory { base in
+            let root = base.appendingPathComponent("observed-root", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+            guard let firstIdentity = PersistentRootIdentity.read(from: root.path) else {
+                throw CheckFailure.assertion("the synthetic test volume should provide a persistent root identity")
+            }
+            let alias = base.appendingPathComponent("root-alias", isDirectory: true)
+            try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: root)
+            try expect(PersistentRootIdentity.read(from: alias.path) == nil,
+                       "persistent identity lookup must reject a selected-root symlink")
+            let saved = try SelectedScopeBookmarkStore.remember([root], at: base.appendingPathComponent("scopes.json"))
+            try expect(saved.first?.persistentRootIdentity == firstIdentity,
+                       "a selected directory bookmark should retain its persistent object identity")
+
+            let moved = base.appendingPathComponent("previous-root", isDirectory: true)
+            try FileManager.default.moveItem(at: root, to: moved)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+            let replacementIdentity = PersistentRootIdentity.read(from: root.path)
+            try expect(replacementIdentity != nil && replacementIdentity != firstIdentity,
+                       "a replacement at the same lexical path should have a different persistent object identity")
+
+            let detailed = FolderScanner.scanWithFileInventories(
+                roots: [root], expectedRootIdentities: [root.path: firstIdentity]
+            )
+            guard let observation = detailed.observation.folders.first else {
+                throw CheckFailure.assertion("a changed root should retain a partial observation")
+            }
+            try expect(!observation.complete && observation.changedDuringScanCount > 0
+                       && detailed.fileInventories.isEmpty,
+                       "scanner identity fencing must reject a replaced root before inventory traversal")
         }
     }
 
@@ -5970,6 +6023,29 @@ private struct DiskerCoreChecks {
                        && !FileManager.default.fileExists(atPath: unsafeSnapshotStoreURL.path),
                        "inventory recording must reject traversal-like relative paths before writing a baseline")
 
+            let identityStoreURL = temporaryRoot.appendingPathComponent("identity-inventory.plist")
+            let rootIdentityA = PersistentRootIdentity(
+                volumeUUID: "synthetic-volume", objectNumber: 11, generation: 1, objectType: UInt32(S_IFDIR)
+            )
+            let rootIdentityB = PersistentRootIdentity(
+                volumeUUID: "synthetic-volume", objectNumber: 22, generation: 1, objectType: UInt32(S_IFDIR)
+            )
+            _ = try FileInventoryStore.record(FileInventorySnapshot(
+                rootPath: "/synthetic/replaced-project", volumeDeviceID: 1,
+                observedAt: Date(timeIntervalSince1970: 10), persistentRootIdentity: rootIdentityA,
+                entries: [FileInventoryEntry(relativePath: "model.bin", logicalBytes: 10, allocatedBytes: 16)],
+                complete: true, excludedSymlinkCount: 0
+            ), at: identityStoreURL)
+            let replacementReport = try FileInventoryStore.record(FileInventorySnapshot(
+                rootPath: "/synthetic/replaced-project", volumeDeviceID: 1,
+                observedAt: Date(timeIntervalSince1970: 20), persistentRootIdentity: rootIdentityB,
+                entries: [FileInventoryEntry(relativePath: "model.bin", logicalBytes: 900, allocatedBytes: 904)],
+                complete: true, excludedSymlinkCount: 0
+            ), at: identityStoreURL)
+            try expect(replacementReport?.hasBaseline == false
+                       && replacementReport?.netLogicalDelta == nil,
+                       "file-inventory growth must start a new baseline when the selected root identity changes")
+
             let legacyStoreURL = temporaryRoot.appendingPathComponent("legacy/Disker/file-inventory.plist")
             try FileManager.default.createDirectory(
                 at: legacyStoreURL.deletingLastPathComponent(), withIntermediateDirectories: true
@@ -6907,6 +6983,29 @@ private struct DiskerCoreChecks {
         try expect(ObservationComparison.completeFolderSeries(for: volumeAReturned, in: volumeHistory).map(\.id)
                    == [volumeAReturned.id],
                    "folder history must start a new series after the mounted volume identity changes")
+        let rootIdentityA = PersistentRootIdentity(
+            volumeUUID: "synthetic-volume", objectNumber: 101, generation: 1, objectType: UInt32(S_IFDIR)
+        )
+        let rootIdentityB = PersistentRootIdentity(
+            volumeUUID: "synthetic-volume", objectNumber: 202, generation: 1, objectType: UInt32(S_IFDIR)
+        )
+        let originalRoot = syntheticFolder(
+            path: "/selected/replaced", bytes: 100, complete: true, volumeDeviceID: 9,
+            persistentRootIdentity: rootIdentityA
+        )
+        let replacementRoot = syntheticFolder(
+            path: "/selected/replaced", bytes: 900, complete: true, volumeDeviceID: 9,
+            persistentRootIdentity: rootIdentityB
+        )
+        let replacedRootHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: .now, folders: [originalRoot], cancelled: false),
+            ScanObservation(startedAt: .now, folders: [replacementRoot], cancelled: false),
+        ])
+        try expect(ObservationComparison.previousCompleteFolder(for: replacementRoot, in: replacedRootHistory) == nil,
+                   "same-path history must not bridge a replaced directory on the same volume")
+        try expect(ObservationComparison.completeFolderSeries(for: replacementRoot, in: replacedRootHistory)
+                   == [replacementRoot],
+                   "same-volume replacement must start a new complete-observation series")
         try expect(ObservationComparison.previousCompleteFolder(for: laterIncomplete, in: history) == nil, "incomplete current observations must not produce a growth comparison")
         try expect(ObservationComparison.completeFolderSeries(for: laterIncomplete, in: history).isEmpty,
                    "an incomplete current observation must not be plotted as a complete growth series")
@@ -8016,10 +8115,12 @@ private struct DiskerCoreChecks {
 
     private static func syntheticFolder(
         path: String, bytes: Int64, complete: Bool, volumeDeviceID: UInt64? = nil,
+        persistentRootIdentity: PersistentRootIdentity? = nil,
         finishedAt: Date = .now
     ) -> FolderObservation {
         FolderObservation(
             path: path, volumeDeviceID: volumeDeviceID,
+            persistentRootIdentity: persistentRootIdentity,
             displayName: URL(fileURLWithPath: path).lastPathComponent,
             logicalBytes: bytes, allocatedBytes: bytes, fileCount: 1,
             inaccessibleCount: complete ? 0 : 1, finishedAt: finishedAt, complete: complete

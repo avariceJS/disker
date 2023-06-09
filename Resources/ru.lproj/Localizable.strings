@@ -866,3 +866,10 @@
 "Allocated estimate change: %@ since %@" = "Изменение оценки выделенного места: %@ с %@";
 "No comparable complete prior measurement is available. A second complete scan of this exact path establishes its history." = "Нет сопоставимого предыдущего полного измерения. Второе полное сканирование этого точного пути позволит начать историю.";
 "Growth is unknown because the latest scan was partial." = "Изменение размера неизвестно: последнее сканирование было неполным.";
+"This saved location has no verified persistent identity. Select the exact folder again before monitoring it." = "Для сохранённого расположения не подтверждён постоянный идентификатор. Перед включением мониторинга выберите эту точную папку повторно.";
+"The selected folder's persistent identity changed or is unavailable. Select this exact folder again to establish a new baseline." = "Постоянный идентификатор выбранной папки изменился или недоступен. Выберите эту точную папку повторно, чтобы начать новую историю измерений.";
+"Automatic monitoring needs a verified persistent folder identity. Select this exact folder again on a volume that supports persistent object IDs." = "Для автоматического мониторинга нужен подтверждённый постоянный идентификатор папки. Выберите эту точную папку повторно на томе, который поддерживает постоянные идентификаторы объектов.";
+"Monitoring paused because the saved folder identity could not be verified. Select the exact folder again before resuming." = "Мониторинг приостановлен: не удалось подтвердить идентификатор сохранённой папки. Перед возобновлением выберите эту точную папку повторно.";
+"Monitoring is waiting for this selected folder to become available. Disker will retry during this session. %@" = "Мониторинг ожидает, когда выбранная папка станет доступна. Disker повторит проверку в этом сеансе. %@";
+"The saved path or its volume is currently unavailable." = "Сохранённый путь или его том сейчас недоступен.";
+"macOS could not verify access to the selected root and its parent path." = "macOS не удалось подтвердить доступ к выбранной папке и её родительскому пути.";

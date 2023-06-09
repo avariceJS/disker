@@ -1181,7 +1181,13 @@ final class DashboardModel {
                     guard let bookmark = bookmarksByPath[path] else {
                         throw SelectedScopeBookmarkError.bookmarkUnavailable("No saved read-only scope exists for \(path).")
                     }
-                    let resolved = try SelectedScopeBookmarkStore.resolve(bookmark, at: selectedScopeBookmarkStoreURL)
+                    let resolved = try SelectedScopeBookmarkStore.resolve(
+                        bookmark,
+                        at: selectedScopeBookmarkStoreURL,
+                        validateResolvedURL: { resolved in
+                            try self.validatePersistentIdentity(of: bookmark, at: resolved, required: false)
+                        }
+                    )
                     guard SelectedScopeBookmarkStore.isSameSelectedPath(resolved, as: path) else {
                         throw SelectedScopeBookmarkError.bookmarkPathChanged(
                             expected: path, resolved: resolved.standardizedFileURL.path
@@ -1488,6 +1494,56 @@ final class DashboardModel {
         }
     }
 
+    private func validatePersistentIdentity(
+        of bookmark: SelectedScopeBookmark, at url: URL, required: Bool
+    ) throws {
+        guard let expected = bookmark.persistentRootIdentity else {
+            guard required else { return }
+            throw SelectedScopeBookmarkError.persistentRootIdentityUnavailable
+        }
+        let accessGranted = url.startAccessingSecurityScopedResource()
+        defer { if accessGranted { url.stopAccessingSecurityScopedResource() } }
+        let status = SelectedScopePathProbe.probe(selectedURL: url)
+        switch status {
+        case .missingOrUnreachable:
+            throw SelectedScopeBookmarkError.monitoringScopeUnavailableTemporarily(
+                NSLocalizedString(
+                    "The saved path or its volume is currently unavailable.",
+                    comment: "A monitored path or its mounted volume is temporarily missing"
+                )
+            )
+        case .permissionOrAccessUnknown, .availableDirectoryWithinBookmarkScope:
+            throw SelectedScopeBookmarkError.monitoringScopeUnavailableTemporarily(
+                NSLocalizedString(
+                    "macOS could not verify access to the selected root and its parent path.",
+                    comment: "Filesystem access to a saved monitoring scope is temporarily unknown"
+                )
+            )
+        case .availableDirectory:
+            break
+        case .symbolicLink, .notDirectory, .invalidBookmark, .staleBookmark, .mismatchedBookmark:
+            throw SelectedScopeBookmarkError.persistentRootIdentityChanged
+        }
+        guard let current = PersistentRootIdentity.read(from: url.standardizedFileURL.path) else {
+            throw SelectedScopeBookmarkError.persistentRootIdentityUnavailable
+        }
+        guard current == expected else { throw SelectedScopeBookmarkError.persistentRootIdentityChanged }
+    }
+
+    private func isTemporarilyUnavailable(
+        _ error: Error, for bookmark: SelectedScopeBookmark, path: String
+    ) -> Bool {
+        if let scopeError = error as? SelectedScopeBookmarkError,
+           scopeError.isTransientMonitoringIssue { return true }
+        switch SelectedScopePathProbe.probe(at: path, using: bookmark) {
+        case .missingOrUnreachable, .permissionOrAccessUnknown, .availableDirectoryWithinBookmarkScope:
+            return true
+        case .availableDirectory, .notDirectory, .symbolicLink, .invalidBookmark,
+             .staleBookmark, .mismatchedBookmark:
+            return false
+        }
+    }
+
     func rescanRememberedFolder(_ path: String) {
         rescanRememberedFolder(path, origin: .manual)
     }
@@ -1522,7 +1578,16 @@ final class DashboardModel {
             return
         }
         do {
-            let url = try SelectedScopeBookmarkStore.resolve(bookmark, at: selectedScopeBookmarkStoreURL)
+            let url = try SelectedScopeBookmarkStore.resolve(
+                bookmark,
+                at: selectedScopeBookmarkStoreURL,
+                validateResolvedURL: { resolved in
+                    try self.validatePersistentIdentity(
+                        of: bookmark, at: resolved,
+                        required: origin.isMonitoring || self.monitoredScopePaths.contains(path)
+                    )
+                }
+            )
             do {
                 rememberedScopes = try SelectedScopeBookmarkStore.load(from: selectedScopeBookmarkStoreURL)
             } catch {
@@ -1530,7 +1595,9 @@ final class DashboardModel {
             }
             scan([url], origin: origin)
         } catch {
-            if origin.isMonitoring {
+            if isTemporarilyUnavailable(error, for: bookmark, path: path) {
+                storageEventWatcherErrors[path] = error.localizedDescription
+            } else if origin.isMonitoring || monitoredScopePaths.contains(path) {
                 pauseStorageMonitoring(path, reason: "Saved access needs attention. Choose this folder again, then resume monitoring.")
             }
             errorMessage = error.localizedDescription
@@ -1541,7 +1608,13 @@ final class DashboardModel {
         guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
         if let bookmark = rememberedScopes.first(where: { $0.path == path }) {
             do {
-                let resolvedURL = try SelectedScopeBookmarkStore.resolve(bookmark, at: selectedScopeBookmarkStoreURL)
+                let resolvedURL = try SelectedScopeBookmarkStore.resolve(
+                    bookmark,
+                    at: selectedScopeBookmarkStoreURL,
+                    validateResolvedURL: { resolved in
+                        try self.validatePersistentIdentity(of: bookmark, at: resolved, required: false)
+                    }
+                )
                 do {
                     rememberedScopes = try SelectedScopeBookmarkStore.load(from: selectedScopeBookmarkStoreURL)
                 } catch {
@@ -1618,6 +1691,13 @@ final class DashboardModel {
         let suppliedApplicationIdentityPaths = Set(applicationBundleIdentities.keys.map {
             URL(fileURLWithPath: $0).standardizedFileURL.path
         })
+        let expectedRootIdentities = Dictionary(
+            uniqueKeysWithValues: rememberedScopes.compactMap { bookmark -> (String, PersistentRootIdentity)? in
+                guard urls.contains(where: { $0.standardizedFileURL.path == bookmark.path }),
+                      let identity = bookmark.persistentRootIdentity else { return nil }
+                return (bookmark.path, identity)
+            }
+        )
         let selectedApplicationBundlePaths = Set(urls.compactMap { url -> String? in
             guard url.pathExtension.lowercased() == "app" else { return nil }
             let path = url.standardizedFileURL.path
@@ -1640,7 +1720,9 @@ final class DashboardModel {
                     }
                 }
             }
-            let detailed = FolderScanner.scanWithFileInventories(roots: urls, progress: { [weak self] progress in
+            let detailed = FolderScanner.scanWithFileInventories(
+                roots: urls, expectedRootIdentities: expectedRootIdentities,
+                progress: { [weak self] progress in
                 Task { @MainActor [weak self] in
                     guard let self, self.historyGeneration.accepts(generation) else { return }
                     self.currentPath = progress.currentPath
@@ -1759,7 +1841,14 @@ final class DashboardModel {
 
     func toggleStorageMonitoring(_ path: String, enabled: Bool) {
         let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
-        guard rememberedScopes.contains(where: { $0.path == normalizedPath }) else { return }
+        guard let selectedBookmark = rememberedScopes.first(where: { $0.path == normalizedPath }) else { return }
+        if enabled && (selectedBookmark.persistentRootIdentity?.objectType != UInt32(S_IFDIR)) {
+            errorMessage = NSLocalizedString(
+                "Automatic monitoring needs a verified persistent folder identity. Select this exact folder again on a volume that supports persistent object IDs.",
+                comment: "Monitoring cannot be enabled until the exact folder identity is verified"
+            )
+            return
+        }
         var updatedPaths = monitoredScopePaths
         if enabled { updatedPaths.insert(normalizedPath) }
         else { updatedPaths.remove(normalizedPath) }
@@ -1889,7 +1978,13 @@ final class DashboardModel {
                 continue
             }
             do {
-                let url = try SelectedScopeBookmarkStore.resolve(bookmark, at: selectedScopeBookmarkStoreURL)
+                let url = try SelectedScopeBookmarkStore.resolve(
+                    bookmark,
+                    at: selectedScopeBookmarkStoreURL,
+                    validateResolvedURL: { resolved in
+                        try self.validatePersistentIdentity(of: bookmark, at: resolved, required: true)
+                    }
+                )
                 let isSandboxed = try SelectedScopeBookmarkStore.requiresSecurityScopedAccess()
                 let accessGranted = url.startAccessingSecurityScopedResource()
                 guard !isSandboxed || accessGranted else {
@@ -1905,7 +2000,21 @@ final class DashboardModel {
                 storageEventWatchers[path] = watcher
                 storageEventWatcherErrors.removeValue(forKey: path)
             } catch {
-                storageEventWatcherErrors[path] = "Event monitoring unavailable; periodic scans remain available. \(error.localizedDescription)"
+                if isTemporarilyUnavailable(error, for: bookmark, path: path) {
+                    storageEventWatcherErrors[path] =
+                        "Event monitoring is waiting for the selected folder. Periodic scans will retry. \(error.localizedDescription)"
+                } else if let identityError = error as? SelectedScopeBookmarkError,
+                          identityError.isPersistentRootIdentityError {
+                    pauseStorageMonitoring(
+                        path,
+                        reason: NSLocalizedString(
+                            "Monitoring paused because the saved folder identity could not be verified. Select the exact folder again before resuming.",
+                            comment: "Automatic monitoring paused pending exact folder re-selection"
+                        )
+                    )
+                } else {
+                    storageEventWatcherErrors[path] = "Event monitoring unavailable; periodic scans remain available. \(error.localizedDescription)"
+                }
             }
         }
     }

@@ -222,6 +222,14 @@ public enum ObservationComparison {
     private static func sameFolderVolume(
         _ lhs: FolderObservation, _ rhs: FolderObservation
     ) -> Bool {
+        switch (lhs.persistentRootIdentity, rhs.persistentRootIdentity) {
+        case let (left?, right?):
+            guard left == right else { return false }
+        case (nil, nil):
+            break
+        default:
+            return false
+        }
         switch (lhs.volumeDeviceID, rhs.volumeDeviceID) {
         case let (left?, right?): return left == right
         case (nil, nil): return true

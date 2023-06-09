@@ -133,6 +133,10 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     /// symlink and prevents history from crossing a different mounted volume
     /// at the same path while this identifier remains stable.
     public let volumeDeviceID: UInt64?
+    /// Stable selected-directory identity, populated only when the underlying
+    /// volume exposes a persistent object ID. It prevents same-path history
+    /// from crossing to a replaced directory on supported volumes.
+    public let persistentRootIdentity: PersistentRootIdentity?
     public let displayName: String
     public let logicalBytes: Int64
     public let allocatedBytes: Int64
@@ -192,7 +196,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     public let selectedAsApplicationBundle: Bool
 
     public init(
-        id: UUID = UUID(), path: String, volumeDeviceID: UInt64? = nil, displayName: String,
+        id: UUID = UUID(), path: String, volumeDeviceID: UInt64? = nil,
+        persistentRootIdentity: PersistentRootIdentity? = nil, displayName: String,
         logicalBytes: Int64, allocatedBytes: Int64, fileCount: Int,
         isFileRoot: Bool = false,
         fileExtensionSummaries: [FileExtensionUsage] = [],
@@ -224,6 +229,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         self.id = id
         self.path = path
         self.volumeDeviceID = volumeDeviceID
+        self.persistentRootIdentity = persistentRootIdentity
         self.displayName = displayName
         self.logicalBytes = logicalBytes
         self.allocatedBytes = allocatedBytes
@@ -259,7 +265,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, path, volumeDeviceID, displayName, logicalBytes, allocatedBytes, fileCount, isFileRoot
+        case id, path, volumeDeviceID, persistentRootIdentity, displayName, logicalBytes, allocatedBytes, fileCount, isFileRoot
         case fileExtensionSummaries, fileExtensionSummariesTruncated
         case otherFileExtensionUsage, otherFileExtensionCategoryCount
         case inaccessibleCount, excludedSymlinkCount, excludedSymlinkPaths, excludedSymlinkPathsTruncated
@@ -280,6 +286,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         id = try values.decode(UUID.self, forKey: .id)
         path = try values.decode(String.self, forKey: .path)
         volumeDeviceID = try values.decodeIfPresent(UInt64.self, forKey: .volumeDeviceID)
+        persistentRootIdentity = try values.decodeIfPresent(PersistentRootIdentity.self, forKey: .persistentRootIdentity)
         displayName = try values.decode(String.self, forKey: .displayName)
         logicalBytes = try values.decode(Int64.self, forKey: .logicalBytes)
         allocatedBytes = try values.decode(Int64.self, forKey: .allocatedBytes)
@@ -320,6 +327,7 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         try values.encode(id, forKey: .id)
         try values.encode(path, forKey: .path)
         try values.encodeIfPresent(volumeDeviceID, forKey: .volumeDeviceID)
+        try values.encodeIfPresent(persistentRootIdentity, forKey: .persistentRootIdentity)
         try values.encode(displayName, forKey: .displayName)
         try values.encode(logicalBytes, forKey: .logicalBytes)
         try values.encode(allocatedBytes, forKey: .allocatedBytes)
@@ -358,7 +366,8 @@ public struct FolderObservation: Codable, Equatable, Identifiable, Sendable {
         _ identity: ApplicationBundleIdentity?, selectedAsApplicationBundle: Bool
     ) -> FolderObservation {
         FolderObservation(
-            id: id, path: path, volumeDeviceID: volumeDeviceID, displayName: displayName,
+            id: id, path: path, volumeDeviceID: volumeDeviceID,
+            persistentRootIdentity: persistentRootIdentity, displayName: displayName,
             logicalBytes: logicalBytes, allocatedBytes: allocatedBytes,
             fileCount: fileCount, isFileRoot: isFileRoot,
             fileExtensionSummaries: fileExtensionSummaries,
@@ -507,6 +516,7 @@ public struct FileInventorySnapshot: Codable, Equatable, Sendable {
     public let rootPath: String
     public let folderObservationID: UUID
     public let volumeDeviceID: UInt64?
+    public let persistentRootIdentity: PersistentRootIdentity?
     public let observedAt: Date
     public let entries: [FileInventoryEntry]
     /// True when every regular file in the selected no-follow scope was observed
@@ -515,10 +525,12 @@ public struct FileInventorySnapshot: Codable, Equatable, Sendable {
     public let excludedSymlinkCount: Int
 
     public init(rootPath: String, folderObservationID: UUID = UUID(), volumeDeviceID: UInt64?, observedAt: Date,
+                persistentRootIdentity: PersistentRootIdentity? = nil,
                 entries: [FileInventoryEntry], complete: Bool, excludedSymlinkCount: Int) {
         self.rootPath = rootPath
         self.folderObservationID = folderObservationID
         self.volumeDeviceID = volumeDeviceID
+        self.persistentRootIdentity = persistentRootIdentity
         self.observedAt = observedAt
         self.entries = entries
         self.complete = complete

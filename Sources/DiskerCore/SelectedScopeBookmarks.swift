@@ -8,13 +8,21 @@ public struct SelectedScopeBookmark: Codable, Equatable, Identifiable, Sendable 
     public let path: String
     public let bookmarkData: Data
     public let savedAt: Date
+    /// Persistent identity of a supported selected directory. Missing values
+    /// decode from older stores and require a fresh selection before automatic
+    /// monitoring can resume.
+    public let persistentRootIdentity: PersistentRootIdentity?
 
     public var id: String { path }
 
-    public init(path: String, bookmarkData: Data, savedAt: Date = .now) {
+    public init(
+        path: String, bookmarkData: Data, savedAt: Date = .now,
+        persistentRootIdentity: PersistentRootIdentity? = nil
+    ) {
         self.path = path
         self.bookmarkData = bookmarkData
         self.savedAt = savedAt
+        self.persistentRootIdentity = persistentRootIdentity
     }
 }
 
@@ -22,6 +30,22 @@ public enum SelectedScopeBookmarkError: Error, LocalizedError {
     case tooManyBookmarks
     case bookmarkUnavailable(String)
     case bookmarkPathChanged(expected: String, resolved: String)
+    case persistentRootIdentityUnavailable
+    case persistentRootIdentityChanged
+    case monitoringScopeUnavailableTemporarily(String)
+
+    public var isPersistentRootIdentityError: Bool {
+        switch self {
+        case .persistentRootIdentityUnavailable, .persistentRootIdentityChanged: true
+        case .tooManyBookmarks, .bookmarkUnavailable, .bookmarkPathChanged,
+             .monitoringScopeUnavailableTemporarily: false
+        }
+    }
+
+    public var isTransientMonitoringIssue: Bool {
+        if case .monitoringScopeUnavailableTemporarily = self { return true }
+        return false
+    }
 
     public var errorDescription: String? {
         switch self {
@@ -31,6 +55,24 @@ public enum SelectedScopeBookmarkError: Error, LocalizedError {
             return "Disker could not restore access to this selected folder. Choose it again to grant access. \(reason)"
         case .bookmarkPathChanged(let expected, let resolved):
             return "This saved folder now resolves to a different location (\(resolved)) than the selected path (\(expected)). Choose the intended folder again to update it."
+        case .persistentRootIdentityUnavailable:
+            return NSLocalizedString(
+                "This saved location has no verified persistent identity. Select the exact folder again before monitoring it.",
+                comment: "A saved folder needs a fresh selection before automatic monitoring"
+            )
+        case .persistentRootIdentityChanged:
+            return NSLocalizedString(
+                "The selected folder's persistent identity changed or is unavailable. Select this exact folder again to establish a new baseline.",
+                comment: "A selected folder identity changed and needs a new baseline"
+            )
+        case .monitoringScopeUnavailableTemporarily(let reason):
+            return String.localizedStringWithFormat(
+                NSLocalizedString(
+                    "Monitoring is waiting for this selected folder to become available. Disker will retry during this session. %@",
+                    comment: "Monitoring defers while the authorized volume or access is temporarily unavailable"
+                ),
+                reason
+            )
         }
     }
 }
@@ -76,9 +118,13 @@ public enum SelectedScopeBookmarkStore {
             } catch {
                 throw SelectedScopeBookmarkError.bookmarkUnavailable(error.localizedDescription)
             }
+            let accessGranted = url.startAccessingSecurityScopedResource()
+            let persistentRootIdentity = PersistentRootIdentity.read(from: url.standardizedFileURL.path)
+            if accessGranted { url.stopAccessingSecurityScopedResource() }
             updates[url.standardizedFileURL.path] = SelectedScopeBookmark(
                 path: url.standardizedFileURL.path,
-                bookmarkData: data
+                bookmarkData: data,
+                persistentRootIdentity: persistentRootIdentity
             )
         }
 
@@ -98,7 +144,11 @@ public enum SelectedScopeBookmarkStore {
 
     /// Resolves a previously approved location. A refreshed stale bookmark is
     /// persisted before the URL is returned for the caller's explicit action.
-    public static func resolve(_ bookmark: SelectedScopeBookmark, at fileURL: URL? = nil) throws -> URL {
+    public static func resolve(
+        _ bookmark: SelectedScopeBookmark,
+        at fileURL: URL? = nil,
+        validateResolvedURL: (URL) throws -> Void = { _ in }
+    ) throws -> URL {
         try resolve(
             bookmark,
             at: fileURL,
@@ -118,7 +168,8 @@ public enum SelectedScopeBookmarkStore {
                     includingResourceValuesForKeys: nil,
                     relativeTo: nil
                 )
-            }
+            },
+            validateResolvedURL: validateResolvedURL
         )
     }
 
@@ -129,7 +180,8 @@ public enum SelectedScopeBookmarkStore {
         _ bookmark: SelectedScopeBookmark,
         at fileURL: URL? = nil,
         resolvingBookmarkData: (Data) throws -> (url: URL, isStale: Bool),
-        creatingBookmarkData: (URL) throws -> Data
+        creatingBookmarkData: (URL) throws -> Data,
+        validateResolvedURL: (URL) throws -> Void = { _ in }
     ) throws -> URL {
         do {
             let resolution = try resolvingBookmarkData(bookmark.bookmarkData)
@@ -142,6 +194,7 @@ public enum SelectedScopeBookmarkStore {
                     expected: bookmark.path, resolved: resolvedPath
                 )
             }
+            try validateResolvedURL(url)
             guard resolution.isStale else { return url }
 
             var bookmarks = try load(from: fileURL)
@@ -151,7 +204,9 @@ public enum SelectedScopeBookmarkStore {
             }
             let refreshed = try creatingBookmarkData(url)
             let refreshedBookmark = SelectedScopeBookmark(
-                path: resolvedPath, bookmarkData: refreshed
+                path: resolvedPath,
+                bookmarkData: refreshed,
+                persistentRootIdentity: bookmark.persistentRootIdentity
             )
             if let index = existingIndex {
                 bookmarks[index] = refreshedBookmark

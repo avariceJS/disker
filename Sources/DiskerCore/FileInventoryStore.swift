@@ -150,6 +150,7 @@ public enum FileInventoryStore {
         let rootPath: String
         let folderObservationID: UUID
         let volumeDeviceID: UInt64?
+        let persistentRootIdentity: PersistentRootIdentity?
         let observedAt: Date
         let complete: Bool
         let excludedSymlinkCount: Int
@@ -160,6 +161,7 @@ public enum FileInventoryStore {
             case rootPath
             case folderObservationID
             case volumeDeviceID
+            case persistentRootIdentity
             case observedAt
             case complete
             case excludedSymlinkCount
@@ -171,6 +173,7 @@ public enum FileInventoryStore {
             rootPath = snapshot.rootPath
             folderObservationID = snapshot.folderObservationID
             volumeDeviceID = snapshot.volumeDeviceID
+            persistentRootIdentity = snapshot.persistentRootIdentity
             observedAt = snapshot.observedAt
             complete = snapshot.complete
             excludedSymlinkCount = snapshot.excludedSymlinkCount
@@ -197,6 +200,7 @@ public enum FileInventoryStore {
             rootPath = decodedRootPath
             folderObservationID = try container.decode(UUID.self, forKey: .folderObservationID)
             volumeDeviceID = try container.decodeIfPresent(UInt64.self, forKey: .volumeDeviceID)
+            persistentRootIdentity = try container.decodeIfPresent(PersistentRootIdentity.self, forKey: .persistentRootIdentity)
             observedAt = try container.decode(Date.self, forKey: .observedAt)
             complete = try container.decode(Bool.self, forKey: .complete)
             excludedSymlinkCount = decodedSymlinkCount
@@ -214,6 +218,7 @@ public enum FileInventoryStore {
                 folderObservationID: folderObservationID,
                 volumeDeviceID: volumeDeviceID,
                 observedAt: observedAt,
+                persistentRootIdentity: persistentRootIdentity,
                 entries: try PackedInventoryEntries.decode(entryPayload, entryCount: entryCount),
                 complete: complete,
                 excludedSymlinkCount: excludedSymlinkCount
@@ -404,7 +409,8 @@ public enum FileInventoryStore {
             () -> (FileInventoryChangeSet, Bool) in
             let previous: FileInventorySnapshot?
             if let value = previousStored,
-               value.complete, value.volumeDeviceID == snapshot.volumeDeviceID {
+               value.complete, value.volumeDeviceID == snapshot.volumeDeviceID,
+               samePersistentRootIdentity(value.persistentRootIdentity, snapshot.persistentRootIdentity) {
                 do { previous = try value.materialize() }
                 catch { throw HistoryDecodeError.invalidHistory(error.localizedDescription) }
             } else {
@@ -412,7 +418,10 @@ public enum FileInventoryStore {
             }
             stageObserver?(.afterBaselineDecode)
             let report = compare(snapshot, with: previous)
-            return (report, previousStored.map { $0.volumeDeviceID != snapshot.volumeDeviceID } ?? false)
+            return (report, previousStored.map {
+                $0.volumeDeviceID != snapshot.volumeDeviceID
+                    || !samePersistentRootIdentity($0.persistentRootIdentity, snapshot.persistentRootIdentity)
+            } ?? false)
         }()
         previousStored = nil
         stageObserver?(.afterComparison)
@@ -448,6 +457,16 @@ public enum FileInventoryStore {
             trendPoints: trendPoints,
             sameSizeCandidates: sameSizeCandidates
         )
+    }
+
+    private static func samePersistentRootIdentity(
+        _ lhs: PersistentRootIdentity?, _ rhs: PersistentRootIdentity?
+    ) -> Bool {
+        switch (lhs, rhs) {
+        case let (left?, right?): left == right
+        case (nil, nil): true
+        default: false
+        }
     }
 
     private static func compare(

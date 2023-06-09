@@ -58,6 +58,9 @@ struct DashboardModelMonitoringCheckHost: View {
                         try await Self.runEventTriggeredScanCheck(
                             stateDirectory: runDirectory.appendingPathComponent("event-scan", isDirectory: true)
                         )
+                        try await Self.runPersistentRootReplacementMonitoringCheck(
+                            stateDirectory: runDirectory.appendingPathComponent("root-replacement", isDirectory: true)
+                        )
                         try await Self.runApplicationBundleMonitoringCheck(
                             stateDirectory: runDirectory.appendingPathComponent("application-bundle", isDirectory: true)
                         )
@@ -67,7 +70,7 @@ struct DashboardModelMonitoringCheckHost: View {
                         try await Self.runProjectResourceWorkflowCheck(
                             stateDirectory: runDirectory.appendingPathComponent("project-resource-workflow", isDirectory: true)
                         )
-                        try writeResult("PASS DashboardModel monitor lifecycle, event-triggered growth scan, opt-out, re-opt-in baseline, scheduled scan, incomplete-root pause/resume, app-profile retention with signature claims withheld during monitoring rescans, restored monitoring reconciliation after relaunch, and coordinated project-location measurement with exact-path growth explanation")
+                        try writeResult("PASS DashboardModel monitor lifecycle, event-triggered growth scan, opt-out, re-opt-in baseline, scheduled scan, same-path root replacement identity fence, incomplete-root pause/resume, app-profile retention with signature claims withheld during monitoring rescans, restored monitoring reconciliation after relaunch, and coordinated project-location measurement with exact-path growth explanation")
                     }
                 } catch {
                     try? writeResult("FAIL \(error.localizedDescription)")
@@ -367,6 +370,69 @@ struct DashboardModelMonitoringCheckHost: View {
 
         model.setStorageMonitoringSessionOpen(false)
         model.isScanning = false
+    }
+
+    @MainActor
+    private static func runPersistentRootReplacementMonitoringCheck(stateDirectory: URL) async throws {
+        let root = stateDirectory.appendingPathComponent("SelectedRoot", isDirectory: true)
+        let priorRoot = stateDirectory.appendingPathComponent("PreviousSelectedRoot", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: stateDirectory) }
+        try Data(repeating: 0x41, count: 64).write(to: root.appendingPathComponent("baseline.bin"))
+
+        let observationsURL = stateDirectory.appendingPathComponent("observations.json")
+        let inventoryURL = stateDirectory.appendingPathComponent("file-inventory.plist")
+        let bookmarksURL = stateDirectory.appendingPathComponent("selected-scopes.json")
+        let preferencesURL = stateDirectory.appendingPathComponent("storage-monitoring.json")
+        let rootPath = root.standardizedFileURL.path
+        let bookmarks = try SelectedScopeBookmarkStore.remember([root], at: bookmarksURL)
+        guard bookmarks.first?.persistentRootIdentity != nil else {
+            throw failure("The synthetic selected root did not receive a persistent filesystem identity.")
+        }
+        let model = DashboardModel(storeURLs: DashboardModelStoreURLs(
+            observations: observationsURL,
+            fileInventory: inventoryURL,
+            selectedScopeBookmarks: bookmarksURL,
+            storageMonitoringPreferences: preferencesURL
+        ))
+        defer {
+            model.setStorageMonitoringSessionOpen(false)
+            model.cancelScan()
+        }
+        model.rememberedScopes = bookmarks
+        model.storageMonitoringInterval = StorageMonitoringPolicy.minimumInterval
+        model.rescanRememberedFolder(rootPath)
+        try await waitUntil(timeout: 18) { !model.isScanning && !model.history.observations.isEmpty }
+        guard model.history.observations.last?.folders.first?.complete == true else {
+            throw failure("The initial selected-root identity baseline was not complete.")
+        }
+        let baselineObservationCount = model.history.observations.count
+
+        model.toggleStorageMonitoring(rootPath, enabled: true)
+        model.setStorageMonitoringSessionOpen(true)
+        guard model.activeStorageEventWatcherPathsForTesting == [rootPath] else {
+            throw failure("The verified selected root did not attach its opt-in event watcher.")
+        }
+
+        try FileManager.default.moveItem(at: root, to: priorRoot)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        try Data(repeating: 0x52, count: 512).write(to: root.appendingPathComponent("replacement.bin"))
+        model.setStorageMonitoringCooldownForTesting(rootPath, lastScanAt: .distantPast)
+        model.evaluateStorageMonitoringForTesting(at: .now)
+
+        let savedMonitoringPaths = try StorageMonitoringPreferences.load(from: preferencesURL)
+        guard model.history.observations.count == baselineObservationCount,
+              !model.isScanning,
+              model.pausedMonitoringReasons[rootPath] != nil,
+              model.activeStorageEventWatcherPathsForTesting.isEmpty,
+              savedMonitoringPaths == [rootPath] else {
+            throw failure(
+                "Monitoring crossed a same-path root replacement instead of pausing before measurement "
+                    + "(history: \(model.history.observations.count)/\(baselineObservationCount), "
+                    + "scanning: \(model.isScanning), paused: \(model.pausedMonitoringReasons[rootPath] != nil), "
+                    + "watchers: \(model.activeStorageEventWatcherPathsForTesting), consent: \(savedMonitoringPaths))."
+            )
+        }
     }
 
     @MainActor
