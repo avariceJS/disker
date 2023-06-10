@@ -1535,11 +1535,19 @@ final class DashboardModel {
     ) -> Bool {
         if let scopeError = error as? SelectedScopeBookmarkError,
            scopeError.isTransientMonitoringIssue { return true }
-        switch SelectedScopePathProbe.probe(at: path, using: bookmark) {
+        let savedScopeStatus = SelectedScopePathProbe.probe(at: path, using: bookmark)
+        switch savedScopeStatus {
         case .missingOrUnreachable, .permissionOrAccessUnknown, .availableDirectoryWithinBookmarkScope:
             return true
-        case .availableDirectory, .notDirectory, .symbolicLink, .invalidBookmark,
-             .staleBookmark, .mismatchedBookmark:
+        case .invalidBookmark, .mismatchedBookmark:
+            switch SelectedScopePathProbe.probe(at: path) {
+            case .missingOrUnreachable, .permissionOrAccessUnknown:
+                return true
+            case .availableDirectory, .availableDirectoryWithinBookmarkScope, .notDirectory,
+                 .symbolicLink, .invalidBookmark, .staleBookmark, .mismatchedBookmark:
+                return false
+            }
+        case .availableDirectory, .notDirectory, .symbolicLink, .staleBookmark:
             return false
         }
     }

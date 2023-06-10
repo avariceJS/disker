@@ -375,7 +375,6 @@ struct DashboardModelMonitoringCheckHost: View {
     @MainActor
     private static func runPersistentRootReplacementMonitoringCheck(stateDirectory: URL) async throws {
         let root = stateDirectory.appendingPathComponent("SelectedRoot", isDirectory: true)
-        let priorRoot = stateDirectory.appendingPathComponent("PreviousSelectedRoot", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: stateDirectory) }
         try Data(repeating: 0x41, count: 64).write(to: root.appendingPathComponent("baseline.bin"))
@@ -414,23 +413,45 @@ struct DashboardModelMonitoringCheckHost: View {
             throw failure("The verified selected root did not attach its opt-in event watcher.")
         }
 
-        try FileManager.default.moveItem(at: root, to: priorRoot)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
-        try Data(repeating: 0x52, count: 512).write(to: root.appendingPathComponent("replacement.bin"))
+        model.setStorageMonitoringSessionOpen(false)
+        try FileManager.default.removeItem(at: root)
+        model.setStorageMonitoringSessionOpen(true)
         model.setStorageMonitoringCooldownForTesting(rootPath, lastScanAt: .distantPast)
         model.evaluateStorageMonitoringForTesting(at: .now)
 
         let savedMonitoringPaths = try StorageMonitoringPreferences.load(from: preferencesURL)
         guard model.history.observations.count == baselineObservationCount,
               !model.isScanning,
+              model.pausedMonitoringReasons[rootPath] == nil,
+              savedMonitoringPaths == [rootPath] else {
+            throw failure(
+                "A temporarily missing selected root was converted to zero history or permanent opt-out "
+                    + "(history: \(model.history.observations.count)/\(baselineObservationCount), "
+                    + "scanning: \(model.isScanning), paused: \(model.pausedMonitoringReasons[rootPath] != nil), "
+                    + "reason: \(model.pausedMonitoringReasons[rootPath] ?? "none"), "
+                    + "watcherError: \(model.storageEventWatcherErrors[rootPath] ?? "none"), "
+                    + "error: \(model.errorMessage ?? "none"), "
+                    + "probe: \(SelectedScopePathProbe.probe(at: rootPath, using: bookmarks.first)), "
+                    + "consent: \(savedMonitoringPaths))."
+            )
+        }
+
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        try Data(repeating: 0x52, count: 512).write(to: root.appendingPathComponent("replacement.bin"))
+        model.setStorageMonitoringCooldownForTesting(rootPath, lastScanAt: .distantPast)
+        model.evaluateStorageMonitoringForTesting(at: .now)
+
+        let consentAfterReplacement = try StorageMonitoringPreferences.load(from: preferencesURL)
+        guard model.history.observations.count == baselineObservationCount,
+              !model.isScanning,
               model.pausedMonitoringReasons[rootPath] != nil,
               model.activeStorageEventWatcherPathsForTesting.isEmpty,
-              savedMonitoringPaths == [rootPath] else {
+              consentAfterReplacement == [rootPath] else {
             throw failure(
                 "Monitoring crossed a same-path root replacement instead of pausing before measurement "
                     + "(history: \(model.history.observations.count)/\(baselineObservationCount), "
                     + "scanning: \(model.isScanning), paused: \(model.pausedMonitoringReasons[rootPath] != nil), "
-                    + "watchers: \(model.activeStorageEventWatcherPathsForTesting), consent: \(savedMonitoringPaths))."
+                    + "watchers: \(model.activeStorageEventWatcherPathsForTesting), consent: \(consentAfterReplacement))."
             )
         }
     }
