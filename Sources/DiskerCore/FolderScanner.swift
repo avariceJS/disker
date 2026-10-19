@@ -28,6 +28,12 @@ public enum FolderScanner {
         var lastModifiedAt: Date?
     }
 
+    private struct LinkedFileRecord {
+        var file: FileRecord
+        let firstObservedMetadata: ScannedFileMetadata
+        var changedDuringScan: Bool
+    }
+
     private struct ScannedFileMetadata {
         let name: String
         let identity: FileIdentity
@@ -60,6 +66,17 @@ public enum FolderScanner {
                 || modifiedNanoseconds != Int64(metadata.st_mtimespec.tv_nsec)
                 || changedSeconds != Int64(metadata.st_ctimespec.tv_sec)
                 || changedNanoseconds != Int64(metadata.st_ctimespec.tv_nsec)
+        }
+
+        func differs(from other: ScannedFileMetadata) -> Bool {
+            identity != other.identity
+                || fileType != other.fileType
+                || size != other.size
+                || allocatedBlocks != other.allocatedBlocks
+                || modifiedSeconds != other.modifiedSeconds
+                || modifiedNanoseconds != other.modifiedNanoseconds
+                || changedSeconds != other.changedSeconds
+                || changedNanoseconds != other.changedNanoseconds
         }
     }
 
@@ -109,18 +126,20 @@ public enum FolderScanner {
     public static func scan(
         roots: [URL], simulatedDeviceIDsByPath: [String: UInt64],
         shouldCancel: () -> Bool = { Task.isCancelled },
-        progress: (ScanProgress) -> Void = { _ in }
+        progress: (ScanProgress) -> Void = { _ in },
+        directoryDidFinish: (String) -> Void = { _ in }
     ) -> ScanObservation {
         scanInternal(
             roots: roots, simulatedDeviceIDsByPath: simulatedDeviceIDsByPath,
-            shouldCancel: shouldCancel, progress: progress
+            shouldCancel: shouldCancel, progress: progress, directoryDidFinish: directoryDidFinish
         )
     }
 
     private static func scanInternal(
         roots: [URL], simulatedDeviceIDsByPath: [String: UInt64],
         shouldCancel: () -> Bool,
-        progress: (ScanProgress) -> Void
+        progress: (ScanProgress) -> Void,
+        directoryDidFinish: (String) -> Void = { _ in }
     ) -> ScanObservation {
         let startedAt = Date.now
         var results: [FolderObservation] = []
@@ -152,7 +171,7 @@ public enum FolderScanner {
             }
             let rootVolumeDeviceID = UInt64(truncatingIfNeeded: rootMetadata.st_dev)
 
-            var linkedFilesByIdentity: [FileIdentity: FileRecord] = [:]
+            var linkedFilesByIdentity: [FileIdentity: LinkedFileRecord] = [:]
             // Keep the scanner's prior identity-only dedup set. Path-bearing
             // records are retained only for objects known to have multiple links.
             var seenFileIdentities = Set<FileIdentity>()
@@ -182,7 +201,11 @@ public enum FolderScanner {
                 let file = fileRecord(metadata: rootMetadata, relativePath: root.lastPathComponent, parentPath: "")
                 if rootMetadata.st_nlink > 1 {
                     seenFileIdentities.insert(file.identity)
-                    linkedFilesByIdentity[file.identity] = file
+                    linkedFilesByIdentity[file.identity] = LinkedFileRecord(
+                        file: file,
+                        firstObservedMetadata: ScannedFileMetadata(name: root.lastPathComponent, metadata: rootMetadata),
+                        changedDuringScan: false
+                    )
                 } else if seenFileIdentities.insert(file.identity).inserted {
                     addFile(file, to: "", metrics: &metrics, overflowed: &accountingOverflow)
                     accumulate(file.logicalBytes, into: &rootLogicalBytes, overflowed: &accountingOverflow)
@@ -359,12 +382,27 @@ public enum FolderScanner {
                             )
                             var isNewFileObject = false
                             if metadata.st_nlink > 1 {
-                                if let existing = linkedFilesByIdentity[file.identity] {
-                                    if utf8LessThan(file.relativePath, existing.relativePath) {
-                                        linkedFilesByIdentity[file.identity] = file
+                                let fileMetadata = ScannedFileMetadata(name: name, metadata: metadata)
+                                if var existing = linkedFilesByIdentity[file.identity] {
+                                    if fileMetadata.differs(from: existing.firstObservedMetadata) {
+                                        existing.changedDuringScan = true
+                                        existing.file.lastModifiedAt = nil
+                                        scanComplete = false
+                                        addCoverageEvent(directory.relativePath, symlink: false, changed: true, to: &metrics)
                                     }
+                                    if utf8LessThan(file.relativePath, existing.file.relativePath) {
+                                        existing.file = file
+                                    }
+                                    if existing.changedDuringScan {
+                                        existing.file.lastModifiedAt = nil
+                                    }
+                                    linkedFilesByIdentity[file.identity] = existing
                                 } else if seenFileIdentities.insert(file.identity).inserted {
-                                    linkedFilesByIdentity[file.identity] = file
+                                    linkedFilesByIdentity[file.identity] = LinkedFileRecord(
+                                        file: file,
+                                        firstObservedMetadata: fileMetadata,
+                                        changedDuringScan: false
+                                    )
                                     isNewFileObject = true
                                 }
                             } else if seenFileIdentities.insert(file.identity).inserted {
@@ -441,6 +479,9 @@ public enum FolderScanner {
                         scanComplete = false
                         addCoverageEvent(directory.relativePath, symlink: false, changed: true, to: &metrics)
                     }
+                    if !interrupted {
+                        directoryDidFinish(directory.relativePath)
+                    }
                     closedir(stream)
                     close(directoryFD)
                     pending.append(contentsOf: discoveredDirectories)
@@ -455,7 +496,13 @@ public enum FolderScanner {
 
             // Among multiply-linked paths, the smallest UTF-8 relative path owns
             // the object's bytes. Unique files never need to retain their paths.
-            let linkedFiles = linkedFilesByIdentity.values.sorted {
+            let linkedFiles = linkedFilesByIdentity.values.map { linkedRecord -> FileRecord in
+                var file = linkedRecord.file
+                if linkedRecord.changedDuringScan {
+                    file.lastModifiedAt = nil
+                }
+                return file
+            }.sorted {
                 utf8LessThan($0.relativePath, $1.relativePath)
             }
             for file in linkedFiles {
@@ -770,7 +817,7 @@ public enum FolderScanner {
         for scannedFile: ScannedFileMetadata,
         relativePath: String,
         largestUniqueFiles: inout [FileUsageSummary],
-        linkedFilesByIdentity: inout [FileIdentity: FileRecord]
+        linkedFilesByIdentity: inout [FileIdentity: LinkedFileRecord]
     ) {
         if let index = largestUniqueFiles.firstIndex(where: { $0.rootRelativePath == relativePath }) {
             let summary = largestUniqueFiles[index]
@@ -782,7 +829,8 @@ public enum FolderScanner {
             )
         }
         if var linkedFile = linkedFilesByIdentity[scannedFile.identity] {
-            linkedFile.lastModifiedAt = nil
+            linkedFile.file.lastModifiedAt = nil
+            linkedFile.changedDuringScan = true
             linkedFilesByIdentity[scannedFile.identity] = linkedFile
         }
     }

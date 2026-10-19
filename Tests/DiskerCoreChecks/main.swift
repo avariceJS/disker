@@ -65,6 +65,7 @@ private struct DiskerCoreChecks {
             ("Git metadata footprint survives summary cap", testGitMetadataUsageSurvivesSummaryCap),
             ("selected symlink root is incomplete", testSelectedSymlinkRootIsIncomplete),
             ("hard-link deduplication", testHardLinkDeduplication),
+            ("hard-link mutation between directory revalidations", testHardLinkMutationBetweenDirectories),
             ("directory summary cap and stable order", testDirectorySummaryCap),
             ("bounded largest-file metadata summaries", testLargestFileSummaries),
             ("old history JSON defaults new fields", testOldHistoryDecoding),
@@ -2327,6 +2328,52 @@ private struct DiskerCoreChecks {
         }
     }
 
+    private static func testHardLinkMutationBetweenDirectories() throws {
+        try withTemporaryDirectory { root in
+            let firstDirectory = root.appendingPathComponent("alpha", isDirectory: true)
+            let secondDirectory = root.appendingPathComponent("zeta", isDirectory: true)
+            try FileManager.default.createDirectory(at: firstDirectory, withIntermediateDirectories: false)
+            try FileManager.default.createDirectory(at: secondDirectory, withIntermediateDirectories: false)
+            let firstLink = firstDirectory.appendingPathComponent("payload.bin")
+            let secondLink = secondDirectory.appendingPathComponent("payload.bin")
+            try Data(repeating: 0x41, count: 128).write(to: firstLink)
+            try FileManager.default.linkItem(at: firstLink, to: secondLink)
+
+            var changedAfterFirstDirectory = false
+            var mutationSucceeded = false
+            let result = FolderScanner.scan(
+                roots: [root], simulatedDeviceIDsByPath: [:],
+                directoryDidFinish: { relativePath in
+                    guard !changedAfterFirstDirectory,
+                          relativePath == "alpha" || relativePath == "zeta" else { return }
+                    changedAfterFirstDirectory = true
+                    let otherLink = relativePath == "alpha" ? secondLink : firstLink
+                    do {
+                        let handle = try FileHandle(forWritingTo: otherLink)
+                        try handle.seekToEnd()
+                        try handle.write(contentsOf: Data(repeating: 0x42, count: 16))
+                        try handle.close()
+                        mutationSucceeded = true
+                    } catch {
+                        mutationSucceeded = false
+                    }
+                }
+            )
+            guard let folder = result.folders.first else {
+                throw CheckFailure.assertion("hard-link race fixture should produce a folder observation")
+            }
+            let summary = folder.largestFiles.first(where: { $0.rootRelativePath == "alpha/payload.bin" })
+            try expect(changedAfterFirstDirectory && mutationSucceeded,
+                       "the fixture should mutate the shared inode after one alias directory was revalidated")
+            try expect(!folder.complete && folder.changedDuringScanCount > 0,
+                       "different metadata versions for one hard-linked inode must make coverage partial")
+            try expect(summary != nil && summary?.lastModifiedAt == nil,
+                       "a mutation observed through another hard link must withhold the deterministic owner's modification time")
+            try expect(folder.fileCount == 1,
+                       "cross-directory hard-link mutation detection must preserve inode deduplication")
+        }
+    }
+
     private static func testDirectorySummaryCap() throws {
         try withTemporaryDirectory { root in
             for index in 0..<105 {
@@ -2569,7 +2616,12 @@ private struct DiskerCoreChecks {
                 let folder = FolderObservation(
                     path: "/synthetic", displayName: "synthetic",
                     logicalBytes: Int64(index), allocatedBytes: Int64(index),
-                    fileCount: 1, inaccessibleCount: 0, complete: index != 180
+                    fileCount: 1, inaccessibleCount: 0, complete: index != 180,
+                    largestFiles: [FileUsageSummary(
+                        rootRelativePath: "observed.bin", logicalBytes: Int64(index),
+                        allocatedBytes: Int64(index),
+                        lastModifiedAt: Date(timeIntervalSince1970: TimeInterval(index + 10))
+                    )]
                 )
                 let observation = ScanObservation(
                     id: id, startedAt: Date(timeIntervalSince1970: TimeInterval(index)),
@@ -2593,6 +2645,9 @@ private struct DiskerCoreChecks {
             try expect(reloaded.observations.last?.id == latestID, "newest observation should survive a restart")
             try expect(reloaded.observations.last?.cancelled == true, "cancelled scan status should persist")
             try expect(reloaded.observations.last?.folders.first?.complete == false, "incomplete folder coverage should persist")
+            try expect(reloaded.observations.last?.folders.first?.largestFiles.first?.lastModifiedAt
+                       == Date(timeIntervalSince1970: 190),
+                       "largest-file modification metadata should survive the bounded history reload")
             let historyPermissions = try FileManager.default.attributesOfItem(atPath: fileURL.path)[.posixPermissions] as? NSNumber
             try expect(historyPermissions?.intValue == 0o600,
                        "saved observations containing user paths should be readable only by the local account")
