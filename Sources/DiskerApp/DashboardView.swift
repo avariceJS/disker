@@ -2981,7 +2981,7 @@ struct DashboardView: View {
                     .padding(.bottom, 8)
                 }
                 if includeDetails && !folder.largestFiles.isEmpty {
-                    largestFileSection(for: folder)
+                    largestFileSection(for: folder, scanCancelled: scanCancelled)
                 }
             }
             if let latest = model.latestScan {
@@ -3079,7 +3079,7 @@ struct DashboardView: View {
         .background(.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
     }
 
-    private func largestFileSection(for folder: FolderObservation) -> some View {
+    private func largestFileSection(for folder: FolderObservation, scanCancelled: Bool) -> some View {
         var growthByPath: [String: ObservationComparison.FileGrowthSignal] = [:]
         for signal in ObservationComparison.growingFiles(for: folder, in: model.history) {
             growthByPath[signal.file.rootRelativePath] = signal
@@ -3091,6 +3091,7 @@ struct DashboardView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            largeFileModificationSection(for: folder, scanCancelled: scanCancelled)
             ForEach(folder.largestFiles) { file in
                 let fileURL = file.rootRelativePath.isEmpty
                     ? URL(fileURLWithPath: folder.path)
@@ -3143,6 +3144,65 @@ struct DashboardView: View {
         }
         .padding(.horizontal, 14)
         .padding(.bottom, 8)
+    }
+
+    private func largeFileModificationSection(
+        for folder: FolderObservation, scanCancelled: Bool
+    ) -> some View {
+        let entries = LargeFileModificationReview.make(
+            from: folder, scanCancelled: scanCancelled, asOf: folder.finishedAt
+        )
+        return VStack(alignment: .leading, spacing: 7) {
+            Label("Large files with older modification dates", systemImage: "calendar.badge.clock")
+                .font(.caption.weight(.semibold))
+            Text("Review metadata only: at least 100 MiB allocated estimate and no modification for 180 days. Modification time is not last use. These files may be unique or important; reclaimable space is unknown, and Disker does not read their contents.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if scanCancelled || !folder.complete {
+                Text("Unavailable because this selected-root scan was cancelled or had incomplete coverage. Inaccessible items remain unknown.")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            } else if folder.largestFilesTruncated {
+                Text("Unavailable because the largest-file inventory was truncated; omitted files remain unknown.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else if entries.isEmpty {
+                Text("No files met both review thresholds in this complete scan.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(entries) { entry in
+                    HStack(alignment: .top, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(entry.rootRelativePath)
+                                .font(.caption.weight(.medium))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Text("Modified \(entry.ageDays) days ago · \(entry.lastModifiedAt.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Text("Logical \(format(entry.logicalBytes)) · Allocated ~\(format(entry.allocatedBytes))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 4)
+                        Button {
+                            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: entry.path)])
+                        } label: {
+                            Image(systemName: "arrow.up.right.square")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Review this file in Finder")
+                        .accessibilityLabel("Reveal \(entry.rootRelativePath) in Finder")
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.orange.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private func fileExtensionSummary(for folder: FolderObservation) -> some View {

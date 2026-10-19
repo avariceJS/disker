@@ -69,6 +69,7 @@ private struct DiskerCoreChecks {
             ("hard-link mutation between directory revalidations", testHardLinkMutationBetweenDirectories),
             ("directory summary cap and stable order", testDirectorySummaryCap),
             ("bounded largest-file metadata summaries", testLargestFileSummaries),
+            ("cautious large-file modification-age review", testLargeFileModificationReview),
             ("old history JSON defaults new fields", testOldHistoryDecoding),
             ("sparse file size accounting", testSparseFileAccounting),
             ("missing root coverage", testMissingRootCoverage),
@@ -3730,6 +3731,89 @@ private struct DiskerCoreChecks {
                    "a newer partial observation must suppress a stale file-growth signal")
         try expect(ObservationComparison.growingFiles(for: partial, in: partialHistory).isEmpty,
                    "partial file observations must never produce growth signals")
+    }
+
+    private static func testLargeFileModificationReview() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let oldEnough = now.addingTimeInterval(-LargeFileModificationReview.minimumAge)
+        let folder = FolderObservation(
+            path: "/selected/project", displayName: "project",
+            logicalBytes: 2_000_000_000, allocatedBytes: 2_000_000_000,
+            fileCount: 6, inaccessibleCount: 0, complete: true,
+            largestFiles: [
+                FileUsageSummary(
+                    rootRelativePath: "data/large-sparse.bin", logicalBytes: 2_000_000_000,
+                    allocatedBytes: LargeFileModificationReview.minimumAllocatedBytes,
+                    lastModifiedAt: oldEnough
+                ),
+                FileUsageSummary(
+                    rootRelativePath: "recent.bin", logicalBytes: 1, allocatedBytes: 500_000_000,
+                    lastModifiedAt: now.addingTimeInterval(-LargeFileModificationReview.minimumAge + 1)
+                ),
+                FileUsageSummary(
+                    rootRelativePath: "below-allocated-threshold.bin", logicalBytes: 900_000_000,
+                    allocatedBytes: LargeFileModificationReview.minimumAllocatedBytes - 1,
+                    lastModifiedAt: oldEnough
+                ),
+                FileUsageSummary(
+                    rootRelativePath: "future.bin", logicalBytes: 500_000_000,
+                    allocatedBytes: 500_000_000, lastModifiedAt: now.addingTimeInterval(1)
+                ),
+                FileUsageSummary(
+                    rootRelativePath: "unknown-date.bin", logicalBytes: 500_000_000,
+                    allocatedBytes: 500_000_000, lastModifiedAt: nil
+                ),
+                FileUsageSummary(
+                    rootRelativePath: "../outside.bin", logicalBytes: 500_000_000,
+                    allocatedBytes: 500_000_000, lastModifiedAt: oldEnough
+                ),
+                FileUsageSummary(
+                    rootRelativePath: "/absolute.bin", logicalBytes: 500_000_000,
+                    allocatedBytes: 500_000_000, lastModifiedAt: oldEnough
+                ),
+            ]
+        )
+        let entries = LargeFileModificationReview.make(from: folder, scanCancelled: false, asOf: now)
+        try expect(entries.map(\.rootRelativePath) == ["data/large-sparse.bin"],
+                   "review should use the allocated-byte threshold and include the exact 180-day boundary")
+        try expect(entries[0].path == "/selected/project/data/large-sparse.bin"
+                   && entries[0].logicalBytes == 2_000_000_000
+                   && entries[0].allocatedBytes == LargeFileModificationReview.minimumAllocatedBytes
+                   && entries[0].ageDays == 180,
+                   "review rows should keep exact root, logical size, allocated estimate, and age separate")
+
+        let manyFiles = (0..<(LargeFileModificationReview.maximumEntries + 2)).map { index in
+            FileUsageSummary(
+                rootRelativePath: String(format: "file-%02d.bin", index),
+                logicalBytes: 1,
+                allocatedBytes: LargeFileModificationReview.minimumAllocatedBytes + Int64(index),
+                lastModifiedAt: oldEnough
+            )
+        }
+        let bounded = FolderObservation(
+            path: folder.path, displayName: folder.displayName, logicalBytes: 1, allocatedBytes: 1,
+            fileCount: manyFiles.count, inaccessibleCount: 0, complete: true,
+            largestFiles: manyFiles
+        )
+        let boundedEntries = LargeFileModificationReview.make(from: bounded, scanCancelled: false, asOf: now)
+        try expect(boundedEntries.count == LargeFileModificationReview.maximumEntries
+                   && boundedEntries.first?.rootRelativePath == "file-21.bin"
+                   && boundedEntries.last?.rootRelativePath == "file-02.bin",
+                   "review should be deterministic, largest allocated estimate first, and capped at 20")
+
+        let partial = FolderObservation(
+            path: folder.path, displayName: folder.displayName, logicalBytes: 1, allocatedBytes: 1,
+            fileCount: 1, inaccessibleCount: 1, complete: false, largestFiles: folder.largestFiles
+        )
+        let truncated = FolderObservation(
+            path: folder.path, displayName: folder.displayName, logicalBytes: 1, allocatedBytes: 1,
+            fileCount: 1, inaccessibleCount: 0, complete: true,
+            largestFiles: folder.largestFiles, largestFilesTruncated: true
+        )
+        try expect(LargeFileModificationReview.make(from: partial, scanCancelled: false, asOf: now).isEmpty
+                   && LargeFileModificationReview.make(from: folder, scanCancelled: true, asOf: now).isEmpty
+                   && LargeFileModificationReview.make(from: truncated, scanCancelled: false, asOf: now).isEmpty,
+                   "partial, cancelled, or truncated scans must not present a complete aged-file review")
     }
 
     private static func folderWithDirectory(
