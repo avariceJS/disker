@@ -76,7 +76,7 @@ The Swift package has no third-party dependencies. Node.js is not installed and 
 
 Folder totals are estimates. APFS clones, snapshots, shared blocks, concurrent changes, inaccessible areas, and system-managed storage prevent recursive file totals from reconciling with physical volume usage.
 
-`scripts/benchmark-selected-root.sh <directory>` measures metadata-scan elapsed time, process CPU time, coverage, and logical/allocated estimates for one explicitly supplied directory. It does not read file contents or persist the observation.
+`scripts/benchmark-selected-root.sh <directory>` measures metadata-scan elapsed time, process CPU time, process high-water RSS and its increase during the scan, coverage, and logical/allocated estimates for one explicitly supplied directory. RSS is process-level and includes runtime overhead; it is not scanner-only allocation. The benchmark does not read file contents or persist the observation.
 
 RAM snapshots are manual by default. Optional automatic sampling and system pressure transition observation run only while Disker is active. The transition log does not provide an initial pressure baseline or a continuous current state; gaps and unobserved periods remain unknown. Inactive pages may be reclaimable cache; process resident size differs from physical footprint. Swap measurements are optional and reflect macOS's current allocated swap accounting, not memory pressure. Disker does not diagnose leaks. RAM history shares the bounded local observation file and is removed through **About → Clear Local History…**.
 

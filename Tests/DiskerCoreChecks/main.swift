@@ -111,9 +111,12 @@ private struct DiskerCoreChecks {
         }
         let userCPU = timevalSeconds(after.ru_utime) - timevalSeconds(before.ru_utime)
         let systemCPU = timevalSeconds(after.ru_stime) - timevalSeconds(before.ru_stime)
+        let peakRSSAfterScan = max(0, after.ru_maxrss)
+        let peakRSSIncreaseDuringScan = max(0, after.ru_maxrss - before.ru_maxrss)
         let seconds = Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
         print("Selected-root metadata scan (no file contents): \(folder.fileCount) files")
         print("Elapsed: \(String(format: "%.3f", seconds)) s · process CPU: \(String(format: "%.3f", userCPU + systemCPU)) s")
+        print("Process peak RSS after scan: \(String(format: "%.1f", Double(peakRSSAfterScan) / 1_048_576)) MiB · high-water increase during scan: \(String(format: "%.1f", Double(peakRSSIncreaseDuringScan) / 1_048_576)) MiB (process-level; not scanner-only allocation)")
         print("Logical: \(folder.logicalBytes) bytes · allocated estimate: \(folder.allocatedBytes) bytes")
         print("Coverage: \(folder.complete ? "complete" : "partial") · inaccessible: \(folder.inaccessibleCount) · symlinks excluded: \(folder.excludedSymlinkCount) · changed: \(folder.changedDuringScanCount)")
     }
