@@ -25,7 +25,7 @@ public enum FolderScanner {
         let allocatedBytes: Int64
         let allocatedBytesOverflowed: Bool
         let extensionName: String
-        let lastModifiedAt: Date
+        var lastModifiedAt: Date?
     }
 
     private struct ScannedFileMetadata {
@@ -173,7 +173,6 @@ public enum FolderScanner {
             var excludedSpecialFileCount = 0
             var extensionMetrics: [String: FileExtensionMetrics] = [:]
             var largestUniqueFiles: [FileUsageSummary] = []
-            var changedFilePaths = Set<String>()
 
             if rootType != S_IFDIR {
                 guard rootType == S_IFREG else {
@@ -409,7 +408,11 @@ public enum FolderScanner {
                                 let relativePath = directory.relativePath.isEmpty
                                     ? file.name
                                     : directory.relativePath + "/" + file.name
-                                changedFilePaths.insert(relativePath)
+                                withholdFileModificationDate(
+                                    for: file, relativePath: relativePath,
+                                    largestUniqueFiles: &largestUniqueFiles,
+                                    linkedFilesByIdentity: &linkedFilesByIdentity
+                                )
                                 if errno == ENOENT || errno == ENOTDIR || errno == ELOOP {
                                     scanComplete = false
                                     addCoverageEvent(directory.relativePath, symlink: false, changed: true, to: &metrics)
@@ -423,7 +426,11 @@ public enum FolderScanner {
                                 let relativePath = directory.relativePath.isEmpty
                                     ? file.name
                                     : directory.relativePath + "/" + file.name
-                                changedFilePaths.insert(relativePath)
+                                withholdFileModificationDate(
+                                    for: file, relativePath: relativePath,
+                                    largestUniqueFiles: &largestUniqueFiles,
+                                    linkedFilesByIdentity: &linkedFilesByIdentity
+                                )
                                 addCoverageEvent(directory.relativePath, symlink: false, changed: true, to: &metrics)
                             }
                         }
@@ -463,18 +470,10 @@ public enum FolderScanner {
                     rootRelativePath: rootType == S_IFDIR ? $0.relativePath : "",
                     logicalBytes: $0.logicalBytes,
                     allocatedBytes: $0.allocatedBytes,
-                    lastModifiedAt: changedFilePaths.contains($0.relativePath) ? nil : $0.lastModifiedAt
+                    lastModifiedAt: $0.lastModifiedAt
                 )
             }).sorted(by: largestFilePrecedes)
-            let retainedLargestFiles = rankedLargestFiles.prefix(maximumLargestFileSummaries).map { summary in
-                guard changedFilePaths.contains(summary.rootRelativePath) else { return summary }
-                return FileUsageSummary(
-                    rootRelativePath: summary.rootRelativePath,
-                    logicalBytes: summary.logicalBytes,
-                    allocatedBytes: summary.allocatedBytes,
-                    lastModifiedAt: nil
-                )
-            }
+            let retainedLargestFiles = Array(rankedLargestFiles.prefix(maximumLargestFileSummaries))
 
             // Aggregate each directory into its parent once, deepest first.
             let directoryPaths = metrics.keys.filter { !$0.isEmpty }.sorted { lhs, rhs in
@@ -765,6 +764,27 @@ public enum FolderScanner {
             lastModifiedAt: Date(timeIntervalSince1970: TimeInterval(metadata.st_mtimespec.tv_sec)
                 + TimeInterval(metadata.st_mtimespec.tv_nsec) / 1_000_000_000)
         )
+    }
+
+    private static func withholdFileModificationDate(
+        for scannedFile: ScannedFileMetadata,
+        relativePath: String,
+        largestUniqueFiles: inout [FileUsageSummary],
+        linkedFilesByIdentity: inout [FileIdentity: FileRecord]
+    ) {
+        if let index = largestUniqueFiles.firstIndex(where: { $0.rootRelativePath == relativePath }) {
+            let summary = largestUniqueFiles[index]
+            largestUniqueFiles[index] = FileUsageSummary(
+                rootRelativePath: summary.rootRelativePath,
+                logicalBytes: summary.logicalBytes,
+                allocatedBytes: summary.allocatedBytes,
+                lastModifiedAt: nil
+            )
+        }
+        if var linkedFile = linkedFilesByIdentity[scannedFile.identity] {
+            linkedFile.lastModifiedAt = nil
+            linkedFilesByIdentity[scannedFile.identity] = linkedFile
+        }
     }
 
     private static func fileExtensionName(relativePath: String) -> String {
