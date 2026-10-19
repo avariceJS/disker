@@ -31,7 +31,7 @@ public enum FolderScanner {
     private struct LinkedFileRecord {
         var file: FileRecord
         let firstObservedMetadata: ScannedFileMetadata
-        var changedDuringScan: Bool
+        var modificationDateWithheld: Bool
     }
 
     private struct ScannedFileMetadata {
@@ -204,7 +204,7 @@ public enum FolderScanner {
                     linkedFilesByIdentity[file.identity] = LinkedFileRecord(
                         file: file,
                         firstObservedMetadata: ScannedFileMetadata(name: root.lastPathComponent, metadata: rootMetadata),
-                        changedDuringScan: false
+                        modificationDateWithheld: false
                     )
                 } else if seenFileIdentities.insert(file.identity).inserted {
                     addFile(file, to: "", metrics: &metrics, overflowed: &accountingOverflow)
@@ -385,7 +385,7 @@ public enum FolderScanner {
                                 let fileMetadata = ScannedFileMetadata(name: name, metadata: metadata)
                                 if var existing = linkedFilesByIdentity[file.identity] {
                                     if fileMetadata.differs(from: existing.firstObservedMetadata) {
-                                        existing.changedDuringScan = true
+                                        existing.modificationDateWithheld = true
                                         existing.file.lastModifiedAt = nil
                                         scanComplete = false
                                         addCoverageEvent(directory.relativePath, symlink: false, changed: true, to: &metrics)
@@ -393,7 +393,7 @@ public enum FolderScanner {
                                     if utf8LessThan(file.relativePath, existing.file.relativePath) {
                                         existing.file = file
                                     }
-                                    if existing.changedDuringScan {
+                                    if existing.modificationDateWithheld {
                                         existing.file.lastModifiedAt = nil
                                     }
                                     linkedFilesByIdentity[file.identity] = existing
@@ -401,7 +401,7 @@ public enum FolderScanner {
                                     linkedFilesByIdentity[file.identity] = LinkedFileRecord(
                                         file: file,
                                         firstObservedMetadata: fileMetadata,
-                                        changedDuringScan: false
+                                        modificationDateWithheld: false
                                     )
                                     isNewFileObject = true
                                 }
@@ -436,8 +436,26 @@ public enum FolderScanner {
                             ))
                         }
                     }
+                    var revalidationInterrupted = false
                     if !interrupted {
-                        for file in scannedFiles {
+                        for (index, file) in scannedFiles.enumerated() {
+                            if shouldCancel() {
+                                cancelled = true
+                                scanComplete = false
+                                addCoverageEvent(directory.relativePath, symlink: false, to: &metrics)
+                                for unverifiedFile in scannedFiles[index...] {
+                                    withholdFileModificationDate(
+                                        for: unverifiedFile,
+                                        relativePath: directory.relativePath.isEmpty
+                                            ? unverifiedFile.name
+                                            : directory.relativePath + "/" + unverifiedFile.name,
+                                        largestUniqueFiles: &largestUniqueFiles,
+                                        linkedFilesByIdentity: &linkedFilesByIdentity
+                                    )
+                                }
+                                revalidationInterrupted = true
+                                break
+                            }
                             var current = stat()
                             let result = file.name.withCString {
                                 fstatat(directoryFD, $0, &current, AT_SYMLINK_NOFOLLOW)
@@ -479,7 +497,7 @@ public enum FolderScanner {
                         scanComplete = false
                         addCoverageEvent(directory.relativePath, symlink: false, changed: true, to: &metrics)
                     }
-                    if !interrupted {
+                    if !interrupted && !revalidationInterrupted {
                         directoryDidFinish(directory.relativePath)
                     }
                     closedir(stream)
@@ -498,7 +516,7 @@ public enum FolderScanner {
             // the object's bytes. Unique files never need to retain their paths.
             let linkedFiles = linkedFilesByIdentity.values.map { linkedRecord -> FileRecord in
                 var file = linkedRecord.file
-                if linkedRecord.changedDuringScan {
+                if linkedRecord.modificationDateWithheld {
                     file.lastModifiedAt = nil
                 }
                 return file
@@ -830,7 +848,7 @@ public enum FolderScanner {
         }
         if var linkedFile = linkedFilesByIdentity[scannedFile.identity] {
             linkedFile.file.lastModifiedAt = nil
-            linkedFile.changedDuringScan = true
+            linkedFile.modificationDateWithheld = true
             linkedFilesByIdentity[scannedFile.identity] = linkedFile
         }
     }

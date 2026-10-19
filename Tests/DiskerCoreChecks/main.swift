@@ -73,6 +73,7 @@ private struct DiskerCoreChecks {
             ("missing root coverage", testMissingRootCoverage),
             ("permission-denied subtree remains partial", testPermissionDeniedSubtreeCoverage),
             ("immediate cancellation", testImmediateCancellation),
+            ("cancellation during file metadata revalidation", testCancellationDuringFileRevalidation),
             ("history persistence and bounded retention", testHistoryPersistenceAndRetention),
             ("loaded history obeys retention bounds", testLoadedHistoryRetentionBounds),
             ("history reset is limited to its own file", testHistoryClearIsScoped),
@@ -2599,6 +2600,34 @@ private struct DiskerCoreChecks {
         let result = FolderScanner.scan(roots: [path], shouldCancel: { true })
         try expect(result.cancelled, "cancellation must be recorded")
         try expect(result.folders.isEmpty, "cancelled scan must not report an unvisited root as measured")
+    }
+
+    private static func testCancellationDuringFileRevalidation() throws {
+        try withTemporaryDirectory { root in
+            for index in 0..<256 {
+                try Data([UInt8(index % 255)]).write(
+                    to: root.appendingPathComponent(String(format: "file-%03d.bin", index))
+                )
+            }
+            var requestCancellationDuringRevalidation = false
+            let result = FolderScanner.scan(
+                roots: [root],
+                shouldCancel: { requestCancellationDuringRevalidation },
+                progress: { update in
+                    if update.currentPath.hasPrefix(root.path), update.countedFileObjects == 256 {
+                        requestCancellationDuringRevalidation = true
+                    }
+                }
+            )
+            guard let folder = result.folders.first else {
+                throw CheckFailure.assertion("revalidation cancellation fixture should produce a folder observation")
+            }
+            try expect(result.cancelled, "a cancellation requested after enumeration should interrupt metadata revalidation")
+            try expect(!folder.complete && folder.fileCount == 256,
+                       "cancelled revalidation should preserve measured totals but mark coverage partial")
+            try expect(!folder.largestFiles.isEmpty && folder.largestFiles.allSatisfy { $0.lastModifiedAt == nil },
+                       "timestamps for files skipped by cancelled metadata revalidation must remain unknown")
+        }
     }
 
     private static func testHistoryPersistenceAndRetention() throws {
