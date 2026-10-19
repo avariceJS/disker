@@ -6,6 +6,12 @@ public enum StorageMonitoringPolicy {
     public static let defaultInterval: TimeInterval = 15 * 60
     public static let minimumInterval: TimeInterval = 5 * 60
 
+    /// A scheduled root that yielded no measurable files and incomplete coverage
+    /// cannot produce a useful comparison. Pause it until the user reviews access.
+    public static func shouldPauseAfterScheduledScan(_ folder: FolderObservation) -> Bool {
+        !folder.complete && folder.fileCount == 0
+    }
+
     public struct Input: Sendable {
         public var enabled: Bool
         public var interval: TimeInterval

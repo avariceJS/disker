@@ -460,6 +460,13 @@ final class DashboardModel {
                     storageMonitoringLastAttempt.removeValue(forKey: completedScheduledPath)
                 } else if result.cancelled && isAppActive {
                     pauseStorageMonitoring(completedScheduledPath, reason: "Scheduled scan cancelled. Resume monitoring when ready.")
+                } else if let folder = result.folders.first(where: {
+                    URL(fileURLWithPath: $0.path).standardizedFileURL.path == completedScheduledPath
+                }), StorageMonitoringPolicy.shouldPauseAfterScheduledScan(folder) {
+                    pauseStorageMonitoring(
+                        completedScheduledPath,
+                        reason: "No files could be measured. Check this folder's access, then resume monitoring."
+                    )
                 } else {
                     storageMonitoringCooldownByPath[completedScheduledPath] = .now
                 }

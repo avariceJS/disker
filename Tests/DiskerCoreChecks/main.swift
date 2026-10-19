@@ -1237,6 +1237,29 @@ private struct DiskerCoreChecks {
 
         try expect(StorageMonitoringPolicy.defaultInterval == 900,
                    "storage monitoring should default to a fifteen-minute cadence")
+        let missingRoot = FolderObservation(
+            path: "/saved/missing", displayName: "missing", logicalBytes: 0,
+            allocatedBytes: 0, fileCount: 0, inaccessibleCount: 1, complete: false
+        )
+        let unreadableOnlyRoot = FolderObservation(
+            path: "/saved/unreadable", displayName: "unreadable", logicalBytes: 0,
+            allocatedBytes: 0, fileCount: 0, inaccessibleCount: 0,
+            complete: false, excludedSymlinkCount: 1
+        )
+        let partiallyMeasuredRoot = FolderObservation(
+            path: "/saved/partial", displayName: "partial", logicalBytes: 128,
+            allocatedBytes: 128, fileCount: 1, inaccessibleCount: 1, complete: false
+        )
+        let emptyCompleteRoot = FolderObservation(
+            path: "/saved/empty", displayName: "empty", logicalBytes: 0,
+            allocatedBytes: 0, fileCount: 0, inaccessibleCount: 0, complete: true
+        )
+        try expect(StorageMonitoringPolicy.shouldPauseAfterScheduledScan(missingRoot)
+                   && StorageMonitoringPolicy.shouldPauseAfterScheduledScan(unreadableOnlyRoot),
+                   "scheduled roots with no measured files and incomplete coverage should pause for access review")
+        try expect(!StorageMonitoringPolicy.shouldPauseAfterScheduledScan(partiallyMeasuredRoot)
+                   && !StorageMonitoringPolicy.shouldPauseAfterScheduledScan(emptyCompleteRoot),
+                   "roots with measured data or a complete empty observation should remain monitorable")
         let defaults = StorageMonitoringPolicy.evaluate(
             StorageMonitoringPolicy.Input(enabled: true, interval: 1, enabledAt: start, appIsActive: true,
                                           savedRootIdentifiers: roots, selectedRootIdentifiers: roots),
