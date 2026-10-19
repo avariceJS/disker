@@ -34,6 +34,7 @@ private struct DiskerCoreChecks {
             ("explicitly selected app bundle identity read", testApplicationBundleMetadata),
             ("evidence-scoped application container attribution", testApplicationPathAttribution),
             ("read-only app footprint review", testApplicationFootprintReview),
+            ("measured selected-scope subtotal safety", testApplicationFootprintSubtotal),
             ("explicit app-folder associations", testApplicationFolderAssociations),
             ("bounded read-only selected-scope bookmarks", testSelectedScopeBookmarks),
             ("local stores reject symlinks", testLocalStoresRejectSymlinks),
@@ -691,6 +692,130 @@ private struct DiskerCoreChecks {
                    "cache clues, user-only evidence, and links to another app must remain distinguishable")
         try expect(byPath[cachePath]?.observation == nil && review.reclaimableBytes == nil,
                    "unmeasured locations and reclaimable physical bytes must remain unknown")
+    }
+
+    private static func testApplicationFootprintSubtotal() throws {
+        let bundlePath = "/Applications/Sample.app"
+        let home = "/Users/synthetic"
+        let supportPath = "\(home)/Library/Application Support/com.example.Sample"
+        let sharedPath = "\(home)/Library/Group Containers/TEAM.shared"
+        let bundle = FolderObservation(
+            path: bundlePath, displayName: "Sample", logicalBytes: 100, allocatedBytes: 120,
+            fileCount: 1, inaccessibleCount: 0, complete: true
+        ).includingApplicationBundleIdentity(
+            ApplicationBundleIdentity(
+                bundleIdentifier: "com.example.Sample",
+                claimedGroupIdentifiers: ["TEAM.shared"],
+                signatureValidated: true,
+                signedBundleIdentifier: "com.example.Sample"
+            ),
+            selectedAsApplicationBundle: true
+        )
+        func review(
+            paths: [String], scans: [ScanObservation]
+        ) -> ApplicationFootprintReview {
+            ApplicationFootprintReview.make(
+                for: bundle,
+                in: LocalHistory(
+                    observations: scans,
+                    applicationAssociations: [ApplicationFolderAssociation(
+                        bundlePath: bundlePath, relatedFolderPaths: paths
+                    )]
+                ),
+                homeDirectoryPath: home
+            )
+        }
+
+        let support = syntheticFolder(path: supportPath, bytes: 300, complete: true)
+        let shared = syntheticFolder(path: sharedPath, bytes: 700, complete: true)
+        let valid = review(
+            paths: [supportPath, sharedPath],
+            scans: [ScanObservation(startedAt: .now, folders: [bundle, support, shared], cancelled: false)]
+        )
+        try expect(valid.measuredSelectedScopeSubtotal?.logicalBytes == 400
+                   && valid.measuredSelectedScopeSubtotal?.allocatedBytesEstimate == 420,
+                   "subtotal should use checked logical and allocated bytes for disjoint non-shared measured scopes")
+        try expect(valid.measuredSelectedScopeSubtotal?.includedPaths == [bundlePath, supportPath]
+                   && valid.subtotalExclusions.contains(where: {
+                       $0.path == sharedPath && $0.reason == .sharedOrMultiOwner
+                   }),
+                   "shared or multi-owner scopes should remain visible but excluded from the selected-scope subtotal")
+
+        let partial = syntheticFolder(path: supportPath, bytes: 450, complete: false)
+        let partialLatest = review(
+            paths: [supportPath],
+            scans: [
+                ScanObservation(startedAt: Date(timeIntervalSince1970: 1), folders: [bundle,
+                    syntheticFolder(path: supportPath, bytes: 300, complete: true)], cancelled: false),
+                ScanObservation(startedAt: Date(timeIntervalSince1970: 2), folders: [partial], cancelled: false),
+            ]
+        )
+        try expect(partialLatest.measuredSelectedScopeSubtotal == nil
+                   && partialLatest.subtotalExclusions.contains(where: {
+                       $0.path == supportPath && $0.reason == .incompleteObservation
+                   }),
+                   "the latest partial measurement must suppress subtotal without falling back to an older complete scan")
+
+        let cancelledComplete = review(
+            paths: [supportPath],
+            scans: [ScanObservation(startedAt: .now, folders: [bundle, support], cancelled: true)]
+        )
+        try expect(cancelledComplete.measuredSelectedScopeSubtotal == nil
+                   && cancelledComplete.subtotalExclusions.contains(where: {
+                       $0.path == supportPath && $0.reason == .cancelledObservation
+                   }),
+                   "a cancelled scan must not contribute even when its retained folder row is marked complete")
+
+        let overflow = FolderObservation(
+            path: supportPath, displayName: "Support", logicalBytes: Int64.max,
+            allocatedBytes: Int64.max, fileCount: 1, inaccessibleCount: 0,
+            complete: true, byteAccountingOverflowed: true
+        )
+        let overflowReview = review(
+            paths: [supportPath],
+            scans: [ScanObservation(startedAt: .now, folders: [bundle, overflow], cancelled: false)]
+        )
+        try expect(overflowReview.measuredSelectedScopeSubtotal == nil
+                   && overflowReview.subtotalExclusions.contains(where: {
+                       $0.path == supportPath && $0.reason == .accountingOverflow
+                   }),
+                   "a source observation with saturated accounting must be excluded from the subtotal")
+
+        let parent = "\(home)/Library/Containers/com.example.Sample"
+        let child = "\(parent)/Documents"
+        let overlapReview = review(
+            paths: [parent, child],
+            scans: [ScanObservation(startedAt: .now, folders: [
+                bundle,
+                syntheticFolder(path: parent, bytes: 500, complete: true),
+                syntheticFolder(path: child, bytes: 200, complete: true),
+            ], cancelled: false)]
+        )
+        try expect(overlapReview.measuredSelectedScopeSubtotal == nil
+                   && overlapReview.subtotalExclusions.filter { $0.reason == .overlappingScope }.count == 2,
+                   "lexically overlapping selected scopes must be excluded instead of double-counted")
+
+        let deduplicated = review(
+            paths: [supportPath, supportPath, "\(supportPath)/."],
+            scans: [ScanObservation(startedAt: .now, folders: [bundle, support], cancelled: false)]
+        )
+        try expect(deduplicated.entries.filter { $0.path == supportPath }.count == 1
+                   && deduplicated.measuredSelectedScopeSubtotal?.logicalBytes == 400,
+                   "duplicate standardized association paths must appear and contribute only once")
+
+        let maximum = FolderObservation(
+            path: supportPath, displayName: "Support", logicalBytes: Int64.max,
+            allocatedBytes: Int64.max, fileCount: 1, inaccessibleCount: 0, complete: true
+        )
+        let sumOverflowReview = review(
+            paths: [supportPath],
+            scans: [ScanObservation(startedAt: .now, folders: [bundle, maximum], cancelled: false)]
+        )
+        try expect(sumOverflowReview.measuredSelectedScopeSubtotal == nil
+                   && sumOverflowReview.subtotalExclusions.contains(where: {
+                       $0.reason == .subtotalOverflow
+                   }),
+                   "subtotal arithmetic overflow must suppress the total rather than saturate it")
     }
 
     private static func testApplicationBundleMetadata() throws {

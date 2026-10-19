@@ -3854,7 +3854,7 @@ private struct ApplicationFootprintReviewSheet: View {
                 }
 
                 Label {
-                    Text("Disker does not remove files or add these independent measurements together. Overlapping or shared paths can be counted more than once. Reclaimable physical space is unknown.")
+                    Text("This review can total only complete, non-cancelled, non-overflowed measurements of disjoint paths you selected. Shared paths are excluded. The subtotal is not proof of app ownership or reclaimable physical space. Disker does not remove files.")
                 } icon: {
                     Image(systemName: "info.circle.fill")
                 }
@@ -3864,6 +3864,8 @@ private struct ApplicationFootprintReviewSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
 
+                selectedScopeSubtotal
+
                 ForEach(review.entries) { entry in
                     entryCard(entry)
                 }
@@ -3871,6 +3873,70 @@ private struct ApplicationFootprintReviewSheet: View {
             }
             .padding(24)
             .frame(maxWidth: 760, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private var selectedScopeSubtotal: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Label("Measured selected-scope subtotal", systemImage: "sum")
+                .font(.headline)
+
+            if let subtotal = review.measuredSelectedScopeSubtotal {
+                Text("Logical size: \(format(subtotal.logicalBytes))")
+                    .font(.subheadline.monospacedDigit())
+                Text("Allocated estimate: ~\(format(subtotal.allocatedBytesEstimate))")
+                    .font(.subheadline.monospacedDigit())
+                Text("\(subtotal.includedPaths.count) disjoint, non-shared selected scopes")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Label("No reliable subtotal is available from the latest measurements.", systemImage: "questionmark.circle")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            if !review.subtotalExclusions.isEmpty {
+                DisclosureGroup("Why paths were excluded (\(review.subtotalExclusions.count))") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(review.subtotalExclusions) { exclusion in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(subtotalExclusionTitle(exclusion.reason))
+                                    .font(.caption.weight(.semibold))
+                                Text(exclusion.path)
+                                    .font(.caption2.monospaced())
+                                    .textSelection(.enabled)
+                                ForEach(exclusion.relatedPaths, id: \.self) { path in
+                                    Text("Overlaps: \(path)")
+                                        .font(.caption2.monospaced())
+                                        .textSelection(.enabled)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.top, 6)
+                }
+                .font(.caption)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.background, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
+    }
+
+    private func subtotalExclusionTitle(
+        _ reason: ApplicationFootprintReview.SubtotalExclusionReason
+    ) -> String {
+        switch reason {
+        case .sharedOrMultiOwner: "Shared or linked with another app · excluded"
+        case .overlappingScope: "Overlaps another selected path · total withheld"
+        case .missingLatestObservation: "No latest measurement · total withheld"
+        case .incompleteObservation: "Latest scan was partial · total withheld"
+        case .cancelledObservation: "Latest scan was cancelled · total withheld"
+        case .accountingOverflow: "Source byte accounting overflowed · total withheld"
+        case .invalidByteCount: "Invalid measured byte count · total withheld"
+        case .subtotalOverflow: "Subtotal exceeded the supported range · total withheld"
         }
     }
 

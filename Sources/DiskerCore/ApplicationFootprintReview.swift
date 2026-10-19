@@ -67,8 +67,48 @@ public struct ApplicationFootprintReview: Equatable, Sendable {
         }
     }
 
+    public struct MeasuredSubtotal: Equatable, Sendable {
+        /// Sum of measurements for disjoint, non-shared user-selected scopes.
+        /// This is not evidence of exclusive app ownership or reclaimable space.
+        public let logicalBytes: Int64
+        public let allocatedBytesEstimate: Int64
+        public let includedPaths: [String]
+    }
+
+    public enum SubtotalExclusionReason: Equatable, Sendable {
+        case sharedOrMultiOwner
+        case overlappingScope
+        case missingLatestObservation
+        case incompleteObservation
+        case cancelledObservation
+        case accountingOverflow
+        case invalidByteCount
+        case subtotalOverflow
+    }
+
+    public struct SubtotalExclusion: Equatable, Sendable, Identifiable {
+        public var id: String { "\(path)|\(String(describing: reason))" }
+        public let path: String
+        public let reason: SubtotalExclusionReason
+        public let relatedPaths: [String]
+
+        public init(path: String, reason: SubtotalExclusionReason, relatedPaths: [String] = []) {
+            self.path = path
+            self.reason = reason
+            self.relatedPaths = relatedPaths
+        }
+    }
+
     public let bundlePath: String
     public let entries: [Entry]
+
+    /// Available only when every reviewed scope has a latest complete,
+    /// uncancelled, non-overflowed observation, all paths are disjoint, and
+    /// checked arithmetic succeeds. Shared/multi-owner paths are omitted.
+    /// This is a selected-scope subtotal, not an app-ownership or reclaimability claim.
+    public let measuredSelectedScopeSubtotal: MeasuredSubtotal?
+    /// Explains why a reviewed scope was excluded, or why no subtotal is available.
+    public let subtotalExclusions: [SubtotalExclusion]
 
     /// Physical space reclaimable by removing the app cannot be attributed from
     /// independent path scans, shared scopes, and allocated-byte estimates.
@@ -128,6 +168,99 @@ public struct ApplicationFootprintReview: Equatable, Sendable {
     private init(bundlePath: String, entries: [Entry]) {
         self.bundlePath = bundlePath
         self.entries = entries
+        let result = Self.selectedScopeSubtotal(for: entries)
+        self.measuredSelectedScopeSubtotal = result.subtotal
+        self.subtotalExclusions = result.exclusions
+    }
+
+    private static func selectedScopeSubtotal(
+        for entries: [Entry]
+    ) -> (subtotal: MeasuredSubtotal?, exclusions: [SubtotalExclusion]) {
+        var exclusions: [SubtotalExclusion] = []
+        var observationsAreUsable = true
+        var pathsOverlap = false
+
+        for entry in entries {
+            if entry.isShared {
+                exclusions.append(SubtotalExclusion(
+                    path: entry.path, reason: .sharedOrMultiOwner
+                ))
+            }
+            if !entry.overlappingPaths.isEmpty {
+                pathsOverlap = true
+                exclusions.append(SubtotalExclusion(
+                    path: entry.path, reason: .overlappingScope,
+                    relatedPaths: entry.overlappingPaths
+                ))
+            }
+
+            guard let observation = entry.observation else {
+                observationsAreUsable = false
+                exclusions.append(SubtotalExclusion(
+                    path: entry.path, reason: .missingLatestObservation
+                ))
+                continue
+            }
+            if entry.scanWasCancelled {
+                observationsAreUsable = false
+                exclusions.append(SubtotalExclusion(
+                    path: entry.path, reason: .cancelledObservation
+                ))
+            }
+            if !observation.complete {
+                observationsAreUsable = false
+                exclusions.append(SubtotalExclusion(
+                    path: entry.path, reason: .incompleteObservation
+                ))
+            }
+            if observation.byteAccountingOverflowed {
+                observationsAreUsable = false
+                exclusions.append(SubtotalExclusion(
+                    path: entry.path, reason: .accountingOverflow
+                ))
+            }
+            if observation.logicalBytes < 0 || observation.allocatedBytes < 0 {
+                observationsAreUsable = false
+                exclusions.append(SubtotalExclusion(
+                    path: entry.path, reason: .invalidByteCount
+                ))
+            }
+        }
+
+        // A nested pair cannot safely contribute both measurements. Do not
+        // pick a parent/child arbitrarily: omit all overlapping scopes and
+        // withhold the subtotal so the UI cannot imply completeness.
+        guard observationsAreUsable, !pathsOverlap else {
+            return (nil, exclusions)
+        }
+
+        var logicalBytes: Int64 = 0
+        var allocatedBytesEstimate: Int64 = 0
+        var includedPaths: [String] = []
+        for entry in entries where !entry.isShared {
+            guard let observation = entry.observation else { continue }
+            let logical = CheckedByteCount.adding(logicalBytes, observation.logicalBytes)
+            let allocated = CheckedByteCount.adding(allocatedBytesEstimate, observation.allocatedBytes)
+            guard !logical.overflowed, !allocated.overflowed else {
+                exclusions.append(SubtotalExclusion(
+                    path: entry.path, reason: .subtotalOverflow
+                ))
+                return (nil, exclusions)
+            }
+            logicalBytes = logical.value
+            allocatedBytesEstimate = allocated.value
+            includedPaths.append(entry.path)
+        }
+
+        guard !includedPaths.isEmpty else { return (nil, exclusions) }
+        return (
+            MeasuredSubtotal(
+                logicalBytes: logicalBytes,
+                allocatedBytesEstimate: allocatedBytesEstimate,
+                includedPaths: includedPaths
+            ),
+            exclusions
+        )
     }
 
     private static func latestObservations(in history: LocalHistory) -> [String: FolderObservation] {
