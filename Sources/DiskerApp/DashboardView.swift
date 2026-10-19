@@ -3358,7 +3358,7 @@ private struct DeveloperArtifactReviewSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if review.candidatesTruncated {
-                Label("Only the 20 largest retained candidates are shown. Omitted matching paths are unknown.", systemImage: "ellipsis.circle")
+                Label("The scan's summary limit may omit matching paths; omitted candidates are unknown.", systemImage: "ellipsis.circle")
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .padding(10)
@@ -3438,9 +3438,15 @@ private struct DeveloperArtifactReviewSheet: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let pace = change.observedBytesPerDay {
-                    Text("Observed pace over that interval: ~\(formatPace(pace)) per day; descriptive only.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    if let formattedPace = formatPace(pace) {
+                        Text("Observed pace over that interval: ~\(formattedPace) per day; descriptive only.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Observed pace exceeds the display range; the interval change remains shown above.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             } else {
                 Text("Growth unknown: no comparable complete measurement of this exact path is retained.")
@@ -3500,9 +3506,9 @@ private struct DeveloperArtifactReviewSheet: View {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
-    private func formatPace(_ bytesPerDay: Double) -> String {
-        guard bytesPerDay.isFinite, bytesPerDay >= 0 else { return "unknown" }
-        guard bytesPerDay < Double(Int64.max) else { return format(Int64.max) }
+    private func formatPace(_ bytesPerDay: Double) -> String? {
+        guard bytesPerDay.isFinite, bytesPerDay >= 0,
+              bytesPerDay < Double(Int64.max) else { return nil }
         return format(Int64(bytesPerDay))
     }
 
