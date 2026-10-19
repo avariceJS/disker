@@ -12,8 +12,62 @@ public struct CleanupPlanEntry: Equatable, Sendable, Identifiable {
     /// A verified duplicate still may be shared, referenced, or intentionally retained.
     public let risk: Risk = .unknown
 
+    public init(
+        targetPath: String, preservedPath: String, verifiedSHA256: String,
+        logicalBytes: UInt64, allocatedBytesEstimate: UInt64
+    ) {
+        self.targetPath = targetPath
+        self.preservedPath = preservedPath
+        self.verifiedSHA256 = verifiedSHA256
+        self.logicalBytes = logicalBytes
+        self.allocatedBytesEstimate = allocatedBytesEstimate
+    }
+
+    /// A path-name heuristic only; it does not establish ownership or removability.
+    public var targetPathContext: PathContext { PathContext.classify(path: targetPath) }
+    /// The retained copy may also have important or shared path context.
+    public var preservedPathContext: PathContext { PathContext.classify(path: preservedPath) }
+
     public enum Risk: String, Equatable, Sendable {
         case unknown
+    }
+
+    public enum PathContext: String, Equatable, Sendable {
+        case applicationBundle
+        case gitMetadata
+        case applicationOrSharedData
+        case ordinaryPath
+
+        public var caution: String {
+            switch self {
+            case .applicationBundle:
+                "Inside an app bundle; removing a file may break the installed app or its resources."
+            case .gitMetadata:
+                "Inside Git metadata; removing a file may corrupt repository history or indexes."
+            case .applicationOrSharedData:
+                "In an application-data location; it may contain unique state or data shared with another app."
+            case .ordinaryPath:
+                "No special path context was detected; duplicate equality still does not establish safe removal."
+            }
+        }
+
+        fileprivate static func classify(path: String) -> Self {
+            let components = URL(fileURLWithPath: path).standardizedFileURL.pathComponents
+            if components.contains(where: { $0.lowercased().hasSuffix(".app") }) {
+                return .applicationBundle
+            }
+            if components.contains(".git") {
+                return .gitMetadata
+            }
+            let applicationDataComponents: Set<String> = [
+                "Application Support", "Caches", "Containers", "Group Containers",
+                "Logs", "Preferences", "Saved Application State"
+            ]
+            if components.contains(where: applicationDataComponents.contains) {
+                return .applicationOrSharedData
+            }
+            return .ordinaryPath
+        }
     }
 }
 

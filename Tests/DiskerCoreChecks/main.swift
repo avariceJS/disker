@@ -1847,7 +1847,38 @@ private struct DiskerCoreChecks {
             try expect(plan.entries.count == 1 && plan.entries[0].targetPath == second.path, "a dry-run plan should list only exact non-preserved paths")
             try expect(plan.entries[0].preservedPath == first.path && plan.entries[0].verifiedSHA256 == group.sha256, "each proposed action should carry its chosen keeper and content evidence")
             try expect(plan.entries[0].reclaimableBytes == nil && plan.entries[0].risk == .unknown, "duplicate equality must not invent reclaimed bytes or low risk")
+            try expect(plan.entries[0].targetPathContext == .ordinaryPath
+                       && plan.entries[0].preservedPathContext == .ordinaryPath,
+                       "ordinary synthetic paths should not receive a special ownership context")
             try expect(!plan.sourceCoverageComplete && plan.selectedRootPaths == [root.path], "the plan should preserve its partial-scope provenance")
+
+            func entry(target: String, preserved: String) -> CleanupPlanEntry {
+                CleanupPlanEntry(
+                    targetPath: target, preservedPath: preserved, verifiedSHA256: group.sha256,
+                    logicalBytes: UInt64(sharedBytes.count), allocatedBytesEstimate: 4096
+                )
+            }
+            let bundleEntry = entry(
+                target: "/synthetic/Utility.app/Contents/Resources/data.bin",
+                preserved: "/synthetic/Utility.app.backup/Contents/Resources/data.bin"
+            )
+            try expect(bundleEntry.targetPathContext == .applicationBundle
+                       && bundleEntry.preservedPathContext == .ordinaryPath,
+                       "only an actual .app path component should receive app-bundle context")
+            let gitEntry = entry(
+                target: "/synthetic/project/.git/objects/pack/data",
+                preserved: "/synthetic/project/.github/workflows/data"
+            )
+            try expect(gitEntry.targetPathContext == .gitMetadata
+                       && gitEntry.preservedPathContext == .ordinaryPath,
+                       "Git metadata context should match the exact .git component, not .github")
+            let sharedDataEntry = entry(
+                target: "/synthetic/Library/Group Containers/group.example/data.db",
+                preserved: "/synthetic/Library/Application Support/Example/data.db"
+            )
+            try expect(sharedDataEntry.targetPathContext == .applicationOrSharedData
+                       && sharedDataEntry.preservedPathContext == .applicationOrSharedData,
+                       "application and group-container paths should remain cautious for both copies")
             let firstAfterPlan = try Data(contentsOf: first)
             let secondAfterPlan = try Data(contentsOf: second)
             try expect(firstAfterPlan == sharedBytes && secondAfterPlan == sharedBytes, "generating a dry-run plan must not alter selected files")
