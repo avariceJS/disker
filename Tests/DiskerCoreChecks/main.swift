@@ -85,6 +85,7 @@ private struct DiskerCoreChecks {
             ("selected-folder growth highlights", testFolderGrowthHighlights),
             ("same-root complete directory growth comparison", testDirectoryGrowthComparison),
             ("same-path complete largest-file growth", testLargestFileGrowthComparison),
+            ("newly observed large-file review", testNewlyObservedLargeFileReview),
             ("selected file root mutation remains partial", testSelectedFileRootMutationCoverage),
             ("scan progress callback", testScanProgressCallback),
             ("directory mutations make coverage partial", testDirectoryMutationCoverage),
@@ -3731,6 +3732,148 @@ private struct DiskerCoreChecks {
                    "a newer partial observation must suppress a stale file-growth signal")
         try expect(ObservationComparison.growingFiles(for: partial, in: partialHistory).isEmpty,
                    "partial file observations must never produce growth signals")
+    }
+
+    private static func testNewlyObservedLargeFileReview() throws {
+        func withFiles(
+            _ folder: FolderObservation, _ files: [FileUsageSummary],
+            truncated: Bool = false, fileCount: Int? = nil
+        ) -> FolderObservation {
+            FolderObservation(
+                id: folder.id, path: folder.path, volumeDeviceID: folder.volumeDeviceID,
+                displayName: folder.displayName, logicalBytes: folder.logicalBytes,
+                allocatedBytes: folder.allocatedBytes, fileCount: fileCount ?? folder.fileCount,
+                inaccessibleCount: folder.inaccessibleCount, finishedAt: folder.finishedAt,
+                complete: folder.complete, largestFiles: files, largestFilesTruncated: truncated
+            )
+        }
+
+        let threshold = NewlyObservedLargeFileReview.minimumAllocatedBytes
+        let before = withFiles(
+            syntheticFolder(path: "/selected/project", bytes: 1_000, complete: true,
+                            volumeDeviceID: 42, finishedAt: Date(timeIntervalSince1970: 100)),
+            [
+                FileUsageSummary(rootRelativePath: "existing.bin", logicalBytes: threshold,
+                                 allocatedBytes: threshold),
+            ],
+            fileCount: 2
+        )
+        let current = withFiles(
+            syntheticFolder(path: before.path, bytes: 1_500, complete: true,
+                            volumeDeviceID: 42, finishedAt: Date(timeIntervalSince1970: 200)),
+            [
+                FileUsageSummary(rootRelativePath: "new/large.bin", logicalBytes: threshold + 10,
+                                 allocatedBytes: threshold + 10),
+                FileUsageSummary(rootRelativePath: "existing.bin", logicalBytes: threshold,
+                                 allocatedBytes: threshold),
+                FileUsageSummary(rootRelativePath: "small.bin", logicalBytes: 1,
+                                 allocatedBytes: threshold - 1),
+                FileUsageSummary(rootRelativePath: "../outside.bin", logicalBytes: threshold,
+                                 allocatedBytes: threshold),
+                FileUsageSummary(rootRelativePath: "/absolute.bin", logicalBytes: threshold,
+                                 allocatedBytes: threshold),
+            ],
+            fileCount: 4
+        )
+        let history = LocalHistory(observations: [
+            ScanObservation(startedAt: before.finishedAt, folders: [before], cancelled: false),
+            ScanObservation(startedAt: current.finishedAt, folders: [current], cancelled: false),
+        ])
+        let entries = NewlyObservedLargeFileReview.make(from: current, in: history, scanCancelled: false)
+        try expect(entries.map(\.rootRelativePath) == ["new/large.bin"],
+                   "review should include only safe, threshold-sized paths absent from a complete prior inventory")
+        try expect(entries[0].path == "/selected/project/new/large.bin"
+                   && entries[0].logicalBytes == threshold + 10
+                   && entries[0].allocatedBytes == threshold + 10
+                   && entries[0].evidence == "Not present in prior complete inventory"
+                   && entries[0].reclaimableBytes == nil,
+                   "review should expose exact path, separate byte metrics, cautious evidence, and unknown reclaimable space")
+
+        let partialCurrent = withFiles(
+            FolderObservation(
+                id: UUID(), path: current.path, volumeDeviceID: 42, displayName: "project",
+                logicalBytes: 1_500, allocatedBytes: 1_500, fileCount: 4, inaccessibleCount: 1,
+                finishedAt: Date(timeIntervalSince1970: 300), complete: false,
+                largestFiles: current.largestFiles
+            ),
+            current.largestFiles
+        )
+        let partialHistory = LocalHistory(observations: history.observations + [
+            ScanObservation(startedAt: partialCurrent.finishedAt, folders: [partialCurrent], cancelled: true),
+        ])
+        try expect(NewlyObservedLargeFileReview.make(
+            from: partialCurrent, in: partialHistory, scanCancelled: false
+        ).isEmpty, "a partial latest root scan must not produce new-file candidates")
+        try expect(NewlyObservedLargeFileReview.make(
+            from: current, in: history, scanCancelled: true
+        ).isEmpty, "a cancelled current scan must not produce new-file candidates")
+
+        let cancelledCurrentHistory = LocalHistory(observations: [
+            history.observations[0],
+            ScanObservation(startedAt: current.finishedAt, folders: [current], cancelled: true),
+        ])
+        try expect(NewlyObservedLargeFileReview.make(
+            from: current, in: cancelledCurrentHistory, scanCancelled: false
+        ).isEmpty, "a current history record marked cancelled must suppress candidates")
+
+        let truncatedBefore = withFiles(before, before.largestFiles, truncated: true)
+        let truncatedPriorHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: truncatedBefore.finishedAt, folders: [truncatedBefore], cancelled: false),
+            ScanObservation(startedAt: current.finishedAt, folders: [current], cancelled: false),
+        ])
+        let truncatedCurrent = withFiles(current, current.largestFiles, truncated: true)
+        let truncatedCurrentHistory = LocalHistory(observations: [
+            history.observations[0],
+            ScanObservation(startedAt: truncatedCurrent.finishedAt, folders: [truncatedCurrent], cancelled: false),
+        ])
+        try expect(NewlyObservedLargeFileReview.make(
+            from: current, in: truncatedPriorHistory, scanCancelled: false
+        ).isEmpty && NewlyObservedLargeFileReview.make(
+            from: truncatedCurrent, in: truncatedCurrentHistory, scanCancelled: false
+        ).isEmpty, "truncated prior or current inventories cannot establish absence")
+
+        let replacementVolume = withFiles(
+            syntheticFolder(path: current.path, bytes: 1_500, complete: true,
+                            volumeDeviceID: 99, finishedAt: current.finishedAt),
+            current.largestFiles, fileCount: 4
+        )
+        let replacementHistory = LocalHistory(observations: [
+            history.observations[0],
+            ScanObservation(startedAt: replacementVolume.finishedAt, folders: [replacementVolume], cancelled: false),
+        ])
+        try expect(NewlyObservedLargeFileReview.make(
+            from: replacementVolume, in: replacementHistory, scanCancelled: false
+        ).isEmpty, "a replacement volume at the same selected path must not be compared")
+
+        let selectedFile = withFiles(
+            syntheticFolder(path: "/selected/archive.bin", bytes: threshold, complete: true,
+                            volumeDeviceID: 42, finishedAt: Date(timeIntervalSince1970: 100)),
+            [FileUsageSummary(rootRelativePath: "", logicalBytes: threshold, allocatedBytes: threshold)],
+            fileCount: 1
+        )
+        let selectedFileCurrent = withFiles(
+            syntheticFolder(path: selectedFile.path, bytes: threshold, complete: true,
+                            volumeDeviceID: 42, finishedAt: Date(timeIntervalSince1970: 200)),
+            selectedFile.largestFiles,
+            fileCount: 1
+        )
+        let selectedFileHistory = LocalHistory(observations: [
+            ScanObservation(startedAt: selectedFile.finishedAt, folders: [selectedFile], cancelled: false),
+            ScanObservation(startedAt: selectedFileCurrent.finishedAt, folders: [selectedFileCurrent], cancelled: false),
+        ])
+        try expect(NewlyObservedLargeFileReview.make(
+            from: selectedFileCurrent, in: selectedFileHistory, scanCancelled: false
+        ).isEmpty, "an empty relative path for the selected single-file root matches itself and is not new")
+
+        let laterPartialHistory = LocalHistory(observations: history.observations + [
+            ScanObservation(startedAt: Date(timeIntervalSince1970: 300), folders: [partialCurrent], cancelled: true),
+        ])
+        try expect(NewlyObservedLargeFileReview.make(
+            from: current, in: laterPartialHistory, scanCancelled: false
+        ).isEmpty, "a newer partial exact-root record must suppress stale appearance candidates")
+        try expect(NewlyObservedLargeFileReview.make(
+            from: current, in: history, scanCancelled: false, limit: 0
+        ).isEmpty, "appearance review should honor an empty result limit")
     }
 
     private static func testLargeFileModificationReview() throws {

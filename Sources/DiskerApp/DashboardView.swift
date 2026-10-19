@@ -3091,6 +3091,7 @@ struct DashboardView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            newlyObservedLargeFileSection(for: folder, scanCancelled: scanCancelled)
             largeFileModificationSection(for: folder, scanCancelled: scanCancelled)
             ForEach(folder.largestFiles) { file in
                 let fileURL = file.rootRelativePath.isEmpty
@@ -3146,6 +3147,84 @@ struct DashboardView: View {
         .padding(.bottom, 8)
     }
 
+    private func newlyObservedLargeFileSection(
+        for folder: FolderObservation, scanCancelled: Bool
+    ) -> some View {
+        let previous = model.previousCompleteObservation(for: folder)
+        let entries = NewlyObservedLargeFileReview.make(
+            from: folder, in: model.history, scanCancelled: scanCancelled
+        )
+        return VStack(alignment: .leading, spacing: 7) {
+            Label("Newly observed large file paths", systemImage: "sparkle.magnifyingglass")
+                .font(.caption.weight(.semibold))
+            Text("A path absent from the prior complete inventory is not necessarily a file created during this interval. Files may have moved, been restored, or replaced. Ownership, usefulness, and reclaimable space are unknown; Disker reads no contents.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if scanCancelled || !folder.complete {
+                Text("Unavailable because this selected-root scan was cancelled or incomplete.")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            } else if folder.largestFilesTruncated {
+                Text("Unavailable because the current largest-file inventory was truncated; missing paths remain unknown.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else if previous == nil {
+                Text("A prior complete scan of this same path and volume is required.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else if previous?.largestFilesTruncated == true {
+                Text("The prior largest-file inventory was truncated; paths absent from it remain unknown.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else if entries.isEmpty {
+                Text("No file path at or above 100 MiB allocated estimate was absent from the prior complete inventory.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                if let previous {
+                    Text("Compared with the complete inventory from \(previous.finishedAt.formatted(date: .abbreviated, time: .shortened)).")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Text("Showing up to 20 largest matches by allocated estimate.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                ForEach(entries) { entry in
+                    HStack(alignment: .top, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(entry.rootRelativePath.isEmpty
+                                 ? URL(fileURLWithPath: entry.path).lastPathComponent
+                                 : entry.rootRelativePath)
+                                .font(.caption.weight(.medium))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Text(entry.evidence)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Text("Logical \(format(entry.logicalBytes)) · Allocated ~\(format(entry.allocatedBytes))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 4)
+                        Button {
+                            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: entry.path)])
+                        } label: {
+                            Image(systemName: "arrow.up.right.square")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Review this file in Finder")
+                        .accessibilityLabel("Reveal \(entry.rootRelativePath.isEmpty ? URL(fileURLWithPath: entry.path).lastPathComponent : entry.rootRelativePath) in Finder")
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.blue.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+    }
+
     private func largeFileModificationSection(
         for folder: FolderObservation, scanCancelled: Bool
     ) -> some View {
@@ -3173,6 +3252,9 @@ struct DashboardView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } else {
+                Text("Showing up to 20 largest matches by allocated estimate.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
                 ForEach(entries) { entry in
                     HStack(alignment: .top, spacing: 8) {
                         VStack(alignment: .leading, spacing: 3) {
