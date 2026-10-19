@@ -30,15 +30,18 @@ public enum LargeFileModificationReview {
         let root = URL(fileURLWithPath: folder.path, isDirectory: true).standardizedFileURL
         let rootPath = root.path.hasSuffix("/") ? root.path : root.path + "/"
         let candidates = folder.largestFiles.compactMap { file -> Entry? in
-            guard isSafeRelativePath(file.rootRelativePath),
+            let isSelectedFile = file.rootRelativePath.isEmpty && folder.fileCount == 1
+            guard isSelectedFile || isSafeRelativePath(file.rootRelativePath),
                   file.allocatedBytes >= minimumAllocatedBytes,
                   file.logicalBytes >= 0,
                   let modifiedAt = file.lastModifiedAt else { return nil }
 
             let age = asOf.timeIntervalSince(modifiedAt)
             guard age.isFinite, age >= minimumAge else { return nil }
-            let path = root.appendingPathComponent(file.rootRelativePath).standardizedFileURL.path
-            guard path.hasPrefix(rootPath) else { return nil }
+            let path = isSelectedFile
+                ? root.path
+                : root.appendingPathComponent(file.rootRelativePath).standardizedFileURL.path
+            guard isSelectedFile || path.hasPrefix(rootPath) else { return nil }
             return Entry(
                 path: path,
                 rootRelativePath: file.rootRelativePath,

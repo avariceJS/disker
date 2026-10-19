@@ -3176,7 +3176,9 @@ struct DashboardView: View {
                 ForEach(entries) { entry in
                     HStack(alignment: .top, spacing: 8) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(entry.rootRelativePath)
+                            Text(entry.rootRelativePath.isEmpty
+                                 ? URL(fileURLWithPath: entry.path).lastPathComponent
+                                 : entry.rootRelativePath)
                                 .font(.caption.weight(.medium))
                                 .lineLimit(1)
                                 .truncationMode(.middle)

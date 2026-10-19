@@ -3782,6 +3782,23 @@ private struct DiskerCoreChecks {
                    && entries[0].ageDays == 180,
                    "review rows should keep exact root, logical size, allocated estimate, and age separate")
 
+        let selectedFile = FolderObservation(
+            path: "/selected/archive.bin", displayName: "archive.bin",
+            logicalBytes: 500_000_000, allocatedBytes: 500_000_000,
+            fileCount: 1, inaccessibleCount: 0, complete: true,
+            largestFiles: [FileUsageSummary(
+                rootRelativePath: "", logicalBytes: 500_000_000,
+                allocatedBytes: 500_000_000, lastModifiedAt: oldEnough
+            )]
+        )
+        let selectedFileEntries = LargeFileModificationReview.make(
+            from: selectedFile, scanCancelled: false, asOf: now
+        )
+        try expect(selectedFileEntries.count == 1
+                   && selectedFileEntries[0].path == selectedFile.path
+                   && selectedFileEntries[0].rootRelativePath.isEmpty,
+                   "an empty relative path for one selected regular-file root should refer only to that exact file")
+
         let manyFiles = (0..<(LargeFileModificationReview.maximumEntries + 2)).map { index in
             FileUsageSummary(
                 rootRelativePath: String(format: "file-%02d.bin", index),
