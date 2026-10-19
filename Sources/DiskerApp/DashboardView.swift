@@ -32,7 +32,7 @@ final class DashboardModel {
     var ownFootprint: ScanObservation?
     var ownFootprintPaths: [String] = []
     var isMeasuringOwnFootprint = false
-    var applicationBundlePathAvailability: [String: Bool] = [:]
+    var applicationBundlePathStatuses: [String: SelectedScopePathProbe.Status] = [:]
     var checkingApplicationBundlePaths = Set<String>()
     private var applicationBundlePathCheckIDs: [String: UUID] = [:]
     var applicationAssociatedPathStatuses: [String: SelectedScopePathProbe.Status] = [:]
@@ -102,20 +102,20 @@ final class DashboardModel {
         guard checkingApplicationBundlePaths.insert(path).inserted else { return }
         let requestID = UUID()
         applicationBundlePathCheckIDs[path] = requestID
-        applicationBundlePathAvailability.removeValue(forKey: path)
+        applicationBundlePathStatuses.removeValue(forKey: path)
         let generation = historyGeneration.token()
         let expectedPath = URL(fileURLWithPath: path).standardizedFileURL.path
         let bookmark = rememberedScopes.first(where: { $0.path == expectedPath })
         let task = Task.detached(priority: .utility) {
-            SelectedScopePathProbe.isAvailable(at: path, using: bookmark)
+            SelectedScopePathProbe.probe(at: path, using: bookmark)
         }
         Task {
-            let isAvailable = await task.value
+            let status = await task.value
             guard applicationBundlePathCheckIDs[path] == requestID,
                   historyGeneration.accepts(generation) else { return }
             applicationBundlePathCheckIDs.removeValue(forKey: path)
             checkingApplicationBundlePaths.remove(path)
-            applicationBundlePathAvailability[path] = isAvailable
+            applicationBundlePathStatuses[path] = status
         }
     }
 
@@ -315,7 +315,7 @@ final class DashboardModel {
         }
         applicationBundlePathCheckIDs.removeValue(forKey: bundleURL.path)
         checkingApplicationBundlePaths.remove(bundleURL.path)
-        applicationBundlePathAvailability[bundleURL.path] = true
+        applicationBundlePathStatuses[bundleURL.path] = .availableDirectory
         rememberFolders([bundleURL])
         scan([bundleURL], inspectSelectedAppBundles: true)
     }
@@ -774,7 +774,7 @@ final class DashboardModel {
         storageMonitoringLastAttempt = [:]
         scheduledScanPath = nil
         stopStorageMonitoringScheduler()
-        applicationBundlePathAvailability = [:]
+        applicationBundlePathStatuses = [:]
         checkingApplicationBundlePaths = []
         applicationBundlePathCheckIDs = [:]
         applicationAssociatedPathStatuses = [:]
@@ -1544,7 +1544,7 @@ struct DashboardView: View {
                 } else {
                     ForEach(bundles) { bundle in
                         let relatedPaths = model.relatedFolders(for: bundle.path)
-                        let pathAvailability = model.applicationBundlePathAvailability[bundle.path]
+                        let pathStatus = model.applicationBundlePathStatuses[bundle.path]
                         let isCheckingPath = model.checkingApplicationBundlePaths.contains(bundle.path)
                         let isCheckingRelatedPaths = model.checkingApplicationAssociatedPaths.contains(bundle.path)
                         VStack(alignment: .leading, spacing: 10) {
@@ -1580,28 +1580,28 @@ struct DashboardView: View {
                                     Text("Checking selected app path…")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
-                                } else if let pathAvailability {
+                                } else if let pathStatus {
                                     Label(
-                                        pathAvailability ? "Bundle path available at last check" : "Bundle path unavailable at last check",
-                                        systemImage: pathAvailability ? "checkmark.circle" : "questionmark.circle"
+                                        applicationBundlePathStatusText(pathStatus),
+                                        systemImage: associatedPathStatusSymbol(pathStatus)
                                     )
                                     .font(.caption)
-                                    .foregroundStyle(pathAvailability ? Color.secondary : Color.orange)
+                                    .foregroundStyle(associatedPathStatusColor(pathStatus))
                                 }
-                                Button(pathAvailability == nil ? "Check bundle path" : "Check again") {
+                                Button(pathStatus == nil ? "Check bundle path" : "Check again") {
                                     model.checkApplicationBundlePath(bundle.path)
                                 }
                                 .controlSize(.small)
                                 .disabled(isCheckingPath || model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
                                 .help("Check only the exact app bundle path last measured; no folders are scanned")
                             }
-                            if pathAvailability == false && !relatedPaths.isEmpty {
+                            if let pathStatus, pathStatus != .availableDirectory, !relatedPaths.isEmpty {
                                 VStack(alignment: .leading, spacing: 10) {
                                     Label {
                                         VStack(alignment: .leading, spacing: 4) {
-                                            Text("Possible leftover data · needs review")
+                                            Text("Related folders · review suggested")
                                                 .font(.subheadline.weight(.semibold))
-                                            Text("The last measured app path is currently unavailable. It may have moved, its volume may be disconnected, or access may be restricted. The saved folder associations were selected manually; their current presence, ownership, and safety are unknown.")
+                                            Text("The last exact-path check did not confirm the app bundle location. It may have moved, its volume may be disconnected, access may be restricted, or the path may have changed type. This does not establish that the app was removed. Saved folder associations were selected manually; their presence, ownership, and safety are unknown.")
                                                 .font(.caption)
                                                 .fixedSize(horizontal: false, vertical: true)
                                         }
@@ -2439,6 +2439,27 @@ struct DashboardView: View {
                 }
                 .font(.caption.weight(.medium))
             }
+        }
+    }
+
+    private func applicationBundlePathStatusText(_ status: SelectedScopePathProbe.Status) -> String {
+        switch status {
+        case .availableDirectory:
+            "Bundle directory exists · contents not checked"
+        case .missingOrUnreachable:
+            "Bundle path not found or its volume is unavailable · absence is unconfirmed"
+        case .permissionOrAccessUnknown:
+            "Bundle access could not be confirmed · presence is unknown"
+        case .notDirectory:
+            "The exact bundle path is not a directory"
+        case .symbolicLink:
+            "The bundle path is a symbolic link · not followed"
+        case .invalidBookmark:
+            "Saved bundle access could not be read · select the same bundle again"
+        case .staleBookmark:
+            "Saved bundle access is stale · select the same bundle again"
+        case .mismatchedBookmark:
+            "Saved bundle access resolves elsewhere · no check was performed"
         }
     }
 
