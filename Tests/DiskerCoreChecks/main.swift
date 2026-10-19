@@ -848,6 +848,12 @@ private struct DiskerCoreChecks {
         try withTemporaryDirectory { base in
             let root = base.appendingPathComponent("selected-folder", isDirectory: true)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+            try expect(SelectedScopeBookmarkStore.isSameSelectedPath(
+                root.appendingPathComponent("nested/../", isDirectory: true), as: root.path
+            ), "reselecting a lexically equivalent path should preserve the saved scope")
+            try expect(!SelectedScopeBookmarkStore.isSameSelectedPath(
+                base.appendingPathComponent("different-folder", isDirectory: true), as: root.path
+            ), "reselecting another path must not retarget saved history")
             let fixture = root.appendingPathComponent("keep.bin")
             let bytes = Data("synthetic selected-scope fixture".utf8)
             try bytes.write(to: fixture)

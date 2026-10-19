@@ -42,6 +42,14 @@ public enum SelectedScopeBookmarkStore {
     private static let fileName = "selected-scopes.json"
     private static let maximumBookmarkFileSize = 8 * 1024 * 1024
 
+    /// A recovery picker may replace access only for the exact path the user
+    /// originally selected. Standardization removes lexical `.`/`..` parts;
+    /// it does not resolve symlinks or retarget a saved history entry.
+    public static func isSameSelectedPath(_ selectedURL: URL, as expectedPath: String) -> Bool {
+        selectedURL.standardizedFileURL.path
+            == URL(fileURLWithPath: expectedPath, isDirectory: true).standardizedFileURL.path
+    }
+
     public static func load(from fileURL: URL? = nil) throws -> [SelectedScopeBookmark] {
         guard let url = fileURL ?? storageURL() else { return [] }
         guard let data = try LocalStoreFile.read(at: url, maximumBytes: maximumBookmarkFileSize) else { return [] }

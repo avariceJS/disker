@@ -335,6 +335,27 @@ final class DashboardModel {
         rescanRememberedFolder(path, origin: .manual)
     }
 
+    func reselectRememberedFolder(_ path: String) {
+        guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
+        let expectedURL = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+        let panel = NSOpenPanel()
+        panel.title = "Re-select Saved Scan Folder"
+        panel.prompt = "Re-select Folder"
+        panel.message = "Choose the same folder to restore read-only access. Disker will keep its existing history and scan only this selected path."
+        panel.directoryURL = expectedURL.deletingLastPathComponent()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        guard panel.runModal() == .OK, let chosenURL = panel.urls.first else { return }
+        guard SelectedScopeBookmarkStore.isSameSelectedPath(chosenURL, as: expectedURL.path) else {
+            errorMessage = "Choose the same saved folder to keep its history comparable. No scan was started."
+            return
+        }
+        rememberFolders([chosenURL])
+        scan([chosenURL])
+    }
+
     private func rescanRememberedFolder(_ path: String, origin: ScanOrigin) {
         guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
         guard let bookmark = rememberedScopes.first(where: { $0.path == path }) else {
@@ -377,7 +398,7 @@ final class DashboardModel {
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
         guard panel.runModal() == .OK, let chosenURL = panel.urls.first else { return }
-        guard chosenURL.standardizedFileURL.path == selectedURL.standardizedFileURL.path else {
+        guard SelectedScopeBookmarkStore.isSameSelectedPath(chosenURL, as: selectedURL.path) else {
             errorMessage = "Choose the same associated folder to keep its history comparable. No scan was started."
             return
         }
@@ -1732,6 +1753,9 @@ struct DashboardView: View {
                                     Spacer(minLength: 8)
                                     Button("Scan") { model.rescanRememberedFolder(scope.path) }
                                         .disabled(model.isScanning)
+                                    Button("Re-select…") { model.reselectRememberedFolder(scope.path) }
+                                        .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
+                                        .help("Restore read-only access to this exact saved folder")
                                     Button {
                                         model.forgetRememberedFolder(scope.path)
                                     } label: {
