@@ -70,6 +70,12 @@ public enum ObservationComparison {
     }
 
     public struct ProcessGrowthSignal: Equatable, Identifiable, Sendable {
+        public struct Point: Equatable, Identifiable, Sendable {
+            public var id: Date { observedAt }
+            public let observedAt: Date
+            public let residentBytes: UInt64
+        }
+
         public var id: Int32 { processID }
         public let processID: Int32
         public let processName: String
@@ -77,6 +83,8 @@ public enum ObservationComparison {
         public let lastObservedAt: Date
         public let firstResidentBytes: UInt64
         public let lastResidentBytes: UInt64
+        /// Observed snapshots from the same continuous, PID-safe comparison run.
+        public let points: [Point]
 
         public var growthBytes: UInt64 { lastResidentBytes - firstResidentBytes }
     }
@@ -104,13 +112,20 @@ public enum ObservationComparison {
                 matching.append((observation, process))
             }
             guard matching.count >= 3,
-                  let startingSample = matching.enumerated().first(where: { index, sample in
+                  let startingMatch = matching.enumerated().first(where: { index, sample in
                       index >= 2
                           && matching[0].observation.observedAt.timeIntervalSince(sample.observation.observedAt) >= 15 * 60
-                  })?.element else { return nil }
+                  }) else { return nil }
+            let startingSample = startingMatch.element
             let initial = startingSample.process
             guard latest.residentBytes >= initial.residentBytes,
                   latest.residentBytes - initial.residentBytes >= threshold else { return nil }
+            let points = matching.prefix(through: startingMatch.offset).reversed().map { sample in
+                ProcessGrowthSignal.Point(
+                    observedAt: sample.observation.observedAt,
+                    residentBytes: sample.process.residentBytes
+                )
+            }
 
             return ProcessGrowthSignal(
                 processID: latest.processID,
@@ -118,7 +133,8 @@ public enum ObservationComparison {
                 firstObservedAt: startingSample.observation.observedAt,
                 lastObservedAt: latestObservation.observedAt,
                 firstResidentBytes: initial.residentBytes,
-                lastResidentBytes: latest.residentBytes
+                lastResidentBytes: latest.residentBytes,
+                points: points
             )
         }.sorted { $0.growthBytes > $1.growthBytes }
     }

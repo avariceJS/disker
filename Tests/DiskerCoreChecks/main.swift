@@ -1161,6 +1161,9 @@ private struct DiskerCoreChecks {
         )
         try expect(signals.count == 1, "three consecutive samples over the minimum interval should expose a substantial sustained growth signal")
         try expect(signals[0].processID == 4242 && signals[0].growthBytes == 170 * 1_048_576, "the signal should report the same process and observed resident-size change")
+        try expect(signals[0].points.map(\.observedAt) == samples.map(\.observedAt)
+                   && signals[0].points.map(\.residentBytes) == [50, 100, 220].map { UInt64($0) * 1_048_576 },
+                   "the signal should expose only the exact timestamps and RSS values used for its continuous comparison")
 
         let rollbackSamples = [
             ramObservation(at: 0, processStart: processStart, residentBytes: 100 * 1_048_576),
@@ -1184,6 +1187,9 @@ private struct DiskerCoreChecks {
         try expect(automaticSignals.count == 1 && automaticSignals[0].growthBytes == 170 * 1_048_576
                    && automaticSignals[0].firstObservedAt == Date(timeIntervalSince1970: 0),
                    "five-minute samples should use four observations to cover a 15-minute growth interval")
+        try expect(automaticSignals[0].points.count == 4
+                   && automaticSignals[0].points.map(\.observedAt) == fiveMinuteSamples.map(\.observedAt),
+                   "the automatic-monitoring trace should include each verified five-minute point in the comparison")
         let tooShortSamples = Array(fiveMinuteSamples.prefix(3))
         try expect(ObservationComparison.possibleProcessGrowth(
             in: LocalHistory(ramObservations: tooShortSamples)

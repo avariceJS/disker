@@ -2635,6 +2635,20 @@ struct DashboardView: View {
                                     Text("\(signal.firstObservedAt.formatted(date: .abbreviated, time: .shortened)) to \(signal.lastObservedAt.formatted(date: .abbreviated, time: .shortened)) · resident size")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
+                                    Chart(signal.points) { point in
+                                        PointMark(
+                                            x: .value("Observed time", point.observedAt),
+                                            y: .value("Resident MiB", Double(point.residentBytes) / 1_048_576)
+                                        )
+                                        .foregroundStyle(.orange)
+                                    }
+                                    .chartXAxisLabel("Observed time")
+                                    .chartYAxisLabel("Resident MiB")
+                                    .frame(height: 112)
+                                    .accessibilityLabel("Observed resident-size snapshots for \(signal.processName). Each dot is a measured sample; values between samples are unknown.")
+                                    Text("Observed points only · values between samples are unknown")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
                                 }
                                 .padding(.vertical, 6)
                                 Divider()
