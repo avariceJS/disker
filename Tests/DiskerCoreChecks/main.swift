@@ -86,6 +86,7 @@ private struct DiskerCoreChecks {
             ("directory mutations make coverage partial", testDirectoryMutationCoverage),
             ("selected directory root mutations make coverage partial", testSelectedDirectoryRootMutationCoverage),
             ("file mutations during enumeration make coverage partial", testFileMutationCoverage),
+            ("removed file timestamps are withheld", testRemovedFileTimestampWithheld),
             ("cancellation preserves partial coverage", testCancellationPreservesPartialCoverage),
         ]
 
@@ -2318,6 +2319,8 @@ private struct DiskerCoreChecks {
             try expect(result.folders[0].largestFiles.count == 1
                        && result.folders[0].largestFiles[0].rootRelativePath == "linked/payload.bin",
                        "the deterministic hard-link owner should appear once in the largest-file summary: \(result.folders[0].largestFiles)")
+            try expect(result.folders[0].largestFiles[0].lastModifiedAt != nil,
+                       "the deterministic hard-link owner should retain its filesystem modification metadata")
         }
     }
 
@@ -2358,6 +2361,13 @@ private struct DiskerCoreChecks {
             try expect(folder.largestFiles.first?.logicalBytes == 32 * 1024
                        && folder.largestFiles.first?.allocatedBytes == Int64(largeMetadata.st_blocks) * 512,
                        "file summaries should preserve separate logical and filesystem allocated byte values")
+            let expectedModifiedAt = Date(
+                timeIntervalSince1970: TimeInterval(largeMetadata.st_mtimespec.tv_sec)
+                    + TimeInterval(largeMetadata.st_mtimespec.tv_nsec) / 1_000_000_000
+            )
+            try expect(folder.largestFiles.first?.lastModifiedAt.map {
+                abs($0.timeIntervalSince(expectedModifiedAt)) < 0.000_001
+            } == true, "largest-file modification time should match revalidated lstat metadata")
             try expect(!folder.largestFilesTruncated,
                        "a small selected tree should report no omitted largest-file rows")
 
@@ -2369,7 +2379,8 @@ private struct DiskerCoreChecks {
             let fileRoot = FolderScanner.scan(roots: [largeURL]).folders[0]
             try expect(fileRoot.largestFiles.count == 1
                        && fileRoot.largestFiles[0].rootRelativePath.isEmpty
-                       && fileRoot.largestFiles[0].logicalBytes == 32 * 1024,
+                       && fileRoot.largestFiles[0].logicalBytes == 32 * 1024
+                       && fileRoot.largestFiles[0].lastModifiedAt != nil,
                        "a selected regular-file root should identify the file without duplicating its path")
 
             let cappedRoot = root.appendingPathComponent("many", isDirectory: true)
@@ -2426,6 +2437,12 @@ private struct DiskerCoreChecks {
         try expect(!folder.subdirectorySummariesTruncated, "old folder history should default truncation to false")
         try expect(folder.largestFiles.isEmpty && !folder.largestFilesTruncated,
                    "old folder history should default largest-file summaries to absent and untruncated")
+        let oldLargestFileJSON = #"{"rootRelativePath":"legacy.bin","logicalBytes":128,"allocatedBytes":64}"#
+        let oldLargestFile = try JSONDecoder().decode(
+            FileUsageSummary.self, from: Data(oldLargestFileJSON.utf8)
+        )
+        try expect(oldLargestFile.lastModifiedAt == nil,
+                   "legacy largest-file summaries without modification metadata should remain readable and unknown")
         try expect(folder.fileExtensionSummaries.isEmpty && !folder.fileExtensionSummariesTruncated,
                    "old folder history should default filename-extension summaries to empty and untruncated")
         try expect(folder.otherFileExtensionUsage == nil && folder.otherFileExtensionCategoryCount == 0,
@@ -3571,6 +3588,35 @@ private struct DiskerCoreChecks {
             try expect(changedFileDuringEnumeration, "fixture should change a previously sampled file during enumeration")
             try expect(!folder.complete, "a file changed before parent-directory revalidation must not appear complete")
             try expect(folder.changedDuringScanCount > 0, "the changed file should have an explicit coverage count")
+            let changedSummary = folder.largestFiles.first(where: { $0.rootRelativePath == "file-000.bin" })
+            try expect(changedSummary != nil && changedSummary?.lastModifiedAt == nil,
+                       "a largest-file timestamp should be withheld when existing post-enumeration metadata checks detect a mutation")
+        }
+    }
+
+    private static func testRemovedFileTimestampWithheld() throws {
+        try withTemporaryDirectory { root in
+            let removedFile = root.appendingPathComponent("file-000.bin")
+            for index in 0..<256 {
+                try Data([UInt8(index % 255)]).write(
+                    to: root.appendingPathComponent(String(format: "file-%03d.bin", index))
+                )
+            }
+            var removedDuringEnumeration = false
+            let result = FolderScanner.scan(roots: [root], progress: { _ in
+                guard !removedDuringEnumeration else { return }
+                removedDuringEnumeration = true
+                try? FileManager.default.removeItem(at: removedFile)
+            })
+            guard let folder = result.folders.first else {
+                throw CheckFailure.assertion("removed-file fixture should produce a folder observation")
+            }
+            try expect(removedDuringEnumeration, "fixture should remove a file during directory enumeration")
+            try expect(!folder.complete && folder.changedDuringScanCount > 0,
+                       "a file that disappears before metadata revalidation must make coverage partial")
+            let removedSummary = folder.largestFiles.first(where: { $0.rootRelativePath == "file-000.bin" })
+            try expect(removedSummary != nil && removedSummary?.lastModifiedAt == nil,
+                       "a largest-file timestamp should be withheld when the file disappears before revalidation")
         }
     }
 
@@ -3600,6 +3646,8 @@ private struct DiskerCoreChecks {
             try expect(fileObservation.logicalBytes == 4, "the file root should retain its sampled metadata total")
             try expect(!fileObservation.complete && fileObservation.changedDuringScanCount > 0,
                        "a selected file changed during a later root scan must be marked partial (complete=\(fileObservation.complete), changed=\(fileObservation.changedDuringScanCount), callback=\(changedSelectedFile))")
+            try expect(fileObservation.largestFiles.first?.lastModifiedAt == nil,
+                       "a selected-file timestamp should be withheld when final lstat revalidation detects a mutation")
         }
     }
 

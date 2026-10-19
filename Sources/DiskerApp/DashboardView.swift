@@ -3054,6 +3054,10 @@ struct DashboardView: View {
                             Text("Logical \(format(file.logicalBytes))")
                             Text("Allocated ~\(format(file.allocatedBytes))")
                                 .help("Allocated-byte estimate from filesystem metadata")
+                            if let lastModifiedAt = file.lastModifiedAt {
+                                Text("Modified \(lastModifiedAt.formatted(date: .abbreviated, time: .shortened))")
+                                    .help("Filesystem modification time from metadata; it does not indicate last use or cleanup safety.")
+                            }
                         }
                         .font(.caption2)
                         .foregroundStyle(.secondary)

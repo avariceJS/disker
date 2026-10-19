@@ -109,13 +109,20 @@ public struct FileUsageSummary: Codable, Equatable, Identifiable, Sendable {
     public let rootRelativePath: String
     public let logicalBytes: Int64
     public let allocatedBytes: Int64
+    /// Filesystem modification time captured during the metadata scan. This is
+    /// descriptive metadata only and does not indicate last use or safety.
+    public let lastModifiedAt: Date?
 
     public var id: String { rootRelativePath }
 
-    public init(rootRelativePath: String, logicalBytes: Int64, allocatedBytes: Int64) {
+    public init(
+        rootRelativePath: String, logicalBytes: Int64, allocatedBytes: Int64,
+        lastModifiedAt: Date? = nil
+    ) {
         self.rootRelativePath = rootRelativePath
         self.logicalBytes = logicalBytes
         self.allocatedBytes = allocatedBytes
+        self.lastModifiedAt = lastModifiedAt
     }
 }
 

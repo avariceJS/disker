@@ -25,6 +25,7 @@ public enum FolderScanner {
         let allocatedBytes: Int64
         let allocatedBytesOverflowed: Bool
         let extensionName: String
+        let lastModifiedAt: Date
     }
 
     private struct ScannedFileMetadata {
@@ -172,6 +173,7 @@ public enum FolderScanner {
             var excludedSpecialFileCount = 0
             var extensionMetrics: [String: FileExtensionMetrics] = [:]
             var largestUniqueFiles: [FileUsageSummary] = []
+            var changedFilePaths = Set<String>()
 
             if rootType != S_IFDIR {
                 guard rootType == S_IFREG else {
@@ -190,7 +192,8 @@ public enum FolderScanner {
                     addFileExtension(file, to: &extensionMetrics, overflowed: &accountingOverflow)
                     retainLargestFile(
                         FileUsageSummary(rootRelativePath: "", logicalBytes: file.logicalBytes,
-                                         allocatedBytes: file.allocatedBytes),
+                                         allocatedBytes: file.allocatedBytes,
+                                         lastModifiedAt: file.lastModifiedAt),
                         in: &largestUniqueFiles
                     )
                 }
@@ -381,7 +384,8 @@ public enum FolderScanner {
                                         FileUsageSummary(
                                             rootRelativePath: file.relativePath,
                                             logicalBytes: file.logicalBytes,
-                                            allocatedBytes: file.allocatedBytes
+                                            allocatedBytes: file.allocatedBytes,
+                                            lastModifiedAt: file.lastModifiedAt
                                         ),
                                         in: &largestUniqueFiles
                                     )
@@ -402,6 +406,10 @@ public enum FolderScanner {
                                 fstatat(directoryFD, $0, &current, AT_SYMLINK_NOFOLLOW)
                             }
                             if result != 0 {
+                                let relativePath = directory.relativePath.isEmpty
+                                    ? file.name
+                                    : directory.relativePath + "/" + file.name
+                                changedFilePaths.insert(relativePath)
                                 if errno == ENOENT || errno == ENOTDIR || errno == ELOOP {
                                     scanComplete = false
                                     addCoverageEvent(directory.relativePath, symlink: false, changed: true, to: &metrics)
@@ -412,6 +420,10 @@ public enum FolderScanner {
                                 }
                             } else if file.differs(from: current) {
                                 scanComplete = false
+                                let relativePath = directory.relativePath.isEmpty
+                                    ? file.name
+                                    : directory.relativePath + "/" + file.name
+                                changedFilePaths.insert(relativePath)
                                 addCoverageEvent(directory.relativePath, symlink: false, changed: true, to: &metrics)
                             }
                         }
@@ -450,10 +462,19 @@ public enum FolderScanner {
                 FileUsageSummary(
                     rootRelativePath: rootType == S_IFDIR ? $0.relativePath : "",
                     logicalBytes: $0.logicalBytes,
-                    allocatedBytes: $0.allocatedBytes
+                    allocatedBytes: $0.allocatedBytes,
+                    lastModifiedAt: changedFilePaths.contains($0.relativePath) ? nil : $0.lastModifiedAt
                 )
             }).sorted(by: largestFilePrecedes)
-            let retainedLargestFiles = Array(rankedLargestFiles.prefix(maximumLargestFileSummaries))
+            let retainedLargestFiles = rankedLargestFiles.prefix(maximumLargestFileSummaries).map { summary in
+                guard changedFilePaths.contains(summary.rootRelativePath) else { return summary }
+                return FileUsageSummary(
+                    rootRelativePath: summary.rootRelativePath,
+                    logicalBytes: summary.logicalBytes,
+                    allocatedBytes: summary.allocatedBytes,
+                    lastModifiedAt: nil
+                )
+            }
 
             // Aggregate each directory into its parent once, deepest first.
             let directoryPaths = metrics.keys.filter { !$0.isEmpty }.sorted { lhs, rhs in
@@ -636,7 +657,14 @@ public enum FolderScanner {
             subdirectorySummariesTruncated: folder.subdirectorySummariesTruncated,
             projectDirectorySummaries: folder.projectDirectorySummaries,
             projectDirectorySummariesTruncated: folder.projectDirectorySummariesTruncated,
-            largestFiles: folder.largestFiles,
+            largestFiles: folder.largestFiles.map { file in
+                FileUsageSummary(
+                    rootRelativePath: file.rootRelativePath,
+                    logicalBytes: file.logicalBytes,
+                    allocatedBytes: file.allocatedBytes,
+                    lastModifiedAt: nil
+                )
+            },
             largestFilesTruncated: folder.largestFilesTruncated,
             applicationBundleIdentifier: folder.applicationBundleIdentifier,
             applicationGroupIdentifiers: folder.applicationGroupIdentifiers,
@@ -666,7 +694,14 @@ public enum FolderScanner {
             subdirectorySummariesTruncated: folder.subdirectorySummariesTruncated,
             projectDirectorySummaries: folder.projectDirectorySummaries,
             projectDirectorySummariesTruncated: folder.projectDirectorySummariesTruncated,
-            largestFiles: folder.largestFiles,
+            largestFiles: folder.largestFiles.map { file in
+                FileUsageSummary(
+                    rootRelativePath: file.rootRelativePath,
+                    logicalBytes: file.logicalBytes,
+                    allocatedBytes: file.allocatedBytes,
+                    lastModifiedAt: nil
+                )
+            },
             largestFilesTruncated: folder.largestFilesTruncated,
             applicationBundleIdentifier: folder.applicationBundleIdentifier,
             applicationGroupIdentifiers: folder.applicationGroupIdentifiers,
@@ -726,7 +761,9 @@ public enum FolderScanner {
             logicalBytes: Int64(max(0, metadata.st_size)),
             allocatedBytes: allocated.value,
             allocatedBytesOverflowed: allocated.overflowed,
-            extensionName: fileExtensionName(relativePath: relativePath)
+            extensionName: fileExtensionName(relativePath: relativePath),
+            lastModifiedAt: Date(timeIntervalSince1970: TimeInterval(metadata.st_mtimespec.tv_sec)
+                + TimeInterval(metadata.st_mtimespec.tv_nsec) / 1_000_000_000)
         )
     }
 
