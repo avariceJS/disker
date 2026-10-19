@@ -3438,7 +3438,7 @@ private struct DeveloperArtifactReviewSheet: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let pace = change.observedBytesPerDay {
-                    Text("Observed pace over that interval: ~\(format(Int64(min(pace, Double(Int64.max))))) per day; descriptive only.")
+                    Text("Observed pace over that interval: ~\(formatPace(pace)) per day; descriptive only.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -3498,6 +3498,12 @@ private struct DeveloperArtifactReviewSheet: View {
 
     private func format(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    private func formatPace(_ bytesPerDay: Double) -> String {
+        guard bytesPerDay.isFinite, bytesPerDay >= 0 else { return "unknown" }
+        guard bytesPerDay < Double(Int64.max) else { return format(Int64.max) }
+        return format(Int64(bytesPerDay))
     }
 
     private func signed(_ bytes: Int64) -> String {
