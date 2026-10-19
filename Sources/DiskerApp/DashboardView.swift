@@ -35,6 +35,9 @@ final class DashboardModel {
     var applicationBundlePathAvailability: [String: Bool] = [:]
     var checkingApplicationBundlePaths = Set<String>()
     private var applicationBundlePathCheckIDs: [String: UUID] = [:]
+    var applicationAssociatedPathStatuses: [String: SelectedScopePathProbe.Status] = [:]
+    var checkingApplicationAssociatedPaths = Set<String>()
+    private var applicationAssociatedPathCheckIDs: [String: UUID] = [:]
     var errorMessage: String?
     var currentPath = ""
     var countedFileObjects = 0
@@ -113,6 +116,32 @@ final class DashboardModel {
             applicationBundlePathCheckIDs.removeValue(forKey: path)
             checkingApplicationBundlePaths.remove(path)
             applicationBundlePathAvailability[path] = isAvailable
+        }
+    }
+
+    func checkAssociatedApplicationPaths(for bundlePath: String) {
+        guard checkingApplicationAssociatedPaths.insert(bundlePath).inserted else { return }
+        let requestID = UUID()
+        applicationAssociatedPathCheckIDs[bundlePath] = requestID
+        let generation = historyGeneration.token()
+        let paths = relatedFolders(for: bundlePath)
+        let bookmarks = Dictionary(
+            rememberedScopes.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first }
+        )
+        let task = Task.detached(priority: .utility) {
+            var result: [String: SelectedScopePathProbe.Status] = [:]
+            for path in paths {
+                result[path] = SelectedScopePathProbe.probe(at: path, using: bookmarks[path])
+            }
+            return result
+        }
+        Task {
+            let statuses = await task.value
+            guard applicationAssociatedPathCheckIDs[bundlePath] == requestID,
+                  historyGeneration.accepts(generation) else { return }
+            applicationAssociatedPathCheckIDs.removeValue(forKey: bundlePath)
+            checkingApplicationAssociatedPaths.remove(bundlePath)
+            applicationAssociatedPathStatuses.merge(statuses) { _, latest in latest }
         }
     }
 
@@ -318,6 +347,7 @@ final class DashboardModel {
     func removeRelatedFolder(_ path: String, from bundlePath: String) {
         do {
             history = try ObservationStore.removeApplicationFolderAssociation(path, from: bundlePath)
+            applicationAssociatedPathStatuses.removeValue(forKey: path)
         } catch {
             errorMessage = "The saved folder association could not be removed: \(error.localizedDescription)"
         }
@@ -326,6 +356,9 @@ final class DashboardModel {
     private func rememberFolders(_ urls: [URL]) {
         do {
             rememberedScopes = try SelectedScopeBookmarkStore.remember(urls)
+            for url in urls {
+                applicationAssociatedPathStatuses.removeValue(forKey: url.standardizedFileURL.path)
+            }
         } catch {
             errorMessage = "The scan can continue, but Disker could not save a reusable read-only location: \(error.localizedDescription)"
         }
@@ -744,6 +777,9 @@ final class DashboardModel {
         applicationBundlePathAvailability = [:]
         checkingApplicationBundlePaths = []
         applicationBundlePathCheckIDs = [:]
+        applicationAssociatedPathStatuses = [:]
+        checkingApplicationAssociatedPaths = []
+        applicationAssociatedPathCheckIDs = [:]
         scanTask?.cancel()
         ownFootprintRequestID = UUID()
         ownFootprintTask?.cancel()
@@ -1510,6 +1546,7 @@ struct DashboardView: View {
                         let relatedPaths = model.relatedFolders(for: bundle.path)
                         let pathAvailability = model.applicationBundlePathAvailability[bundle.path]
                         let isCheckingPath = model.checkingApplicationBundlePaths.contains(bundle.path)
+                        let isCheckingRelatedPaths = model.checkingApplicationAssociatedPaths.contains(bundle.path)
                         VStack(alignment: .leading, spacing: 10) {
                             HStack(alignment: .top) {
                                 Label(bundle.displayName, systemImage: "app.fill")
@@ -1559,23 +1596,83 @@ struct DashboardView: View {
                                 .help("Check only the exact app bundle path last measured; no folders are scanned")
                             }
                             if pathAvailability == false && !relatedPaths.isEmpty {
-                                Label {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text("Possible leftover data · needs review")
-                                            .font(.subheadline.weight(.semibold))
-                                        Text("The last measured app path is currently unavailable. The app may have moved, its volume may be disconnected, or access may be restricted. Disker's saved folder associations were selected manually; their current presence, ownership, and safety are unknown.")
-                                            .font(.caption)
-                                            .fixedSize(horizontal: false, vertical: true)
+                                VStack(alignment: .leading, spacing: 10) {
+                                    Label {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text("Possible leftover data · needs review")
+                                                .font(.subheadline.weight(.semibold))
+                                            Text("The last measured app path is currently unavailable. It may have moved, its volume may be disconnected, or access may be restricted. The saved folder associations were selected manually; their current presence, ownership, and safety are unknown.")
+                                                .font(.caption)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        }
+                                    } icon: {
+                                        Image(systemName: "questionmark.folder.fill")
+                                            .foregroundStyle(.orange)
                                     }
-                                } icon: {
-                                    Image(systemName: "questionmark.folder.fill")
-                                        .foregroundStyle(.orange)
+                                    .foregroundStyle(.secondary)
+
+                                    Text("Check only the exact associated folder paths. Disker does not scan their contents in this check, follow symlinks, or decide whether anything can be removed.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+
+                                    Button {
+                                        model.checkAssociatedApplicationPaths(for: bundle.path)
+                                    } label: {
+                                        if isCheckingRelatedPaths {
+                                            ProgressView("Checking selected paths…")
+                                                .controlSize(.small)
+                                        } else {
+                                            Label("Check associated locations…", systemImage: "folder.badge.questionmark")
+                                        }
+                                    }
+                                    .controlSize(.small)
+                                    .disabled(isCheckingRelatedPaths || model.isScanning || model.isVerifyingDuplicates || model.isMeasuringOwnFootprint)
+
+                                    let checkedPaths = relatedPaths.filter {
+                                        model.applicationAssociatedPathStatuses[$0] != nil
+                                    }
+                                    if !checkedPaths.isEmpty {
+                                        DisclosureGroup("Exact paths checked (\(checkedPaths.count))") {
+                                            VStack(alignment: .leading, spacing: 10) {
+                                                ForEach(checkedPaths, id: \.self) { path in
+                                                    let status = model.applicationAssociatedPathStatuses[path]!
+                                                    VStack(alignment: .leading, spacing: 5) {
+                                                        Text(path)
+                                                            .font(.caption2.monospaced())
+                                                            .textSelection(.enabled)
+                                                            .fixedSize(horizontal: false, vertical: true)
+                                                        Label(associatedPathStatusText(status), systemImage: associatedPathStatusSymbol(status))
+                                                            .font(.caption)
+                                                            .foregroundStyle(associatedPathStatusColor(status))
+                                                        HStack(spacing: 12) {
+                                                            if status == .availableDirectory {
+                                                                Button("Reveal in Finder") {
+                                                                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                                                                }
+                                                                .buttonStyle(.borderless)
+                                                                .font(.caption)
+                                                            }
+                                                            if associatedPathNeedsReselection(status) {
+                                                                Button("Re-select saved folder…") {
+                                                                    model.reselectRememberedFolder(path)
+                                                                }
+                                                                .buttonStyle(.borderless)
+                                                                .font(.caption)
+                                                            }
+                                                        }
+                                                    }
+                                                    if path != checkedPaths.last { Divider() }
+                                                }
+                                            }
+                                            .padding(.top, 6)
+                                        }
+                                        .font(.caption.weight(.medium))
+                                    }
                                 }
-                                .foregroundStyle(.secondary)
                                 .padding(12)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
-                                .accessibilityElement(children: .combine)
                             }
                             HStack(spacing: 12) {
                                 Text("Logical \(format(bundle.logicalBytes))")
@@ -2342,6 +2439,51 @@ struct DashboardView: View {
                 }
                 .font(.caption.weight(.medium))
             }
+        }
+    }
+
+    private func associatedPathStatusText(_ status: SelectedScopePathProbe.Status) -> String {
+        switch status {
+        case .availableDirectory:
+            "Folder exists · contents not checked"
+        case .missingOrUnreachable:
+            "Path not found or its volume is unavailable · absence is unconfirmed"
+        case .permissionOrAccessUnknown:
+            "Access could not be confirmed · presence is unknown"
+        case .notDirectory:
+            "The exact path is not a folder"
+        case .symbolicLink:
+            "The path is a symbolic link · not followed"
+        case .invalidBookmark:
+            "Saved access could not be read · select the same folder again"
+        case .staleBookmark:
+            "Saved access is stale · select the same folder again"
+        case .mismatchedBookmark:
+            "Saved access resolves to a different path · no check was performed"
+        }
+    }
+
+    private func associatedPathStatusSymbol(_ status: SelectedScopePathProbe.Status) -> String {
+        switch status {
+        case .availableDirectory: "checkmark.circle"
+        case .missingOrUnreachable: "questionmark.folder"
+        case .permissionOrAccessUnknown, .invalidBookmark, .staleBookmark, .mismatchedBookmark:
+            "exclamationmark.triangle"
+        case .notDirectory: "doc"
+        case .symbolicLink: "link"
+        }
+    }
+
+    private func associatedPathStatusColor(_ status: SelectedScopePathProbe.Status) -> Color {
+        status == .availableDirectory ? .green : .orange
+    }
+
+    private func associatedPathNeedsReselection(_ status: SelectedScopePathProbe.Status) -> Bool {
+        switch status {
+        case .permissionOrAccessUnknown, .invalidBookmark, .staleBookmark, .mismatchedBookmark:
+            true
+        case .availableDirectory, .missingOrUnreachable, .notDirectory, .symbolicLink:
+            false
         }
     }
 

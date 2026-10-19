@@ -37,6 +37,7 @@ private struct DiskerCoreChecks {
             ("measured selected-scope subtotal safety", testApplicationFootprintSubtotal),
             ("explicit app-folder associations", testApplicationFolderAssociations),
             ("bounded read-only selected-scope bookmarks", testSelectedScopeBookmarks),
+            ("typed no-follow selected-scope path probe", testSelectedScopePathProbeStatuses),
             ("local stores reject symlinks", testLocalStoresRejectSymlinks),
             ("zero important-usage fallback", testImportantUsageFallback),
             ("live root volume capacity", testLiveCapacitySource),
@@ -1140,6 +1141,52 @@ private struct DiskerCoreChecks {
             try expect(fullStoreAfterRefresh == fullStoreBeforeRefresh
                        && fullStoreEntriesAfterRefresh.count == SelectedScopeBookmarkStore.maximumBookmarkCount,
                        "a rejected stale refresh must preserve the bounded bookmark store")
+        }
+    }
+
+    private static func testSelectedScopePathProbeStatuses() throws {
+        try withTemporaryDirectory { base in
+            let directory = base.appendingPathComponent("selected-directory", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+            let file = base.appendingPathComponent("selected-file")
+            try Data("small synthetic fixture".utf8).write(to: file)
+            let symlink = base.appendingPathComponent("selected-symlink", isDirectory: true)
+            try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: directory)
+            let missing = base.appendingPathComponent("missing-directory", isDirectory: true)
+
+            try expect(SelectedScopePathProbe.probe(at: directory.path) == .availableDirectory,
+                       "an existing selected directory should be reported as available")
+            try expect(SelectedScopePathProbe.probe(at: file.path) == .notDirectory,
+                       "an existing regular file should be distinguished from a missing directory")
+            try expect(SelectedScopePathProbe.probe(at: symlink.path) == .symbolicLink,
+                       "a selected symlink must be reported without following its target")
+            try expect(SelectedScopePathProbe.probe(at: missing.path) == .missingOrUnreachable,
+                       "a missing selected path should be reported as unavailable")
+            try expect(!SelectedScopePathProbe.isAvailable(at: symlink.path)
+                       && SelectedScopePathProbe.isAvailable(at: directory.path),
+                       "the legacy Boolean wrapper should be true only for available directories")
+
+            let invalidBookmark = SelectedScopeBookmark(path: directory.path, bookmarkData: Data([0x00, 0x01]))
+            try expect(SelectedScopePathProbe.probe(at: directory.path, using: invalidBookmark) == .invalidBookmark,
+                       "malformed bookmark data should have a distinct status")
+
+            let otherDirectory = base.appendingPathComponent("other-directory", isDirectory: true)
+            try FileManager.default.createDirectory(at: otherDirectory, withIntermediateDirectories: false)
+            let otherBookmarkData = try otherDirectory.bookmarkData(
+                options: SelectedScopeBookmarkStore.creationOptions(isSandboxed: false),
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+            let mismatchedBookmark = SelectedScopeBookmark(
+                path: directory.standardizedFileURL.path,
+                bookmarkData: otherBookmarkData
+            )
+            try expect(SelectedScopePathProbe.probe(
+                at: directory.path, using: mismatchedBookmark
+            ) == .mismatchedBookmark(
+                expectedPath: directory.standardizedFileURL.path,
+                actualPath: otherDirectory.standardizedFileURL.path
+            ), "a bookmark resolving elsewhere must not report the requested scope as available")
         }
     }
 
