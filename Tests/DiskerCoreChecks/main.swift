@@ -60,6 +60,7 @@ private struct DiskerCoreChecks {
             ("nested directory usage summaries", testNestedDirectorySummaries),
             ("cautious development storage hints", testStorageAreaHints),
             ("read-only developer artifact review", testDeveloperArtifactReview),
+            ("read-only developer artifact investigation recommendations", testDeveloperArtifactRecommendations),
             ("cautious file artifact hints", testFileArtifactHints),
             ("Git metadata marker detection", testGitMetadataMarkerDetection),
             ("Git metadata footprint survives summary cap", testGitMetadataUsageSurvivesSummaryCap),
@@ -2263,6 +2264,190 @@ private struct DiskerCoreChecks {
         try expect(DeveloperArtifactReview.make(from: currentGit, in: gitReviewHistory)
             .entries.first(where: { $0.relativePath == ".git" })?.historicalChange?.allocatedBytesChange == 100,
                    "dedicated direct Git metadata summaries should participate in exact-path history")
+    }
+
+    private static func testDeveloperArtifactRecommendations() throws {
+        let start = Date(timeIntervalSince1970: 1_810_000_000)
+        let root = "/selected/recommendations"
+        let priorBuild = directory("Project/.build", bytes: 10 * 1_024 * 1_024, complete: true)
+        let priorNested = directory("Project/.build/node_modules", bytes: 4 * 1_024 * 1_024, complete: true)
+        let currentBuild = directory("Project/.build", bytes: 90 * 1_024 * 1_024, complete: true)
+        let currentNested = directory("Project/.build/node_modules", bytes: 12 * 1_024 * 1_024, complete: true)
+        let prior = FolderObservation(
+            path: root, volumeDeviceID: 7, displayName: "recommendations",
+            logicalBytes: 20 * 1_024 * 1_024, allocatedBytes: 20 * 1_024 * 1_024,
+            fileCount: 3, inaccessibleCount: 0, finishedAt: start, complete: true,
+            projectDirectorySummaries: [priorBuild, priorNested]
+        )
+        let current = FolderObservation(
+            path: root, volumeDeviceID: 7, displayName: "recommendations",
+            logicalBytes: 110 * 1_024 * 1_024, allocatedBytes: 110 * 1_024 * 1_024,
+            fileCount: 3, inaccessibleCount: 0, finishedAt: start.addingTimeInterval(3_600), complete: true,
+            projectDirectorySummaries: [currentBuild, currentNested]
+        )
+        let history = LocalHistory(observations: [
+            ScanObservation(startedAt: prior.finishedAt, folders: [prior], cancelled: false),
+            ScanObservation(startedAt: current.finishedAt, folders: [current], cancelled: false),
+        ])
+        let review = DeveloperArtifactReview.make(from: current, in: history)
+        let recommendations = DeveloperArtifactRecommendations.make(from: review).recommendations
+        try expect(recommendations.map(\.path) == [root + "/Project/.build", root + "/Project/.build/node_modules"],
+                   "exact positive same-path growth should rank ahead of size-only candidates")
+        try expect(recommendations.first?.reason == .observedGrowth(allocatedBytes: 80 * 1_024 * 1_024)
+                   && recommendations.last?.reason == .observedGrowth(allocatedBytes: 8 * 1_024 * 1_024),
+                   "growth recommendations should retain signed exact-path allocated-estimate deltas")
+        try expect(recommendations.first?.entry.path == recommendations.first?.path
+                   && recommendations.first?.title == "Investigate observed storage growth"
+                   && recommendations.first?.reasonDescription.contains("exact path") == true
+                   && recommendations.first?.reasonDescription.contains(
+                        ByteCountFormatter.string(fromByteCount: 80 * 1_024 * 1_024, countStyle: .file)
+                   ) == true
+                   && recommendations.first?.investigationPrompt.contains(
+                        ByteCountFormatter.string(fromByteCount: 80 * 1_024 * 1_024, countStyle: .file)
+                   ) == true,
+                   "recommendation rows should expose their full source entry and explicit user-facing rationale")
+        try expect(recommendations.allSatisfy({
+            $0.coverage.selectedRootComplete && $0.coverage.candidateSubtreeComplete
+                && $0.reclaimableBytes == nil
+                && $0.investigationPrompt.contains("No cleanup")
+                && $0.confidenceDescription.contains("complete")
+        }), "recommendations should disclose complete coverage, unknown reclaimable bytes, and review-only intent")
+        try expect(recommendations[0].overlappingCandidatePaths == [root + "/Project/.build/node_modules"]
+                   && recommendations[1].overlappingCandidatePaths == [root + "/Project/.build"],
+                   "overlapping candidates should remain separate and disclose exact intersecting paths")
+
+        let partialRoot = FolderObservation(
+            path: root, volumeDeviceID: 7, displayName: "recommendations",
+            logicalBytes: current.logicalBytes, allocatedBytes: current.allocatedBytes,
+            fileCount: current.fileCount, inaccessibleCount: 1,
+            finishedAt: current.finishedAt.addingTimeInterval(3_600), complete: false,
+            projectDirectorySummaries: [currentBuild]
+        )
+        try expect(DeveloperArtifactRecommendations.make(
+            from: DeveloperArtifactReview.make(from: partialRoot, in: history)
+        ).recommendations.isEmpty, "a partial current root must suppress all investigation recommendations")
+
+        let partialSubtree = directory("Project/.build", bytes: 90 * 1_024 * 1_024, complete: false)
+        let partialCandidateFolder = FolderObservation(
+            path: root, volumeDeviceID: 7, displayName: "recommendations",
+            logicalBytes: current.logicalBytes, allocatedBytes: current.allocatedBytes,
+            fileCount: 3, inaccessibleCount: 0, finishedAt: current.finishedAt.addingTimeInterval(7_200), complete: true,
+            projectDirectorySummaries: [partialSubtree]
+        )
+        try expect(DeveloperArtifactRecommendations.make(
+            from: DeveloperArtifactReview.make(from: partialCandidateFolder)
+        ).recommendations.isEmpty, "a partial candidate subtree must not be promoted by its partial measured size")
+
+        let newerPartial = FolderObservation(
+            path: root, volumeDeviceID: 7, displayName: "recommendations",
+            logicalBytes: current.logicalBytes, allocatedBytes: current.allocatedBytes,
+            fileCount: current.fileCount, inaccessibleCount: 1,
+            finishedAt: current.finishedAt.addingTimeInterval(3_600), complete: false,
+            projectDirectorySummaries: [currentBuild]
+        )
+        let historyWithNewerPartial = LocalHistory(observations: history.observations + [
+            ScanObservation(startedAt: newerPartial.finishedAt, folders: [newerPartial], cancelled: true),
+        ])
+        let noGrowthReview = DeveloperArtifactReview.make(from: current, in: historyWithNewerPartial)
+        try expect(noGrowthReview.entries.allSatisfy({ $0.historicalChange == nil })
+                   && DeveloperArtifactRecommendations.make(from: noGrowthReview).recommendations.isEmpty,
+                   "a newer partial observation must withhold growth instead of turning missing history into zero")
+
+        let gitUsage = directory(".git", bytes: 140 * 1_024 * 1_024, complete: true)
+        let userData = directory("research/datasets", bytes: 150 * 1_024 * 1_024, complete: true)
+        let riskFolder = FolderObservation(
+            path: root + "/risk", displayName: "risk",
+            logicalBytes: 300 * 1_024 * 1_024, allocatedBytes: 300 * 1_024 * 1_024,
+            fileCount: 4, inaccessibleCount: 0, finishedAt: start, complete: true,
+            gitMetadataEntryDetected: true, gitMetadataUsage: gitUsage,
+            projectDirectorySummaries: [userData]
+        )
+        let riskRecommendations = DeveloperArtifactRecommendations.make(
+            from: DeveloperArtifactReview.make(from: riskFolder)
+        ).recommendations
+        try expect(riskRecommendations.map(\.category).contains(.sourceControl)
+                   && riskRecommendations.map(\.category).contains(.userData)
+                   && riskRecommendations.allSatisfy({ $0.risk.contains("High") }),
+                   "large Git history and user-data candidates should retain high-risk labels")
+        try expect(riskRecommendations.allSatisfy({
+            $0.reclaimableBytes == nil
+                && !$0.investigationPrompt.localizedCaseInsensitiveContains("delete")
+                && !$0.investigationPrompt.localizedCaseInsensitiveContains("safe to remove")
+        }), "high-risk recommendations must not imply deletion safety or reclaimable bytes")
+
+        let truncatedRiskFolder = FolderObservation(
+            path: riskFolder.path, displayName: riskFolder.displayName,
+            logicalBytes: riskFolder.logicalBytes, allocatedBytes: riskFolder.allocatedBytes,
+            fileCount: riskFolder.fileCount, inaccessibleCount: riskFolder.inaccessibleCount,
+            finishedAt: riskFolder.finishedAt, complete: true,
+            gitMetadataEntryDetected: true, gitMetadataUsage: gitUsage,
+            projectDirectorySummaries: [userData], projectDirectorySummariesTruncated: true
+        )
+        let truncatedRecommendations = DeveloperArtifactRecommendations.make(
+            from: DeveloperArtifactReview.make(from: truncatedRiskFolder)
+        ).recommendations
+        try expect(truncatedRecommendations.allSatisfy({
+            $0.coverage.candidateInventoryTruncated
+                && $0.coverage.description.contains("additional matching candidate summaries were omitted")
+        }), "candidate summary truncation should remain visible in recommendation coverage")
+
+        let small = directory("Project/.build", bytes: DeveloperArtifactRecommendations.largeCandidateThresholdBytes - 1,
+                              complete: true)
+        let smallFolder = FolderObservation(
+            path: root + "/small", displayName: "small",
+            logicalBytes: small.logicalBytes, allocatedBytes: small.allocatedBytes,
+            fileCount: 1, inaccessibleCount: 0, finishedAt: start, complete: true,
+            projectDirectorySummaries: [small]
+        )
+        try expect(DeveloperArtifactRecommendations.make(
+            from: DeveloperArtifactReview.make(from: smallFolder)
+        ).recommendations.isEmpty, "size-only recommendations should use the explicit 100 MiB threshold")
+
+        let thresholdCandidate = directory("Project/.build", bytes: DeveloperArtifactRecommendations.largeCandidateThresholdBytes,
+                                            complete: true)
+        let thresholdFolder = FolderObservation(
+            path: root + "/threshold", displayName: "threshold",
+            logicalBytes: thresholdCandidate.logicalBytes, allocatedBytes: thresholdCandidate.allocatedBytes,
+            fileCount: 1, inaccessibleCount: 0, finishedAt: start, complete: true,
+            projectDirectorySummaries: [thresholdCandidate]
+        )
+        let thresholdRecommendations = DeveloperArtifactRecommendations.make(
+            from: DeveloperArtifactReview.make(from: thresholdFolder)
+        ).recommendations
+        try expect(thresholdRecommendations.count == 1
+                   && thresholdRecommendations[0].reason == .largeMeasuredCandidate(
+                        allocatedBytes: DeveloperArtifactRecommendations.largeCandidateThresholdBytes,
+                        thresholdBytes: DeveloperArtifactRecommendations.largeCandidateThresholdBytes
+                   )
+                   && thresholdRecommendations[0].reasonDescription.contains(
+                        ByteCountFormatter.string(fromByteCount: DeveloperArtifactRecommendations.largeCandidateThresholdBytes,
+                                                  countStyle: .file)
+                   )
+                   && thresholdRecommendations[0].investigationPrompt.contains("review threshold"),
+                   "a complete measured candidate at the exact threshold should get a formatted size-only review prompt")
+
+        let capCandidates = [
+            directory("a/.build", bytes: 600 * 1_024 * 1_024, complete: true),
+            directory("b/node_modules", bytes: 500 * 1_024 * 1_024, complete: true),
+            directory("c/dist", bytes: 400 * 1_024 * 1_024, complete: true),
+            directory("d/.venv", bytes: 300 * 1_024 * 1_024, complete: true),
+        ]
+        let capFolder = FolderObservation(
+            path: root + "/cap", displayName: "cap",
+            logicalBytes: 1_800 * 1_024 * 1_024, allocatedBytes: 1_800 * 1_024 * 1_024,
+            fileCount: 4, inaccessibleCount: 0, finishedAt: start, complete: true,
+            projectDirectorySummaries: capCandidates
+        )
+        let capped = DeveloperArtifactRecommendations.make(
+            from: DeveloperArtifactReview.make(from: capFolder)
+        ).recommendations
+        let cappedBytes = capped.map { $0.entry.allocatedBytesEstimate }
+        let expectedCappedBytes: [Int64] = [
+            600 * 1_024 * 1_024, 500 * 1_024 * 1_024, 400 * 1_024 * 1_024
+        ]
+        try expect(capped.count == DeveloperArtifactRecommendations.maximumRecommendations
+                   && cappedBytes == expectedCappedBytes,
+                   "size-only investigation prompts should be capped and ranked by measured allocation")
     }
 
     private static func testFileArtifactHints() throws {

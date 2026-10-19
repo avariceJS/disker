@@ -3377,6 +3377,10 @@ private struct DeveloperArtifactReviewSheet: View {
         DeveloperArtifactReview.make(from: folder, in: history)
     }
 
+    private var recommendations: DeveloperArtifactRecommendations {
+        DeveloperArtifactRecommendations.make(from: review)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top) {
@@ -3426,18 +3430,116 @@ private struct DeveloperArtifactReviewSheet: View {
             if review.entries.isEmpty {
                 ContentUnavailableView("No measured candidates", systemImage: "shippingbox", description: Text("This scan did not retain any directories with a recognized name or direct Git marker."))
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
-                        ForEach(review.entries) { entry in
-                            developerArtifactEntry(entry)
+                ScrollViewReader { scroll in
+                    ScrollView {
+                        LazyVStack(spacing: 10) {
+                            investigationRecommendations(scroll: scroll)
+                            ForEach(review.entries) { entry in
+                                developerArtifactEntry(entry)
+                                    .id(entry.id)
+                            }
                         }
+                        .padding(.vertical, 2)
                     }
-                    .padding(.vertical, 2)
                 }
             }
         }
         .padding(20)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    @ViewBuilder
+    private func investigationRecommendations(scroll: ScrollViewProxy) -> some View {
+        if !folder.complete {
+            Label("No prioritized investigation prompts for a partial scan", systemImage: "exclamationmark.triangle")
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.orange)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(13)
+                .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        } else if recommendations.recommendations.isEmpty {
+            VStack(alignment: .leading, spacing: 5) {
+                Label("No prioritized investigation prompts", systemImage: "checkmark.circle")
+                    .font(.callout.weight(.medium))
+                Text("No complete candidate has recorded same-path growth or met the 100 MiB allocated-size threshold. Partial and unmatched paths remain visible below with their uncertainty.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(13)
+            .background(.background, in: RoundedRectangle(cornerRadius: 10))
+        } else {
+            VStack(alignment: .leading, spacing: 9) {
+                Label("Prioritized to investigate", systemImage: "magnifyingglass")
+                    .font(.headline)
+                Text("Prompts use complete measurements and exact-path growth, or a large measured footprint. They do not mean data is unused or safe to remove. Reclaimable space is unknown.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(recommendations.recommendations) { recommendation in
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(recommendation.title)
+                                .font(.subheadline.weight(.semibold))
+                            Spacer(minLength: 8)
+                            Button("Review details") {
+                                scroll.scrollTo(recommendation.entry.id, anchor: .top)
+                            }
+                            .buttonStyle(.borderless)
+                            .controlSize(.small)
+                        }
+                        Text(recommendation.path)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                        Text(recommendation.reasonDescription)
+                            .font(.caption)
+                        Text(recommendation.confidenceDescription)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(recommendation.evidence)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(recommendation.possibleConsequence)
+                            .font(.caption2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Logical \(format(recommendation.entry.logicalBytes)) · allocated ~\(format(recommendation.entry.allocatedBytesEstimate)) · reclaimable unknown")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text("Evidence coverage: \(recommendation.coverage.description) Path purpose and ownership are not verified.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(recommendation.risk)
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if !recommendation.overlappingCandidatePaths.isEmpty {
+                            Text("Overlaps other measured candidates; do not add their sizes: \(recommendation.overlappingCandidatePaths.joined(separator: ", "))")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if recommendation.coverage.candidateInventoryTruncated {
+                            Text("Additional matching candidates were omitted from the bounded summary; those paths remain unknown.")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(11)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.background, in: RoundedRectangle(cornerRadius: 9))
+                }
+            }
+            .padding(13)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 11))
+        }
     }
 
     private func developerArtifactEntry(_ entry: DeveloperArtifactReview.Entry) -> some View {
