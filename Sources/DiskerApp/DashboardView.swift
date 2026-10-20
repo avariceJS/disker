@@ -1912,21 +1912,6 @@ struct DashboardView: View {
                     }
                     VStack(alignment: .leading, spacing: 8) {
                         historyRangePicker
-                        if let selectedCapacitySample {
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Text(format(selectedCapacitySample.availableBytes))
-                                    .font(.title3.weight(.semibold).monospacedDigit())
-                                    .foregroundStyle(.blue)
-                                Text(selectedCapacitySample.observedAt.formatted(date: .abbreviated, time: .shortened))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Button("Clear selection") { selectedCapacityDate = nil }
-                                    .buttonStyle(.link)
-                                    .font(.caption)
-                            }
-                            .accessibilityElement(children: .combine)
-                        }
                         Chart {
                             ForEach(capacitySeries, id: \.observedAt) { sample in
                                 LineMark(
@@ -1975,6 +1960,21 @@ struct DashboardView: View {
                         .chartXSelection(value: $selectedCapacityDate)
                         .frame(height: 210)
                         .accessibilityLabel("Available-space history for \(historyChartRange.title), \(capacitySeries.count) comparable observations")
+                        if let selectedCapacitySample {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(format(selectedCapacitySample.availableBytes))
+                                    .font(.title3.weight(.semibold).monospacedDigit())
+                                    .foregroundStyle(.blue)
+                                Text(selectedCapacitySample.observedAt.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Button("Clear selection") { selectedCapacityDate = nil }
+                                    .buttonStyle(.link)
+                                    .font(.caption)
+                            }
+                            .accessibilityElement(children: .combine)
+                        }
                         Text("\(capacitySeries.count) comparable observations · \(historyRangeCaption(endingAt: latestCapacityDate)) · drag across the chart to inspect a saved sample · focused vertical scale · not attributed to folders")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
