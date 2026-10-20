@@ -640,6 +640,27 @@ final class DashboardModel {
         }
     }
 
+    func measureProjectCandidate(at path: String) {
+        guard !isScanning, !isMeasuringOwnFootprint, !isVerifyingDuplicates else { return }
+        let expectedURL = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+        let panel = NSOpenPanel()
+        panel.title = "Confirm Git-Marked Project Folder"
+        panel.prompt = "Measure Project"
+        panel.message = "Choose this exact Git-marked folder to record a separate metadata-only project measurement. Its size remains separate from the selected parent folder."
+        panel.directoryURL = expectedURL.deletingLastPathComponent()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        guard panel.runModal() == .OK, let chosenURL = panel.urls.first else { return }
+        guard SelectedScopeBookmarkStore.isSameSelectedPath(chosenURL, as: expectedURL.path) else {
+            errorMessage = "Choose the same Git-marked project folder to measure its exact path. No scan was started."
+            return
+        }
+        rememberFolders([chosenURL])
+        scan([chosenURL])
+    }
+
     func removeProjectResourceFolder(_ path: String, from projectRootPath: String) {
         do {
             history = try ObservationStore.removeProjectFolderAssociation(path, from: projectRootPath)
@@ -4875,7 +4896,13 @@ struct DashboardView: View {
     private func projectDirectorySection(
         for folder: FolderObservation, scanCancelled: Bool
     ) -> some View {
-        VStack(alignment: .leading, spacing: 9) {
+        let projectPaths = Dictionary(
+            DeveloperArtifactReview.make(from: folder).entries
+                .filter { $0.category == .sourceControl }
+                .map { ($0.relativePath, $0.path) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return VStack(alignment: .leading, spacing: 9) {
             Label("Project and development-data candidates", systemImage: "chevron.left.forwardslash.chevron.right")
                 .font(.subheadline.weight(.semibold))
             Text("Entries have a direct `.git` marker or an exact development-data directory name. These are candidates, not verified project ownership or safe cleanup targets. Name matches do not inspect contents; nested folder totals overlap.")
@@ -4899,6 +4926,16 @@ struct DashboardView: View {
                             Label("Direct `.git` marker · candidate", systemImage: "folder.badge.questionmark")
                                 .font(.caption2)
                                 .foregroundStyle(.blue)
+                            if let projectPath = projectPaths[directory.rootRelativePath] {
+                                Button("Measure exact project folder…") {
+                                    model.measureProjectCandidate(at: projectPath)
+                                }
+                                .buttonStyle(.link)
+                                .font(.caption2)
+                                .disabled(model.isScanning || model.isMeasuringOwnFootprint || model.isVerifyingDuplicates)
+                                .help("Confirm this exact Git-marked folder before a separate metadata-only measurement")
+                                .accessibilityLabel("Measure project folder \(directory.rootRelativePath)")
+                            }
                         }
                         if let hint = StorageAreaHint.matchingDirectory(relativePath: directory.rootRelativePath) {
                             Label("\(hint.title) · exact directory-name match", systemImage: "tag")

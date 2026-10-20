@@ -3628,6 +3628,11 @@ private struct DiskerCoreChecks {
             try expect(folder.projectDirectorySummaries.contains(where: {
                 $0.rootRelativePath == "vendor/project"
             }), "nested .git files should also identify bounded repository-marker folders")
+            let nestedCandidate = DeveloperArtifactReview.make(from: folder).entries.first {
+                $0.relativePath == "vendor/project" && $0.category == .sourceControl
+            }
+            try expect(nestedCandidate?.path == nestedProject.standardizedFileURL.path,
+                       "a nested Git-marked project candidate should resolve to its exact safe selected-root-relative path")
             try expect(folder.logicalBytes > 0, "metadata scan should count marker file size without parsing its contents")
             let selectedGitFile = FolderScanner.scan(roots: [nestedProject]).folders[0]
             try expect(selectedGitFile.gitMetadataEntryDetected && selectedGitFile.gitMetadataUsage == nil, "a direct .git file is a marker only, with no payload or external path resolution")
